@@ -11,8 +11,11 @@ import csv
 import io
 import json
 import re
+import sys
+from bisect import bisect_right
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass, field
 from itertools import islice
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -124,6 +127,84 @@ def _resolve_section(bv: BinaryView, name: str) -> tuple[int, int]:
     return section.start, section.end
 
 
+def _drop[Item](items: Iterable[Item], count: int) -> Iterator[Item]:
+    return islice(items, min(count, sys.maxsize), None)
+
+
+def _paginate[Item](items: Iterable[Item], offset: int, limit: int) -> tuple[list[Item], int, bool]:
+    """Return the ``[offset, offset + limit)`` page, the count seen, and whether more exist.
+
+    Consumption stops one item past the window, so the count is exact only when the page is
+    not truncated.
+    """
+    iterator = iter(items)
+    # zip over range, not islice: offset is unbounded and islice rejects values above sys.maxsize.
+    skipped = sum(1 for _ in zip(range(offset), iterator))
+    page = list(islice(iterator, limit))
+    truncated = bool(list(islice(iterator, 1)))
+    return page, skipped + len(page) + truncated, truncated
+
+
+def _text_matcher(pattern: str, regex: bool, ignore_case: bool) -> Callable[[str], bool]:
+    if regex:
+        compiled = _compile_user_regex(pattern, ignore_case=ignore_case)
+        return lambda value: compiled.search(value) is not None
+    if ignore_case:
+        needle = pattern.lower()
+        return lambda value: needle in value.lower()
+    return lambda value: pattern in value
+
+
+def _require_key(key: str) -> None:
+    if not key:
+        raise mcp.ToolError("invalid_key", "key must not be empty")
+
+
+def _require_analyzed_function(bv: BinaryView, address: int) -> Function:
+    functions = bv.get_functions_containing(address)
+    if not functions:
+        raise mcp.ToolError("invalid_params", f"no analyzed function contains {address:#x}")
+    return functions[0]
+
+
+def _compile_pattern(pattern: str) -> tuple[re.Pattern[bytes], int]:
+    if len(pattern) > _MAX_PATTERN_CHARS:
+        raise mcp.ToolError("pattern_too_large", f"pattern exceeds {_MAX_PATTERN_CHARS} characters")
+    try:
+        return compile_hex_pattern(pattern)
+    except HexPatternError as exc:
+        raise mcp.ToolError("invalid_pattern", str(exc)) from None
+
+
+@dataclass
+class _FunctionHits:
+    name: str
+    match_count: int = 0
+    addresses: list[str] = field(default_factory=list)
+
+
+def _iter_pattern_matches(
+    bv: BinaryView,
+    matcher: re.Pattern[bytes],
+    pattern_length: int,
+    bounds: tuple[int, int] | None = None,
+) -> Iterator[int]:
+    """Yield absolute match addresses, optionally clipped to a section range."""
+    for segment in bv.segments:
+        start, end = int(segment.start), int(segment.start + segment.length)
+        if bounds is not None:
+            start = max(start, bounds[0])
+            end = min(end, bounds[1])
+        position = start
+        while position < end:
+            read_size = min(_READ_CHUNK + pattern_length - 1, end - position)
+            chunk = bv.read(position, read_size)
+            if chunk:
+                for match in matcher.finditer(chunk):
+                    yield position + match.start()
+            position += _READ_CHUNK
+
+
 def _require_function(bv: BinaryView, address: int) -> Function:
     functions = bv.get_functions_containing(address)
     if not functions:
@@ -146,9 +227,8 @@ def _render_function_disassembly(function: Any) -> list[tuple[int, str]]:
     for block in function.basic_blocks:
         for line in block.get_disassembly_text():
             # Unaddressed continuation lines cannot anchor or be reported by address.
-            if line.address is None:
-                continue
-            lines.append((line.address, "".join(str(token) for token in line.tokens)))
+            if line.address is not None:
+                lines.append((line.address, "".join(str(token) for token in line.tokens)))
     lines.sort(key=lambda entry: entry[0])
     return lines
 
@@ -160,11 +240,7 @@ def _disasm_window(
     # The anchor is the last line at or before the address: at a shared address that is
     # the labeled instruction rather than the label, and past the last instruction it is
     # the final rendered line.
-    anchor = 0
-    for index, (line_address, _) in enumerate(lines):
-        if line_address > address:
-            break
-        anchor = index
+    anchor = max(bisect_right(lines, address, key=lambda entry: entry[0]) - 1, 0)
     start = max(0, anchor - before)
     end = min(len(lines), anchor + 1 + after)
     return start, end
@@ -277,11 +353,8 @@ def rex_call_paths(
         if len(path) > max_depth:
             continue
         explored += 1
-        if direction == "callers":
-            neighbors = sorted(function.callers, key=lambda item: item.start)
-        else:
-            neighbors = sorted(function.callees, key=lambda item: item.start)
-        for neighbor in neighbors:
+        edges = function.callers if direction == "callers" else function.callees
+        for neighbor in sorted(edges, key=lambda item: item.start):
             if neighbor.start == target.start:
                 paths.append([_function_entry(item) for item in [*path, neighbor]])
                 if len(paths) >= max_paths:
@@ -387,42 +460,12 @@ def rex_data_find(
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
-    if len(pattern) > _MAX_PATTERN_CHARS:
-        raise mcp.ToolError("pattern_too_large", f"pattern exceeds {_MAX_PATTERN_CHARS} characters")
-    try:
-        matcher, pattern_length = compile_hex_pattern(pattern)
-    except HexPatternError as exc:
-        raise mcp.ToolError("invalid_pattern", str(exc)) from None
+    matcher, pattern_length = _compile_pattern(pattern)
     bounds = _resolve_section(bv, section) if section is not None else None
-    matches: list[str] = []
-    total = 0
-    truncated = False
-    for segment in bv.segments:
-        if bounds is None:
-            seg_start, seg_end = segment.start, segment.start + segment.length
-        else:
-            seg_start = max(segment.start, bounds[0])
-            seg_end = min(segment.start + segment.length, bounds[1])
-        if seg_start >= seg_end:
-            continue
-        position = seg_start
-        while position < seg_end:
-            read_size = min(_READ_CHUNK + pattern_length - 1, seg_end - position)
-            chunk = bv.read(position, read_size)
-            if chunk:
-                for match in matcher.finditer(chunk):
-                    absolute = position + match.start()
-                    total += 1
-                    if offset < total <= offset + limit:
-                        matches.append(hex(absolute))
-                    elif total > offset + limit:
-                        truncated = True
-                        break
-                if truncated:
-                    break
-            position += _READ_CHUNK
-        if truncated:
-            break
+    addresses = (
+        hex(address) for address in _iter_pattern_matches(bv, matcher, pattern_length, bounds)
+    )
+    matches, total, truncated = _paginate(addresses, offset, limit)
     return {"total": total, "truncated": truncated, "matches": matches}
 
 
@@ -467,10 +510,7 @@ def rex_decompile_many(
             raise mcp.ToolError(
                 "invalid_params", f"bad address expression '{_truncate(entry)}': {error}"
             ) from None
-        found = bv.get_functions_containing(address)
-        if not found:
-            raise mcp.ToolError("invalid_params", f"no analyzed function contains {address:#x}")
-        resolved.append(found[0])
+        resolved.append(_require_analyzed_function(bv, address))
     rendered: list[dict[str, object]] = []
     for function in resolved:
         hlil = function.hlil
@@ -508,10 +548,7 @@ def rex_disasm_at(
     bv = call.binary_view
     before = _validate_range("before", before, 0, _MAX_DISASM_CONTEXT)
     after = _validate_range("after", after, 0, _MAX_DISASM_CONTEXT)
-    functions = bv.get_functions_containing(address)
-    if not functions:
-        raise mcp.ToolError("invalid_params", f"no analyzed function contains {address:#x}")
-    function = functions[0]
+    function = _require_analyzed_function(bv, address)
     lines = _render_function_disassembly(function)
     start, end = _disasm_window(lines, address, before, after)
     return {
@@ -540,33 +577,35 @@ def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
         "bn": binaryninja,
     }
     buffer = io.StringIO()
-    has_result = False
     raw_result: str | None = None
+    error_message: str | None = None
     try:
         with contextlib.redirect_stdout(buffer):
             exec(code, namespace)
-        has_result = "result" in namespace
-        if has_result:
+        if "result" in namespace:
             # repr() inside the try: a raising __repr__ must take the error path below, not
             # escape the handler and drop the captured stdout.
             raw_result = repr(namespace["result"])
     except Exception as error:
         # Keep failures out of the mcp layer's uncapped str(error) ToolError path.
-        stdout, stdout_truncated = _truncate_with_flag(buffer.getvalue(), _MAX_EVAL_STDOUT_CHARS)
-        message, error_truncated = _truncate_with_flag(str(error))
+        error_message = str(error)
+
+    stdout, stdout_truncated = _truncate_with_flag(buffer.getvalue(), _MAX_EVAL_STDOUT_CHARS)
+    if error_message is not None:
+        error, error_truncated = _truncate_with_flag(error_message)
         return {
             "stdout": stdout,
             "stdout_truncated": stdout_truncated,
             "result": None,
             "result_truncated": False,
-            "error": message,
+            "error": error,
             "error_truncated": error_truncated,
         }
-    stdout, stdout_truncated = _truncate_with_flag(buffer.getvalue(), _MAX_EVAL_STDOUT_CHARS)
-    if has_result and raw_result is not None:
-        result, result_truncated = _truncate_with_flag(raw_result, _MAX_EVAL_RESULT_CHARS)
-    else:
-        result, result_truncated = None, False
+    result, result_truncated = (
+        _truncate_with_flag(raw_result, _MAX_EVAL_RESULT_CHARS)
+        if raw_result is not None
+        else (None, False)
+    )
     return {
         "stdout": stdout,
         "stdout_truncated": stdout_truncated,
@@ -615,10 +654,7 @@ def rex_export_disasm(
     after = _validate_range("after", after, 0, _MAX_DISASM_CONTEXT)
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_EXPORT_DISASM_LINES)
     _validate_export_path(filename)
-    functions = bv.get_functions_containing(address)
-    if not functions:
-        raise mcp.ToolError("invalid_params", f"no analyzed function contains {address:#x}")
-    lines = _render_function_disassembly(functions[0])
+    lines = _render_function_disassembly(_require_analyzed_function(bv, address))
     start, end = _disasm_window(lines, address, before, after)
     window = lines[start:end][:max_lines]
 
@@ -746,61 +782,33 @@ def rex_find_functions_by_pattern(
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
-    if len(pattern) > _MAX_PATTERN_CHARS:
-        raise mcp.ToolError("pattern_too_large", f"pattern exceeds {_MAX_PATTERN_CHARS} characters")
-    try:
-        matcher, pattern_length = compile_hex_pattern(pattern)
-    except HexPatternError as exc:
-        raise mcp.ToolError("invalid_pattern", str(exc)) from None
-    # Per-function state lives in plain typed dicts rather than in mutable dict entries:
-    # counts are accumulated per match and the entries are assembled once at the end.
-    starts: list[int] = []
-    names: dict[int, str] = {}
-    match_counts: dict[int, int] = {}
-    examples: dict[int, list[str]] = {}
-    matched_functions = 0
+    matcher, pattern_length = _compile_pattern(pattern)
+    hits: dict[int, _FunctionHits] = {}
     truncated = False
-    for segment in bv.segments:
-        position = segment.start
-        segment_end = segment.start + segment.length
-        while position < segment_end:
-            read_size = min(_READ_CHUNK + pattern_length - 1, segment_end - position)
-            chunk = bv.read(position, read_size)
-            if chunk:
-                for match in matcher.finditer(chunk):
-                    address = position + match.start()
-                    containing = bv.get_functions_containing(address)
-                    if not containing:
-                        continue
-                    function = containing[0]
-                    if function.start not in match_counts:
-                        matched_functions += 1
-                        if matched_functions > offset + limit:
-                            # The first matching function past the window proves more
-                            # exist; stop the scan there instead of counting the rest.
-                            truncated = True
-                            break
-                        starts.append(function.start)
-                        names[function.start] = _truncate(function.name)
-                        match_counts[function.start] = 0
-                        examples[function.start] = []
-                    match_counts[function.start] += 1
-                    shown = examples[function.start]
-                    if len(shown) < _MAX_FIND_FUNCTIONS_EXAMPLES:
-                        shown.append(hex(address))
-                if truncated:
-                    break
-            position += _READ_CHUNK
-        if truncated:
-            break
+    for address in _iter_pattern_matches(bv, matcher, pattern_length):
+        containing = bv.get_functions_containing(address)
+        if not containing:
+            continue
+        function = containing[0]
+        entry = hits.get(function.start)
+        if entry is None:
+            if len(hits) >= offset + limit:
+                # The first matching function past the window proves more exist; stop
+                # the scan there instead of counting the rest.
+                truncated = True
+                break
+            entry = hits[function.start] = _FunctionHits(_truncate(function.name))
+        entry.match_count += 1
+        if len(entry.addresses) < _MAX_FIND_FUNCTIONS_EXAMPLES:
+            entry.addresses.append(hex(address))
     functions = [
         {
             "start": hex(start),
-            "name": names[start],
-            "match_count": match_counts[start],
-            "addresses": examples[start],
+            "name": entry.name,
+            "match_count": entry.match_count,
+            "addresses": entry.addresses,
         }
-        for start in starts[offset:]
+        for start, entry in _drop(hits.items(), offset)
     ]
     return {"truncated": truncated, "functions": functions}
 
@@ -891,7 +899,7 @@ def rex_hlil_grep(
     scanned = 0
     truncated = False
     next_offset: int | None = None
-    for index, function in enumerate(islice(bv.functions, offset, None), offset):
+    for index, function in enumerate(_drop(bv.functions, offset), offset):
         if len(matches) >= limit or scanned >= max_functions:
             truncated = True
             next_offset = index
@@ -910,19 +918,16 @@ def rex_hlil_grep(
             if context_before == 0 and context_after == 0:
                 lines = [_truncate(source_lines[match_index]) for match_index in matched[:3]]
             else:
+                # "--" keeps windows apart even when their context ranges overlap.
                 lines = []
-                for match_index in matched[:3]:
+                for index in matched[:3]:
                     if lines:
-                        # Keep windows apart even when their context ranges overlap, so
-                        # each match's own before/after group stays identifiable.
                         lines.append("--")
-                    start = max(0, match_index - context_before)
-                    lines.extend("  " + _truncate(line) for line in source_lines[start:match_index])
-                    lines.append("> " + _truncate(source_lines[match_index]))
-                    end = match_index + 1 + context_after
-                    lines.extend(
-                        "  " + _truncate(line) for line in source_lines[match_index + 1 : end]
-                    )
+                    before = source_lines[max(0, index - context_before) : index]
+                    after = source_lines[index + 1 : index + 1 + context_after]
+                    lines.extend("  " + _truncate(line) for line in before)
+                    lines.append("> " + _truncate(source_lines[index]))
+                    lines.extend("  " + _truncate(line) for line in after)
             matches.append(
                 {
                     "start": hex(function.start),
@@ -944,8 +949,7 @@ def rex_kv_delete(call: mcp.ToolCall, key: str) -> dict[str, object]:
 
     :param key: Key to delete.
     """
-    if not key:
-        raise mcp.ToolError("invalid_key", "key must not be empty")
+    _require_key(key)
     call.binary_view.remove_metadata(_METADATA_PREFIX + key)
     return {"key": _truncate(key)}
 
@@ -956,8 +960,7 @@ def rex_kv_get(call: mcp.ToolCall, key: str) -> dict[str, object]:
 
     :param key: Key to read.
     """
-    if not key:
-        raise mcp.ToolError("invalid_key", "key must not be empty")
+    _require_key(key)
     try:
         value = call.binary_view.query_metadata(_METADATA_PREFIX + key)
     except Exception:
@@ -975,8 +978,7 @@ def rex_kv_set(call: mcp.ToolCall, key: str, value: str) -> dict[str, object]:
     :param key: Key to store under.
     :param value: String value to store.
     """
-    if not key:
-        raise mcp.ToolError("invalid_key", "key must not be empty")
+    _require_key(key)
     if len(key) > _MAX_KV_KEY_CHARS:
         # The key becomes part of the persistent metadata path with no core-side length bound.
         raise mcp.ToolError("key_too_large", f"key exceeds {_MAX_KV_KEY_CHARS} characters")
@@ -1057,38 +1059,26 @@ def rex_string_search(
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
-    matcher = _compile_user_regex(pattern, ignore_case=ignore_case) if regex else None
+    matches_text = _text_matcher(pattern, regex, ignore_case)
     bounds = _resolve_section(bv, section) if section is not None else None
-    total = 0
-    truncated = False
-    found: list[dict[str, object]] = []
-    for string in bv.strings:
+
+    def keep(string: Any) -> bool:
         if string_type is not None and string.type.name != string_type:
-            continue
+            return False
         if bounds is not None and not bounds[0] <= string.start < bounds[1]:
-            continue
-        value = string.value
-        if matcher is not None:
-            hit = matcher.search(value) is not None
-        elif ignore_case:
-            hit = pattern.lower() in value.lower()
-        else:
-            hit = pattern in value
-        if not hit:
-            continue
-        total += 1
-        if offset < total <= offset + limit:
-            found.append(
-                {
-                    "address": hex(string.start),
-                    "length": len(string),
-                    "type": string.type.name,
-                    "value": _truncate(value),
-                }
-            )
-        elif total > offset + limit:
-            truncated = True
-            break
+            return False
+        return matches_text(string.value)
+
+    page, total, truncated = _paginate(filter(keep, bv.strings), offset, limit)
+    found = [
+        {
+            "address": hex(string.start),
+            "length": len(string),
+            "type": string.type.name,
+            "value": _truncate(string.value),
+        }
+        for string in page
+    ]
     return {"total": total, "truncated": truncated, "strings": found}
 
 

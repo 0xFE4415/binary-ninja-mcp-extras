@@ -42,28 +42,28 @@ impl HexPattern {
     /// Parse a pattern such as `"48 8b ?? 05"`. All whitespace is ignored; each
     /// token is two hex digits or `??`.
     pub fn parse(pattern: &str) -> Result<Self, PatternError> {
-        let cleaned: String = pattern.split_whitespace().collect();
-        if cleaned.is_empty() {
+        let chars: Vec<char> = pattern
+            .chars()
+            .filter(|char| !char.is_whitespace())
+            .collect();
+        if chars.is_empty() {
             return Err(PatternError::new("empty hex pattern"));
         }
-        let chars: Vec<char> = cleaned.chars().collect();
         if !chars.len().is_multiple_of(2) {
             return Err(PatternError::new("hex pattern must contain whole bytes"));
         }
-        let mut bytes = Vec::with_capacity(chars.len() / 2);
-        for pair in chars.chunks(2) {
-            let token: String = pair.iter().collect();
-            if token == "??" {
-                bytes.push(None);
-                continue;
-            }
-            let Some(value) = parse_hex_byte(&token) else {
-                return Err(PatternError::new(format!(
-                    "invalid hex byte token '{token}'"
-                )));
-            };
-            bytes.push(Some(value));
-        }
+        let bytes = chars
+            .chunks(2)
+            .map(|pair| {
+                if pair == ['?', '?'] {
+                    return Ok(None);
+                }
+                parse_hex_byte(pair).map(Some).ok_or_else(|| {
+                    let token: String = pair.iter().collect();
+                    PatternError::new(format!("invalid hex byte token '{token}'"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Self { bytes })
     }
 
@@ -94,46 +94,32 @@ impl HexPattern {
     /// the pattern's first concrete byte; used as the multi-pattern automaton's
     /// prefilter needle.
     pub fn first_concrete_run(&self) -> Option<(usize, Vec<u8>)> {
-        let (start, _) = self.first_concrete()?;
-        let mut run = Vec::new();
-        for byte in &self.bytes[start..] {
-            match byte {
-                Some(value) => run.push(*value),
-                None => break,
-            }
-        }
+        let start = self.bytes.iter().position(Option::is_some)?;
+        let run = self.bytes[start..]
+            .iter()
+            .take_while(|byte| byte.is_some())
+            .filter_map(|byte| *byte)
+            .collect();
         Some((start, run))
     }
 }
 
-fn parse_hex_byte(token: &str) -> Option<u8> {
-    let bytes = token.as_bytes();
-    if bytes.len() != 2 {
+fn parse_hex_byte(pair: &[char]) -> Option<u8> {
+    let [high, low] = pair else {
         return None;
-    }
-    let high = hex_digit(bytes[0])?;
-    let low = hex_digit(bytes[1])?;
-    Some(high << 4 | low)
-}
-
-fn hex_digit(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
+    };
+    Some((high.to_digit(16)? << 4 | low.to_digit(16)?) as u8)
 }
 
 /// Truncate an echoed string the way the Python plugin's `_truncate` does, so
 /// error messages match character for character.
 pub fn truncate_echo(text: &str, limit: usize) -> String {
-    if text.chars().count() <= limit {
+    let total = text.chars().count();
+    if total <= limit {
         return text.to_string();
     }
     let kept: String = text.chars().take(limit).collect();
-    let dropped = text.chars().count() - limit;
-    format!("{kept}... [{dropped} chars truncated]")
+    format!("{kept}... [{} chars truncated]", total - limit)
 }
 
 /// True when `pattern` matches the bytes of `haystack` starting at `pos`.
@@ -141,17 +127,14 @@ pub fn truncate_echo(text: &str, limit: usize) -> String {
 /// The caller must ensure `pos + pattern.len() <= haystack.len()`; `verify_at`
 /// still bounds-checks and reports `false` instead of panicking if not.
 pub fn verify_at(haystack: &[u8], pos: usize, pattern: &[Option<u8>]) -> bool {
-    let end = match pos.checked_add(pattern.len()) {
-        Some(end) => end,
-        None => return false,
-    };
-    if end > haystack.len() {
-        return false;
-    }
-    haystack[pos..end]
-        .iter()
-        .zip(pattern)
-        .all(|(byte, expected)| expected.is_none_or(|value| value == *byte))
+    pos.checked_add(pattern.len())
+        .and_then(|end| haystack.get(pos..end))
+        .is_some_and(|window| {
+            window
+                .iter()
+                .zip(pattern)
+                .all(|(byte, expected)| expected.is_none_or(|value| value == *byte))
+        })
 }
 
 #[cfg(test)]

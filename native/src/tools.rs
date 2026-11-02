@@ -107,15 +107,15 @@ fn parse_checked_pattern(pattern: &str) -> Result<HexPattern, McpToolError> {
 /// the Python plugin's `_resolve_section` including its error text.
 fn resolve_bounds(
     view: &BinaryView,
-    section: &Option<String>,
+    section: Option<&str>,
 ) -> Result<Option<(u64, u64)>, McpToolError> {
-    let Some(name) = section else {
-        return Ok(None);
-    };
-    match view.section_by_name(name) {
-        Some(section) => Ok(Some((section.start(), section.end()))),
-        None => Err(section_not_found_error(name)),
-    }
+    section
+        .map(|name| {
+            view.section_by_name(name)
+                .map(|section| (section.start(), section.end()))
+                .ok_or_else(|| section_not_found_error(name))
+        })
+        .transpose()
 }
 
 /// The `section_not_found` error with the Python plugin's exact text, echo
@@ -164,10 +164,10 @@ where
         if !window(position, read_size) {
             return false;
         }
-        position = match position.checked_add(chunk) {
-            Some(next) => next,
-            None => break,
+        let Some(next) = position.checked_add(chunk) else {
+            break;
         };
+        position = next;
     }
     true
 }
@@ -269,7 +269,7 @@ impl TypedMcpTool for RxDataFind {
         let view = call.require_binary_view()?;
         let pagination = validate_pagination(args.limit, args.offset)?;
         let pattern = parse_checked_pattern(&args.pattern)?;
-        let bounds = resolve_bounds(&view, &args.section)?;
+        let bounds = resolve_bounds(&view, args.section.as_deref())?;
         let overlap = pattern.len().saturating_sub(1) as u64;
         let mut running = RunningScan::new();
         for_each_segment(&*view, READ_CHUNK, bounds, overlap, |base, data| {
@@ -327,17 +327,13 @@ impl TypedMcpTool for RxMultiFind {
             })
             .collect::<Result<Vec<_>, McpToolError>>()?;
         let view = call.require_binary_view()?;
-        let bounds = resolve_bounds(&view, &args.section)?;
+        let bounds = resolve_bounds(&view, args.section.as_deref())?;
         let matcher = MultiMatcher::new(&patterns);
         let mut buckets: Vec<RunningScan> =
             (0..patterns.len()).map(|_| RunningScan::new()).collect();
         // Windows must stay visible for the longest pattern: a shorter overlap
         // would drop that pattern's matches straddling a chunk edge.
-        let longest = patterns
-            .iter()
-            .map(|pattern| pattern.len())
-            .max()
-            .unwrap_or(1);
+        let longest = patterns.iter().map(HexPattern::len).max().unwrap_or(1);
         let overlap = longest.saturating_sub(1) as u64;
         for_each_segment(&*view, READ_CHUNK, bounds, overlap, |base, data| {
             matcher.scan_segment(data, base, &patterns, &mut buckets, &pagination)

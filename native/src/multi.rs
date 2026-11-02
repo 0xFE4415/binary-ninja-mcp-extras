@@ -58,17 +58,11 @@ impl MultiMatcher {
                 wildcard_only.push(pattern_index);
                 continue;
             };
-            let id = match needle_ids.get(&run) {
-                Some(id) => *id,
-                None => {
-                    let id = needles.len();
-                    needles.push(run.clone());
-                    needle_ids.insert(run, id);
-                    id
-                }
-            };
-            if owners.len() <= id {
-                owners.resize_with(id + 1, Vec::new);
+            let next_id = needles.len();
+            let id = *needle_ids.entry(run.clone()).or_insert(next_id);
+            if id == next_id {
+                needles.push(run);
+                owners.push(Vec::new());
             }
             owners[id].push(NeedleOwner {
                 pattern_index,
@@ -101,7 +95,6 @@ impl MultiMatcher {
         buckets: &mut [RunningScan],
         pagination: &Pagination,
     ) -> bool {
-        let mut done = buckets.iter().filter(|bucket| bucket.is_done()).count();
         for hit in self.automaton.find_overlapping_iter(haystack) {
             for owner in &self.owners[hit.pattern().as_usize()] {
                 let bucket = &mut buckets[owner.pattern_index];
@@ -117,34 +110,24 @@ impl MultiMatcher {
                 }
                 // Shorter-than-longest patterns re-see their seam matches in
                 // the next window; count each address once.
-                if !bucket.record_new(pagination, base + candidate as u64) {
-                    done += 1;
-                    if done == buckets.len() {
-                        return false;
-                    }
+                if !bucket.record_new(pagination, base + candidate as u64)
+                    && buckets.iter().all(RunningScan::is_done)
+                {
+                    return false;
                 }
             }
         }
         // All-wildcard patterns match at every position; scan them directly so
         // each bucket's own address order stays ascending.
         for &pattern_index in &self.wildcard_only {
-            let bucket = &mut buckets[pattern_index];
-            if bucket.is_done() {
-                continue;
-            }
-            let pattern = &patterns[pattern_index];
-            if haystack.len() < pattern.len() {
-                continue;
-            }
-            for candidate in 0..=haystack.len() - pattern.len() {
-                // An all-wildcard pattern matches unconditionally.
-                if !bucket.record_new(pagination, base + candidate as u64) {
-                    done += 1;
+            let candidates = (haystack.len() + 1).saturating_sub(patterns[pattern_index].len());
+            for candidate in 0..candidates {
+                if !buckets[pattern_index].record_new(pagination, base + candidate as u64) {
                     break;
                 }
             }
         }
-        done < buckets.len()
+        !buckets.iter().all(RunningScan::is_done)
     }
 }
 
