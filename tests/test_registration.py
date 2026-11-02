@@ -28,8 +28,11 @@ EXPECTED_NAMES = sorted(
         "rex_quick_main",
         "rex_string_read_at",
         "rex_string_search",
+        "rex_struct_from_access",
         "rex_tag_list",
         "rex_tag_set",
+        "rex_type_library_export",
+        "rex_type_library_import",
     ]
 )
 
