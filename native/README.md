@@ -84,6 +84,7 @@ The native gates are opt-in locally and always run in CI's `native` job:
 ```sh
 uvx nox -s native          # fmt, clippy (-D warnings), tests — stub-core mode
 native/scripts/install.sh  # real-core release build + flat install
+cargo mutants -j 2         # parser and scanner only, in stub-core mode
 ```
 
 `native/BENCH.md` is the live benchmark protocol; run it after any engine
