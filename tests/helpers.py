@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import enum
 import sys
 import types
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from typing import Any, override
 
 REGISTERED_TOOLS: list[tuple[str, dict[str, object], Any]] = []
@@ -246,10 +247,23 @@ class FakeFunction:
         self.hlil = hlil
         self.callers = callers if callers is not None else []
         self.callees = callees if callees is not None else []
+        self.comment = ""
+        self.user_type: object | None = None
+        self.user_type_error: Exception | None = None
+
+    def set_user_type(self, value: object) -> None:
+        if self.user_type_error is not None:
+            raise self.user_type_error
+        self.user_type = value
 
 
 class FakeFileMetadata:
-    """Mirrors the FileMetadata surface rex_binary_close touches."""
+    """Mirrors the FileMetadata surface rex_binary_close and the undo/redo tools touch.
+
+    undo()/redo() move one entry between the stacks the way BNUndo/BNRedo do, so the
+    post-operation depth rex_undo/rex_redo report is observable; error injection models
+    a core-side failure.
+    """
 
     def __init__(self, filename: str = "") -> None:
         self.filename = filename
@@ -257,6 +271,10 @@ class FakeFileMetadata:
         self.saved_marks = 0
         self.closed = False
         self.close_error: Exception | None = None
+        self.undo_entries: list[str] = []
+        self.redo_entries: list[str] = []
+        self.undo_error: Exception | None = None
+        self.redo_error: Exception | None = None
 
     @property
     def modified(self) -> bool:
@@ -272,6 +290,18 @@ class FakeFileMetadata:
         if self.close_error is not None:
             raise self.close_error
         self.closed = True
+
+    def undo(self) -> None:
+        if self.undo_error is not None:
+            raise self.undo_error
+        if self.undo_entries:
+            self.redo_entries.append(self.undo_entries.pop())
+
+    def redo(self) -> None:
+        if self.redo_error is not None:
+            raise self.redo_error
+        if self.redo_entries:
+            self.undo_entries.append(self.redo_entries.pop())
 
 
 class FakeBinaryView:
@@ -327,6 +357,10 @@ class FakeBinaryView:
             else FakeAnalysisInfo(FakeAnalysisState.IdleState, 0, [])
         )
         self.file = file if file is not None else FakeFileMetadata()
+        # rex_annotate_many: transaction lifecycle markers in application order.
+        self.transactions: list[str] = []
+        # Injected into parse_type_string to model a type string the core rejects.
+        self.parse_type_error: Exception | None = None
 
     def get_section_by_name(self, name: str) -> object:
         if name not in self._sections:
@@ -408,6 +442,29 @@ class FakeBinaryView:
 
     def remove_user_function(self, function: FakeFunction) -> None:
         self.removed_functions.append(function)
+
+    def undo(self) -> None:
+        # The real BinaryView.undo delegates to the file (binaryview.py self._file.undo()).
+        self.file.undo()
+
+    def redo(self) -> None:
+        self.file.redo()
+
+    def parse_type_string(self, text: str) -> tuple[str, str]:
+        if self.parse_type_error is not None:
+            raise self.parse_type_error
+        return text, text
+
+    @contextlib.contextmanager
+    def undoable_transaction(self) -> Generator[None]:
+        """Record the lifecycle the real context manager drives: commit, or revert + raise."""
+        self.transactions.append("open")
+        try:
+            yield
+        except Exception:
+            self.transactions.append("revert")
+            raise
+        self.transactions.append("commit")
 
     @property
     def tag_types(self) -> dict[str, object]:

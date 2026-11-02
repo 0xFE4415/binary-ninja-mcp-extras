@@ -60,6 +60,8 @@ clients that already connected must reconnect to see the registered tools.
 | `rex_tag_list` | List the tags set on the binary view. |
 | `rex_kv_set` / `rex_kv_get` / `rex_kv_delete` | Persistent scratch key-value store. |
 | `rex_eval_python` | Arbitrary `binaryninja` Python scripting (destructive escape hatch). |
+| `rex_undo` / `rex_redo` | Undo/redo the view's last transaction, with post-operation stack depths (destructive). |
+| `rex_annotate_many` | Rename/comment/retype up to 100 functions in one undoable transaction (destructive). |
 
 Search tools return `total`, `truncated`, and paginated results via `limit`/`offset` so
 agents never need to page through unbounded listings. Size parameters (`limit`, `offset`,

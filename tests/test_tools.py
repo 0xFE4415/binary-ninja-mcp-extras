@@ -2810,3 +2810,311 @@ def test_export_symbols_rejects_invalid_ranges_limits_and_format() -> None:
         _call(view), 0x1000, 0x4000, limit=tools._MAX_EXPORT_SYMBOLS, filename="cap.csv"
     )
     assert at_cap["rows"] == 3
+
+
+def _annotate_view() -> FakeBinaryView:
+    main = FakeFunction("main", 0x1100, 0x1200)
+    helper = FakeFunction("helper", 0x2000, 0x2100)
+    return FakeBinaryView(functions=[main, helper])
+
+
+def test_undo_and_redo_round_trip_and_report_stack_depths() -> None:
+    metadata = FakeFileMetadata()
+    metadata.undo_entries = ["patch bytes", "rename main"]
+    view = FakeBinaryView(file=metadata)
+    _, undo = get_tool("rex_undo")
+    # Depths are the post-operation state: undo_left dropped, redo_left gained the entry.
+    assert undo(_call(view)) == {"undone": True, "undo_left": 1, "redo_left": 1}
+    assert metadata.undo_entries == ["patch bytes"]
+    assert metadata.redo_entries == ["rename main"]
+    _, redo = get_tool("rex_redo")
+    assert redo(_call(view)) == {"redone": True, "undo_left": 2, "redo_left": 0}
+    assert metadata.undo_entries == ["patch bytes", "rename main"]
+    assert metadata.redo_entries == []
+    # An empty stack is a core-side no-op reported as such, not an error.
+    assert undo(_call(FakeBinaryView())) == {"undone": True, "undo_left": 0, "redo_left": 0}
+    assert redo(_call(FakeBinaryView())) == {"redone": True, "undo_left": 0, "redo_left": 0}
+
+
+def test_undo_and_redo_report_core_failures() -> None:
+    metadata = FakeFileMetadata()
+    metadata.undo_error = RuntimeError("no undo entries")
+    view = FakeBinaryView(file=metadata)
+    _, undo = get_tool("rex_undo")
+    with pytest.raises(FakeToolError) as exc:
+        undo(_call(view))
+    assert exc.value.code == "undo_failed"
+    assert "no undo entries" in exc.value.message
+    metadata.redo_error = RuntimeError("no redo entries")
+    _, redo = get_tool("rex_redo")
+    with pytest.raises(FakeToolError) as exc:
+        redo(_call(view))
+    assert exc.value.code == "redo_failed"
+    assert "no redo entries" in exc.value.message
+
+
+def test_annotate_many_applies_name_comment_and_type_in_one_transaction() -> None:
+    view = _annotate_view()
+    main, helper = view.functions
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [
+            {"addr": "0x1150", "name": "read_config", "comment": "parses rc file"},
+            {"addr": 0x2000, "prototype": "int helper(int fd)"},
+        ],
+    )
+    # Success rows echo the annotated function's start, not the mid-function input.
+    assert result == {
+        "applied": 2,
+        "failed": 0,
+        "results": [{"addr": "0x1100", "ok": True}, {"addr": "0x2000", "ok": True}],
+    }
+    assert main.name == "read_config"
+    assert main.comment == "parses rc file"
+    assert main.user_type is None
+    assert helper.name == "helper"
+    assert helper.comment == ""
+    assert helper.user_type == "int helper(int fd)"
+    # One transaction for the whole batch: a single undo step, committed not reverted.
+    assert view.transactions == ["open", "commit"]
+
+
+def test_annotate_many_reports_a_missing_function_per_item() -> None:
+    view = _annotate_view()
+    main, _helper = view.functions
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [{"addr": "0x1800", "name": "ghost"}, {"addr": "0x1100", "name": "renamed"}],
+    )
+    assert result == {
+        "applied": 1,
+        "failed": 1,
+        "results": [
+            {"addr": "0x1800", "ok": False, "error": "no analyzed function contains 0x1800"},
+            {"addr": "0x1100", "ok": True},
+        ],
+    }
+    # The batch still applies and commits; only the dead item failed.
+    assert main.name == "renamed"
+    assert view.transactions == ["open", "commit"]
+
+
+def test_annotate_many_skips_the_transaction_when_every_item_fails() -> None:
+    view = _annotate_view()
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [{"addr": "0x9999", "name": "ghost"}, "not an object"],
+    )
+    assert result == {
+        "applied": 0,
+        "failed": 2,
+        "results": [
+            {"addr": "0x9999", "ok": False, "error": "no analyzed function contains 0x9999"},
+            {
+                "addr": "'not an object'",
+                "ok": False,
+                "error": "each item must be a JSON object",
+            },
+        ],
+    }
+    # Nothing to apply, so no undo step is created at all.
+    assert view.transactions == []
+
+
+def test_annotate_many_reports_item_content_errors_per_item() -> None:
+    view = _annotate_view()
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [
+            {"comment": "no addr here"},
+            {"addr": 1.5, "name": "x"},
+            {"addr": True, "name": "x"},
+            {"addr": "garbage"},
+            {"addr": "0x1100", "name": "ok", "hue": "blue"},
+        ],
+    )
+    (missing, mistyped, boolean, unparsable, unknown) = result["results"]
+    assert missing == {
+        "addr": "{'comment': 'no addr here'}",
+        "ok": False,
+        "error": "addr is required",
+    }
+    assert mistyped == {
+        "addr": "1.5",
+        "ok": False,
+        "error": "addr must be an integer or a string address expression",
+    }
+    # bool is an int subclass: a JSON true/false address is a caller bug, not an address.
+    assert boolean == {
+        "addr": "True",
+        "ok": False,
+        "error": "addr must be an integer or a string address expression",
+    }
+    assert unparsable == {
+        "addr": "garbage",
+        "ok": False,
+        "error": "bad address expression: unparsable address expression 'garbage'",
+    }
+    assert unknown == {"addr": "0x1100", "ok": False, "error": "unknown field(s): hue"}
+    assert result["applied"] == 0
+    assert result["failed"] == 5
+
+
+def test_annotate_many_rejects_bad_batch_shape_and_size() -> None:
+    view = _annotate_view()
+    _, annotate = get_tool("rex_annotate_many")
+    with pytest.raises(FakeToolError) as exc:
+        annotate(FakeParsingToolCall(view), "0x1100")
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == "items must be a list of annotation objects"
+    for batch in ([], [{"addr": "0x1100"}] * (tools._MAX_ANNOTATE_ITEMS + 1)):
+        with pytest.raises(FakeToolError) as exc:
+            annotate(FakeParsingToolCall(view), batch)
+        assert exc.value.code == "invalid_params"
+        assert exc.value.message == (
+            f"items must contain between 1 and {tools._MAX_ANNOTATE_ITEMS} entries"
+        )
+    # Exactly the batch cap is accepted.
+    at_cap = annotate(
+        FakeParsingToolCall(view), [{"addr": "0x1100", "name": "same"}] * tools._MAX_ANNOTATE_ITEMS
+    )
+    assert at_cap["applied"] == tools._MAX_ANNOTATE_ITEMS
+
+
+def test_annotate_many_treats_prototype_and_type_as_one_path() -> None:
+    view = _annotate_view()
+    main, _helper = view.functions
+    _, annotate = get_tool("rex_annotate_many")
+    # Identical strings are one set: the API has a single user-type setter underneath.
+    agree = annotate(
+        FakeParsingToolCall(view),
+        [{"addr": "0x1100", "prototype": "int main(void)", "type": "int main(void)"}],
+    )
+    assert agree["applied"] == 1
+    assert main.user_type == "int main(void)"
+    committed = len(view.transactions)
+    disagree = annotate(
+        FakeParsingToolCall(view),
+        [{"addr": "0x1100", "prototype": "int main(void)", "type": "void main(void)"}],
+    )
+    assert disagree == {
+        "applied": 0,
+        "failed": 1,
+        "results": [
+            {
+                "addr": "0x1100",
+                "ok": False,
+                "error": (
+                    "prototype and type are the same operation; give identical strings or only one"
+                ),
+            }
+        ],
+    }
+    # The disagreeing item staged nothing, so no second undo step was created.
+    assert len(view.transactions) == committed
+
+
+def test_annotate_many_rejects_an_unparsable_type_before_applying_anything() -> None:
+    view = _annotate_view()
+    main, _helper = view.functions
+    view.parse_type_error = SyntaxError("expected ';'")
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [{"addr": "0x1100", "name": "renamed", "type": "int main(void)"}],
+    )
+    assert result == {
+        "applied": 0,
+        "failed": 1,
+        "results": [{"addr": "0x1100", "ok": False, "error": "bad type: expected ';'"}],
+    }
+    # An item is atomic: a failing type must not leave the rename half-applied.
+    assert main.name == "main"
+    assert main.comment == ""
+    assert view.transactions == []
+
+
+def test_annotate_many_rolls_back_when_the_core_fails_mid_apply() -> None:
+    view = _annotate_view()
+    _main, helper = view.functions
+    helper.user_type_error = RuntimeError("core exploded")
+    _, annotate = get_tool("rex_annotate_many")
+    with pytest.raises(FakeToolError) as exc:
+        annotate(
+            FakeParsingToolCall(view),
+            [
+                {"addr": "0x1100", "name": "renamed"},
+                {"addr": "0x2000", "type": "int helper(int)"},
+            ],
+        )
+    assert exc.value.code == "annotate_failed"
+    assert "core exploded" in exc.value.message
+    # The fake records the revert marker; the real core reverts the whole batch inside
+    # undoable_transaction, which is what the response's "rolled back" wording relies on.
+    assert view.transactions == ["open", "revert"]
+
+
+def test_annotate_many_rejects_oversized_or_mistyped_strings_per_item() -> None:
+    view = _annotate_view()
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [
+            {"addr": "0x1100", "name": ""},
+            {"addr": "0x1100", "name": 7},
+            {"addr": "0x1100", "name": "x" * (tools._MAX_ANNOTATE_NAME_CHARS + 1)},
+            {"addr": "0x1100", "comment": 5},
+            {"addr": "0x1100", "comment": "c" * (tools._MAX_ANNOTATE_COMMENT_CHARS + 1)},
+            {"addr": "0x1100", "prototype": ""},
+            {"addr": "0x1100", "type": "t" * (tools._MAX_ANNOTATE_TYPE_CHARS + 1)},
+        ],
+    )
+    rows = result["results"]
+    assert rows[0]["error"] == "name must be a non-empty string"
+    assert rows[1]["error"] == "name must be a non-empty string"
+    assert rows[2]["error"] == f"name exceeds {tools._MAX_ANNOTATE_NAME_CHARS} characters"
+    assert rows[3]["error"] == "comment must be a string"
+    assert rows[4]["error"] == f"comment exceeds {tools._MAX_ANNOTATE_COMMENT_CHARS} characters"
+    assert rows[5]["error"] == "prototype must be a non-empty string"
+    assert rows[6]["error"] == f"type exceeds {tools._MAX_ANNOTATE_TYPE_CHARS} characters"
+    assert result["applied"] == 0
+    assert result["failed"] == 7
+    assert view.transactions == []
+
+
+def test_annotate_many_accepts_strings_exactly_at_the_caps() -> None:
+    view = _annotate_view()
+    main, _helper = view.functions
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [
+            {
+                "addr": "0x1100",
+                "name": "n" * tools._MAX_ANNOTATE_NAME_CHARS,
+                "comment": "c" * tools._MAX_ANNOTATE_COMMENT_CHARS,
+                "type": "t" * tools._MAX_ANNOTATE_TYPE_CHARS,
+            }
+        ],
+    )
+    assert result["applied"] == 1
+    assert result["failed"] == 0
+    assert main.name == "n" * tools._MAX_ANNOTATE_NAME_CHARS
+    assert main.comment == "c" * tools._MAX_ANNOTATE_COMMENT_CHARS
+    assert main.user_type == "t" * tools._MAX_ANNOTATE_TYPE_CHARS
+
+
+def test_annotate_many_lists_all_unknown_fields() -> None:
+    view = _annotate_view()
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [{"addr": "0x1100", "hue": "blue", "tint": "warm"}],
+    )
+    assert result["results"] == [
+        {"addr": "0x1100", "ok": False, "error": "unknown field(s): hue, tint"}
+    ]

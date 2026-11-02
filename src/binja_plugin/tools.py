@@ -91,6 +91,35 @@ _METADATA_PREFIX = "rex/"
 _TAG_ICON = "\u25c6"
 _STRING_TYPES = Literal["AsciiString", "Utf16String", "Utf32String", "Utf8String"]
 _EXPORT_FORMATS = Literal["csv", "json"]
+# rex_undo/rex_redo echo post-operation stack depths (never the entry text) so an agent
+# can stop when the depth stops changing.
+# rex_annotate_many caps: 100 items bound one call's mutation cost and its echoed result
+# rows; the string caps bound what reaches the core per field. The name cap is far below
+# any sane symbol length, the type cap matches the pattern-string cap (both feed a
+# parser), and the comment cap matches the tag-data cap.
+_MAX_ANNOTATE_ITEMS = 100
+_MAX_ANNOTATE_NAME_CHARS = 256
+_MAX_ANNOTATE_COMMENT_CHARS = 65536
+_MAX_ANNOTATE_TYPE_CHARS = 8192
+_ANNOTATE_FIELDS = frozenset({"addr", "name", "comment", "prototype", "type"})
+# Schema-side description of one rex_annotate_many item. The bundled mcp layer cannot
+# describe object arrays structurally: mcp.Schema hands the item through as decoded JSON
+# and the handler validates every field, so this schema is what the client sees while
+# the checks below are what actually rejects.
+_ANNOTATE_ITEMS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "addr": {
+            "type": ["integer", "string"],
+            "description": "address expression at or inside the function to annotate",
+        },
+        "name": {"type": "string", "minLength": 1, "maxLength": _MAX_ANNOTATE_NAME_CHARS},
+        "comment": {"type": "string", "maxLength": _MAX_ANNOTATE_COMMENT_CHARS},
+        "prototype": {"type": "string", "minLength": 1, "maxLength": _MAX_ANNOTATE_TYPE_CHARS},
+        "type": {"type": "string", "minLength": 1, "maxLength": _MAX_ANNOTATE_TYPE_CHARS},
+    },
+    "required": ["addr"],
+}
 
 
 def _validate_range(name: str, value: int, minimum: int, maximum: int | None = None) -> int:
@@ -448,6 +477,123 @@ def _fit_to_export_cap[ExportRow](
         dropped = True
 
 
+@dataclass
+class _AnnotationPlan:
+    """One fully validated annotation, staged for the batch transaction's apply phase."""
+
+    function: Function
+    name: str | None = None
+    comment: str | None = None
+    parsed_type: object | None = None
+
+
+def _annotate_item_error(item: object, message: str) -> dict[str, object]:
+    """Result row for an item too broken to carry an address: echo the whole item."""
+    return {"addr": _truncate(repr(item)), "ok": False, "error": message}
+
+
+def _annotate_addr_error(addr_value: object, message: str) -> dict[str, object]:
+    """Result row for an item whose address itself failed a check: echo the address."""
+    return {"addr": _truncate(str(addr_value)), "ok": False, "error": message}
+
+
+def _annotate_function_error(address: int, message: str) -> dict[str, object]:
+    """Result row for an item that parsed to a known address but failed there."""
+    return {"addr": hex(address), "ok": False, "error": message}
+
+
+def _annotate_resolve(
+    call: mcp.ToolCall, bv: BinaryView, item: Any
+) -> tuple[dict[str, object], _AnnotationPlan | None]:
+    """Validate one annotation item completely, staging a plan only if it can fully apply.
+
+    The type string is parsed up front and discarded until the apply phase, so an item
+    can never half-apply: everything that can fail on the item's own content fails here,
+    before any mutation is staged.
+    """
+    if not isinstance(item, dict):
+        return _annotate_item_error(item, "each item must be a JSON object"), None
+    if "addr" not in item:
+        return _annotate_item_error(item, "addr is required"), None
+    addr_value = item["addr"]
+    if not isinstance(addr_value, (int, str)) or isinstance(addr_value, bool):
+        # bool is an int subclass: a JSON true/false address is a caller bug.
+        return (
+            _annotate_addr_error(
+                addr_value, "addr must be an integer or a string address expression"
+            ),
+            None,
+        )
+    unknown = sorted(str(key) for key in item if key not in _ANNOTATE_FIELDS)
+    if unknown:
+        return _annotate_addr_error(addr_value, f"unknown field(s): {', '.join(unknown)}"), None
+    try:
+        address = call.parse_address(addr_value)
+    except Exception as error:
+        return _annotate_addr_error(addr_value, f"bad address expression: {error}"), None
+    functions = bv.get_functions_containing(address)
+    if not functions:
+        return (
+            _annotate_function_error(address, f"no analyzed function contains {address:#x}"),
+            None,
+        )
+    function = functions[0]
+    name = item.get("name")
+    comment = item.get("comment")
+    if name is not None and (not isinstance(name, str) or not name):
+        return _annotate_function_error(address, "name must be a non-empty string"), None
+    if name is not None and len(name) > _MAX_ANNOTATE_NAME_CHARS:
+        return (
+            _annotate_function_error(
+                address, f"name exceeds {_MAX_ANNOTATE_NAME_CHARS} characters"
+            ),
+            None,
+        )
+    if comment is not None and not isinstance(comment, str):
+        return _annotate_function_error(address, "comment must be a string"), None
+    if comment is not None and len(comment) > _MAX_ANNOTATE_COMMENT_CHARS:
+        return (
+            _annotate_function_error(
+                address, f"comment exceeds {_MAX_ANNOTATE_COMMENT_CHARS} characters"
+            ),
+            None,
+        )
+    prototype = item.get("prototype")
+    type_text = item.get("type")
+    for field_name, value in (("prototype", prototype), ("type", type_text)):
+        if value is not None and (not isinstance(value, str) or not value):
+            return (
+                _annotate_function_error(address, f"{field_name} must be a non-empty string"),
+                None,
+            )
+        if value is not None and len(value) > _MAX_ANNOTATE_TYPE_CHARS:
+            return (
+                _annotate_function_error(
+                    address, f"{field_name} exceeds {_MAX_ANNOTATE_TYPE_CHARS} characters"
+                ),
+                None,
+            )
+    if prototype is not None and type_text is not None and prototype != type_text:
+        return (
+            _annotate_function_error(
+                address,
+                "prototype and type are the same operation; give identical strings or only one",
+            ),
+            None,
+        )
+    type_string = prototype if prototype is not None else type_text
+    parsed_type: object | None = None
+    if type_string is not None:
+        try:
+            parsed_type, _ = bv.parse_type_string(type_string)
+        except Exception as error:
+            return _annotate_function_error(address, f"bad type: {_truncate(str(error))}"), None
+    return (
+        {"addr": hex(function.start), "ok": True},
+        _AnnotationPlan(function=function, name=name, comment=comment, parsed_type=parsed_type),
+    )
+
+
 @mcp.tool(read_only=True)
 def rex_analysis_wait(
     call: mcp.ToolCall,
@@ -477,6 +623,70 @@ def rex_analysis_wait(
         completed = _analysis_is_idle(bv)
     elapsed_ms = round((time.monotonic() - started) * 1000)
     return {"completed": completed, "elapsed_ms": elapsed_ms, **_analysis_snapshot(bv)}
+
+
+@mcp.tool(destructive=True)
+def rex_annotate_many(
+    call: mcp.ToolCall,
+    items: list[Annotated[Any, mcp.Schema(_ANNOTATE_ITEMS_SCHEMA)]],
+) -> dict[str, object]:
+    """Apply many function annotations in one undoable transaction.
+
+    Batch counterpart of one-at-a-time renaming and commenting: up to 100 items of
+    ``{addr, name?, comment?, prototype?, type?}`` in one call. Every item resolves
+    before anything is applied; the applying items commit inside a single
+    ``bv.undoable_transaction()`` (begin actions, commit on success, revert and re-raise
+    on failure), so the whole batch is one undo step that ``rex_undo`` reverses as a
+    unit. If a core error escapes mid-apply, the context manager has already reverted
+    every change and the response says the batch rolled back.
+
+    Per-item failures never abort the batch: an address with no analyzed function, an
+    unparsable address, or an invalid field is one ``{"ok": false}`` row while the other
+    items still apply. When every item fails, nothing is applied and no undo step is
+    created. Each row echoes the annotated function's start on success (the input may
+    have been mid-function or a symbol name) or what was looked up on failure.
+
+    ``prototype`` and ``type`` are aliases, not two paths: Binary Ninja stores one user
+    type per function and both go through ``Function.set_user_type``. The string is
+    parsed per item with the parsed name discarded — unlike the ``type`` property setter,
+    which would also rename the function. Give identical strings, or only one.
+
+    Per item the apply order is ``comment``, then the type, then ``name`` last, so an
+    explicit ``name`` has the final word on naming.
+
+    :param items: 1 to 100 objects of ``{addr, name?, comment?, prototype?, type?}``;
+        ``addr`` is an address expression (integer or string), the rest are strings.
+    """
+    bv = call.binary_view
+    if not isinstance(items, list):
+        raise mcp.ToolError("invalid_params", "items must be a list of annotation objects")
+    if not 1 <= len(items) <= _MAX_ANNOTATE_ITEMS:
+        raise mcp.ToolError(
+            "invalid_params", f"items must contain between 1 and {_MAX_ANNOTATE_ITEMS} entries"
+        )
+    results: list[dict[str, object]] = []
+    staged: list[_AnnotationPlan] = []
+    for item in items:
+        row, plan = _annotate_resolve(call, bv, item)
+        results.append(row)
+        if plan is not None:
+            staged.append(plan)
+    if staged:
+        try:
+            with bv.undoable_transaction():
+                for plan in staged:
+                    if plan.comment is not None:
+                        plan.function.comment = plan.comment
+                    if plan.parsed_type is not None:
+                        plan.function.set_user_type(plan.parsed_type)
+                    if plan.name is not None:
+                        plan.function.name = plan.name
+        except Exception as error:
+            # undoable_transaction reverted the whole batch core-side before this runs;
+            # saying so keeps a caller from retrying a half-applied batch.
+            raise mcp.ToolError("annotate_failed", f"batch rolled back: {error}") from None
+    applied = sum(1 for row in results if row["ok"] is True)
+    return {"applied": applied, "failed": len(results) - applied, "results": results}
 
 
 @mcp.tool(destructive=True)
@@ -1235,6 +1445,26 @@ def rex_quick_main(
     }
 
 
+@mcp.tool(destructive=True)
+def rex_redo(call: mcp.ToolCall) -> dict[str, object]:
+    """Redo the last undone transaction in the view's undo database.
+
+    The counterpart of rex_undo: re-applies the entry rex_undo most recently took off
+    the undo stack. The stack is shared with the GUI user, so this may redo their last
+    undone edit too. An empty stack is a core-side no-op, not an error; the
+    post-operation depths report the state the caller lands in.
+    """
+    try:
+        call.binary_view.redo()
+    except Exception as error:
+        raise mcp.ToolError("redo_failed", f"could not redo: {error}") from None
+    return {
+        "redone": True,
+        "undo_left": len(call.binary_view.file.undo_entries),
+        "redo_left": len(call.binary_view.file.redo_entries),
+    }
+
+
 @mcp.tool(read_only=True)
 def rex_string_read_at(
     call: mcp.ToolCall,
@@ -1364,4 +1594,26 @@ def rex_tag_set(
         "data": data_preview,
         "data_truncated": data_truncated,
         "length": len(data),
+    }
+
+
+@mcp.tool(destructive=True)
+def rex_undo(call: mcp.ToolCall) -> dict[str, object]:
+    """Undo the last committed transaction in the view's undo database.
+
+    The rollback for the plugin's destructive tools: one rex_undo step reverses one
+    whole rex_annotate_many batch, a rex_memory_write, and anything else committed as
+    a transaction. The stack is shared with the GUI user, so this may roll back their
+    most recent edit too. An empty stack is a core-side no-op, not an error — the
+    post-operation ``undo_left``/``redo_left`` depths let a caller stop when ``undo_left``
+    stops changing.
+    """
+    try:
+        call.binary_view.undo()
+    except Exception as error:
+        raise mcp.ToolError("undo_failed", f"could not undo: {error}") from None
+    return {
+        "undone": True,
+        "undo_left": len(call.binary_view.file.undo_entries),
+        "redo_left": len(call.binary_view.file.redo_entries),
     }

@@ -9,3 +9,6 @@ class Function:
     callees: list[Function]
     hlil: Any
     mlil: Any
+    comment: str
+
+    def set_user_type(self, value: Any) -> None: ...

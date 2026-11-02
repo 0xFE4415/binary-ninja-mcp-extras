@@ -60,3 +60,9 @@ def tool(
     open_world: bool = False,
     output_schema: dict[str, Any] | None = None,
 ) -> Callable[[_ToolFunction], _ToolFunction]: ...
+class Schema:
+    """Supplies a JSON Schema for a parameter the other annotations cannot describe."""
+
+    schema: dict[str, Any]
+
+    def __init__(self, schema: dict[str, Any]) -> None: ...
