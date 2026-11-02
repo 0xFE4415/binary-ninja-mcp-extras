@@ -83,6 +83,30 @@ impl RunningScan {
     }
 }
 
+/// Enumerate every position an all-wildcard pattern matches: a haystack of
+/// `haystack_len` bytes holds `(haystack_len + 1).saturating_sub(pattern_len)`
+/// candidate starts, passed to `record` in ascending order with `base` added.
+///
+/// Returns `false` — and stops the enumeration — at the first candidate
+/// `record` declines. What that stops is the caller's decision, and that is
+/// exactly where the two scans differ: the single-pattern walk stops the whole
+/// scan, while the multi-pattern walk breaks only the one bucket's
+/// enumeration and keeps scanning the rest.
+pub(crate) fn for_each_all_wildcard_candidate(
+    haystack_len: usize,
+    pattern_len: usize,
+    base: u64,
+    mut record: impl FnMut(u64) -> bool,
+) -> bool {
+    let candidates = (haystack_len + 1).saturating_sub(pattern_len);
+    for candidate in 0..candidates {
+        if !record(base + candidate as u64) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Scan one in-memory segment for `pattern`, recording into `running`.
 ///
 /// `base` is the absolute address of `haystack[0]`. The scan prefilters with
@@ -107,14 +131,16 @@ pub fn scan_pattern(
     if haystack.len() < pattern_len {
         return true;
     }
-    let last_start = haystack.len() - pattern_len;
     if let Some((offset, anchor)) = pattern.first_concrete() {
         for hit in memchr_iter(anchor, haystack) {
             // The candidate match starts `offset` bytes before the anchor.
             let Some(candidate) = hit.checked_sub(offset) else {
                 continue;
             };
-            if candidate > last_start {
+            if candidate
+                .checked_add(pattern_len)
+                .is_none_or(|end| end > haystack.len())
+            {
                 // Anchors only move right, so no later candidate can fit.
                 break;
             }
@@ -126,11 +152,12 @@ pub fn scan_pattern(
             }
         }
     } else {
-        // Every position matches an all-wildcard pattern.
-        for candidate in 0..=last_start {
-            if !running.record(pagination, base + candidate as u64) {
-                return false;
-            }
+        // Every position matches an all-wildcard pattern, and a declined
+        // candidate stops this whole scan (the single-pattern contract).
+        if !for_each_all_wildcard_candidate(haystack.len(), pattern_len, base, |addr| {
+            running.record(pagination, addr)
+        }) {
+            return false;
         }
     }
     true
@@ -344,13 +371,7 @@ mod tests {
     /// reference matcher on pseudo-random inputs (fixed LCG seed, no rand dep).
     #[test]
     fn agrees_with_naive_reference_on_random_inputs() {
-        let mut lcg: u64 = 0x5145_5145;
-        let mut next = move || {
-            lcg = lcg
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            (lcg >> 33) as u32
-        };
+        let mut next = crate::test_rng(0x5145_5145);
         for case in 0..200u32 {
             let hay_len = (next() % 64) as usize;
             let hay: Vec<u8> = (0..hay_len)
@@ -362,7 +383,7 @@ mod tests {
             let pat_len = 1 + (next() % 5) as usize;
             let tokens: Vec<Option<u8>> = (0..pat_len)
                 .map(|_| {
-                    if next() % 3 == 0 {
+                    if next().is_multiple_of(3) {
                         None
                     } else {
                         Some((next() % 4) as u8)

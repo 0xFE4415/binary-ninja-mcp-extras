@@ -11,7 +11,11 @@ pub const MAX_PATTERN_CHARS: usize = 8192;
 pub const TRUNCATE_CHARS: usize = 512;
 
 /// A parse failure whose message is shown to the tool caller verbatim.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// `Debug` is the only derive: callers read `message` directly (the MCP error
+/// carries it as a string), so Display/Error/equality/cloning would be a
+/// second, never-exercised error path.
+#[derive(Debug)]
 pub struct PatternError {
     pub message: String,
 }
@@ -24,16 +28,8 @@ impl PatternError {
     }
 }
 
-impl std::fmt::Display for PatternError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for PatternError {}
-
 /// A parsed hex byte pattern: one entry per byte, `None` for a wildcard byte.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct HexPattern {
     bytes: Vec<Option<u8>>,
 }
@@ -82,10 +78,11 @@ impl HexPattern {
 
     /// The first concrete (non-wildcard) byte and its index in the pattern.
     pub fn first_concrete(&self) -> Option<(usize, u8)> {
-        self.bytes
-            .iter()
-            .enumerate()
-            .find_map(|(index, byte)| byte.map(|value| (index, value)))
+        // The run always begins at the pattern's first concrete byte, so its
+        // first element is exactly that byte (the run is never empty when
+        // `first_concrete_run` returns Some).
+        self.first_concrete_run()
+            .map(|(start, run)| (start, run[0]))
     }
 
     /// The first maximal run of concrete bytes: its start index and values.

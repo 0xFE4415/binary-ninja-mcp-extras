@@ -16,6 +16,20 @@ mod multi;
 mod scan;
 mod tools;
 
+/// Seeded LCG for the differential tests (no rand dependency): Knuth's MMIX
+/// multiplier/addend, high 33 bits as the output. Each test seeds its own
+/// instance, so its cases stay independent and reproducible.
+#[cfg(test)]
+pub(crate) fn test_rng(seed: u64) -> impl FnMut() -> u32 {
+    let mut state: u64 = seed;
+    move || {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (state >> 33) as u32
+    }
+}
+
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub extern "C" fn CorePluginInit() -> bool {
