@@ -1,7 +1,8 @@
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
-from binaryninja.enums import AnalysisState
+from binaryninja.component import Component
+from binaryninja.enums import AnalysisState, DerivedStringLocationType
 from binaryninja.filemetadata import FileMetadata
 from binaryninja.function import Function
 from binaryninja.types import NamedTypeReferenceType, StructureType, Type
@@ -113,3 +114,38 @@ class BinaryView:
     def get_type_by_name(self, name: Any) -> Type | None: ...
     def define_type(self, type_id: str, default_name: Any, type_obj: Any) -> Any: ...
     def create_structure_from_offset_access(self, name: Any) -> StructureType: ...
+    derived_strings: list[DerivedString]
+    root_component: Component
+
+    def create_component(
+        self, name: str | None = None, parent: Component | str | None = None
+    ) -> Component: ...
+    def get_component_by_path(self, path: str) -> Component | None: ...
+    def get_derived_string_code_refs(
+        self, derived_string: DerivedString, max_items: int | None = None
+    ) -> Iterator[ReferenceSource]: ...
+
+
+class StringRef:
+    """Deduplicated reference to a string owned by the core; convert with str()."""
+
+    def __len__(self) -> int: ...
+    def __str__(self) -> str: ...
+
+
+class DerivedStringLocation:
+    location_type: DerivedStringLocationType
+    address: int
+    length: int
+
+
+class DerivedString:
+    value: StringRef
+    location: DerivedStringLocation | None
+    custom_type: Any
+
+
+class ReferenceSource:
+    function: Function | None
+    arch: Any
+    address: int
