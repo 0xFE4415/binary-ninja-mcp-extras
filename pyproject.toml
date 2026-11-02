@@ -54,6 +54,12 @@ target-version = "py313"
 select = ["E", "F", "I", "W", "UP"]
 ignore = ["D"]
 
+[tool.ruff.lint.per-file-ignores]
+# The tools package registry re-exports every tool handler after defining the shared
+# helpers those modules import from it, so its imports are intentionally bottom-loaded
+# and unused-in-module.
+"src/binja_plugin/tools/__init__.py" = ["E402", "F401"]
+
 [tool.ty.rules]
 all = "error"
 

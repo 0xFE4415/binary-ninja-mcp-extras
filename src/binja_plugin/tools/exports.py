@@ -1,0 +1,168 @@
+"""Anti-flood file exports: disassembly windows and symbol tables written to disk."""
+
+from __future__ import annotations
+
+import csv
+import io
+import json
+from typing import Annotated, Literal
+
+from binaryninja import mcp
+
+from binja_plugin.tools import (
+    _MAX_DISASM_CONTEXT,
+    _disasm_window,
+    _fit_to_export_cap,
+    _render_function_disassembly,
+    _require_analyzed_function,
+    _resolve_export_path,
+    _validate_disasm_window,
+    _validate_export_path,
+    _validate_range,
+    _write_export_file,
+)
+
+_MAX_EXPORT_DISASM_LINES = 400
+_MAX_EXPORT_SYMBOLS = 2000
+
+_EXPORT_FORMATS = Literal["csv", "json"]
+
+
+@mcp.tool(destructive=True)
+def rex_export_disasm(
+    call: mcp.ToolCall,
+    address: mcp.Address,
+    before: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DISASM_CONTEXT)] = 4,
+    after: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DISASM_CONTEXT)] = 8,
+    max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_EXPORT_DISASM_LINES)] = 200,
+    filename: str = "",
+) -> dict[str, object]:
+    """Export one analyzed function's disassembly window to a file.
+
+    Anti-flood export: the rendered lines are written to disk and the response echoes
+    only ``path``, ``bytes_written``, ``lines`` and ``truncated`` — never the
+    disassembly text itself, so a large sweep cannot flood the MCP response. Address
+    handling matches rex_disasm_at exactly: the window is anchored at the instruction
+    containing ``address``, clipped at the containing function's edges, and an address
+    outside every analyzed function is rejected rather than snapped to the nearest one.
+
+    Accepted cost: the render materializes the whole function's disassembly lines in
+    memory before the ``max_lines`` cap and the export byte cap apply — the same cost
+    class as the existing echo tools. Each file line is the rendered instruction text
+    (the ``text`` field rex_disasm_at echoes), one instruction per line, LF endings.
+    ``truncated`` is true unless the file holds every rendered addressed line of the
+    containing function: lines were left out by the before/after window, ``max_lines``,
+    or the byte cap.
+
+    :param address: Address expression inside the target function; accepts hex like
+        0x401000, symbols, and Binary Ninja expressions.
+    :param before: Instructions to include before the anchor (0 to 64).
+    :param after: Instructions to include after the anchor (0 to 64).
+    :param max_lines: Maximum number of lines to export (1 to 400).
+    :param filename: Plain file name inside the export root; overwritten if it exists.
+    """
+    bv = call.binary_view
+    before, after = _validate_disasm_window(before, after)
+    max_lines = _validate_range("max_lines", max_lines, 1, _MAX_EXPORT_DISASM_LINES)
+    _validate_export_path(filename)
+    lines = _render_function_disassembly(_require_analyzed_function(bv, address))
+    start, end = _disasm_window(lines, address, before, after)
+    window = lines[start:end][:max_lines]
+
+    def serialize(selected: list[tuple[int, str]]) -> str:
+        return "".join(f"{text}\n" for _, text in selected)
+
+    text, dropped = _fit_to_export_cap(serialize, window)
+    resolved = _resolve_export_path(filename)
+    return {
+        "path": str(resolved),
+        "bytes_written": _write_export_file(resolved, text),
+        "lines": len(window),
+        "truncated": len(window) < len(lines) or dropped,
+    }
+
+
+@mcp.tool(destructive=True)
+def rex_export_symbols(
+    call: mcp.ToolCall,
+    start: Annotated[int, mcp.Minimum(0)],
+    end: int,
+    limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_EXPORT_SYMBOLS)] = 500,
+    offset: Annotated[int, mcp.Minimum(0)] = 0,
+    format: _EXPORT_FORMATS = "csv",
+    filename: str = "",
+) -> dict[str, object]:
+    """Export the symbols in an address range to a file.
+
+    Anti-flood export: symbols are written to disk and the response echoes only
+    ``path``, ``bytes_written``, ``rows``, ``total`` and ``truncated`` — never the
+    symbol table itself. Symbols come from the core's range query
+    (``bv.get_symbols(start, length)``), are sorted by address ascending, and ``total``
+    is the exact count in ``[start, end)``; the window is ``offset`` to
+    ``offset + limit`` of that sorted list.
+
+    The sort-then-slice here is a deliberate divergence from the early-stop pagination
+    of the string search tools: an export file must contain the true window of the
+    sorted listing, not an unsorted first-fit subset, and the range query already bounds
+    the enumeration cost.
+
+    CSV rows are ``symbol_address,symbol_type,name`` with commas in names quoted by the
+    csv module; JSON is an indented array of the window's rows. Both are written UTF-8
+    with LF endings. ``truncated`` is true when the window was clipped by
+    ``offset``/``limit`` or when rows were dropped from its end to fit the export byte
+    cap.
+
+    :param start: Start of the address range (inclusive, >= 0).
+    :param end: End of the address range (exclusive); must be greater than ``start``.
+    :param limit: Maximum number of symbols to export (0 to 2000).
+    :param offset: Number of sorted symbols to skip before the window starts (>= 0).
+    :param format: Output format, "csv" or "json".
+    :param filename: Plain file name inside the export root; overwritten if it exists.
+    """
+    bv = call.binary_view
+    limit = _validate_range("limit", limit, 0, _MAX_EXPORT_SYMBOLS)
+    offset = _validate_range("offset", offset, 0)
+    start = _validate_range("start", start, 0)
+    if start >= end:
+        raise mcp.ToolError("invalid_params", "end must be greater than start")
+    _validate_export_path(filename)
+    # The schema-side Literal and the body-side check below must agree; widening to str
+    # keeps the body check statically reachable for direct handler invocation.
+    requested: str = format
+    if requested not in ("csv", "json"):
+        raise mcp.ToolError("invalid_params", f"format must be 'csv' or 'json', not '{requested}'")
+    symbols = bv.get_symbols(start, end - start)
+    # Core symbol order is not guaranteed sorted; sort before slicing so the file holds
+    # a true window of the address-ordered listing (see the docstring above).
+    ordered = sorted(symbols, key=lambda symbol: symbol.address)
+    total = len(ordered)
+    window = [
+        (symbol.address, symbol.type.name, symbol.name)
+        for symbol in ordered[offset : offset + limit]
+    ]
+
+    def serialize(rows: list[tuple[int, str, str]]) -> str:
+        if requested == "csv":
+            buffer = io.StringIO()
+            writer = csv.writer(buffer, lineterminator="\n")
+            writer.writerow(["symbol_address", "symbol_type", "name"])
+            for address, symbol_type, name in rows:
+                writer.writerow([hex(address), symbol_type, name])
+            return buffer.getvalue()
+        return json.dumps(
+            [
+                {"symbol_address": hex(address), "symbol_type": symbol_type, "name": name}
+                for address, symbol_type, name in rows
+            ],
+            indent=2,
+        )
+
+    text, dropped = _fit_to_export_cap(serialize, window)
+    resolved = _resolve_export_path(filename)
+    return {
+        "path": str(resolved),
+        "bytes_written": _write_export_file(resolved, text),
+        "rows": len(window),
+        "truncated": offset + limit < total or dropped,
+        "total": total,
+    }

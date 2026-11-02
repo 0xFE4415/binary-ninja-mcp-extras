@@ -7,7 +7,10 @@ import enum
 import sys
 import types
 from collections.abc import Callable, Generator, Iterator
+from pathlib import Path
 from typing import Any, override
+
+import pytest
 
 REGISTERED_TOOLS: list[tuple[str, dict[str, object], Any]] = []
 
@@ -816,3 +819,112 @@ class FakeComponent:
         self.added_functions.append(function)
         self.functions.append(function)
         return True
+
+
+# --- view builders and tool-call fakes shared by the per-category tool test modules ----------
+
+
+def _call(view: FakeBinaryView) -> FakeToolCall:
+    return FakeToolCall(view)
+
+
+def _view_with_functions() -> FakeBinaryView:
+    main = FakeFunction(
+        "main",
+        0x1100,
+        0x1200,
+        hlil=RenderableText("void main() {\n    if (recv(fd, buf, n) <= 0)\n        return 1;\n}"),
+    )
+    handler = FakeFunction("handler", 0x2000, 0x2100)
+    sink = FakeFunction("sink", 0x3000, 0x3100)
+    main.callers = [handler]
+    handler.callers = [sink]
+    sink.callees = [handler]
+    handler.callees = [main]
+    return FakeBinaryView(functions=[main, handler, sink])
+
+
+class FakeDisassemblyLine:
+    """Mirrors the DisassemblyTextLine fields rex_disasm_at reads."""
+
+    def __init__(self, address: int | None, text: str) -> None:
+        self.address = address
+        self.tokens = [text]
+
+
+class FakeBasicBlock:
+    def __init__(self, lines: list[tuple[int | None, str]]) -> None:
+        self._lines = lines
+
+    def get_disassembly_text(self) -> list[FakeDisassemblyLine]:
+        return [FakeDisassemblyLine(address, text) for address, text in self._lines]
+
+
+class FakeDisasmFunction(FakeFunction):
+    """FakeFunction with the basic_blocks attribute rex_disasm_at reads."""
+
+    def __init__(
+        self,
+        name: str,
+        start: int,
+        end: int,
+        blocks: list[FakeBasicBlock],
+        hlil: object = None,
+    ) -> None:
+        super().__init__(name, start, end, hlil=hlil)
+        self.basic_blocks = blocks
+
+
+def _disasm_view() -> FakeBinaryView:
+    main = FakeDisasmFunction(
+        "main",
+        0x1100,
+        0x1200,
+        blocks=[
+            FakeBasicBlock(
+                [
+                    (0x1100, "push rbp"),
+                    (0x1101, "mov rbp, rsp"),
+                    (0x1104, "sub rsp, 0x20"),
+                    (0x1108, "mov eax, 1"),
+                    (0x110D, "leave"),
+                    (0x110E, "ret"),
+                ]
+            )
+        ],
+    )
+    handler = FakeDisasmFunction(
+        "handler", 0x2000, 0x2100, blocks=[FakeBasicBlock([(0x2000, "push rbp"), (0x2001, "ret")])]
+    )
+    return FakeBinaryView(functions=[main, handler])
+
+
+class FakeParsingToolCall(FakeToolCall):
+    """FakeToolCall with the parse_address surface rex_decompile_many/rex_quick_main read.
+
+    Deliberately raises a plain ValueError for unparsable input instead of a ToolError:
+    the handler owns the conversion of expression-parse failures to invalid_params, so
+    the fake must not hand it an error to pass through. ``data_<hex>`` tokens resolve the
+    way the core's address-expression parser was observed to resolve them live.
+    """
+
+    def parse_address(self, value: object, here: int = 0) -> int:
+        text = value if isinstance(value, str) else str(value)
+        try:
+            return int(text, 16) if text.lower().startswith("0x") else int(text, 10)
+        except ValueError:
+            pass
+        if text.startswith("data_"):
+            return int(text[5:], 16)
+        raise ValueError(f"unparsable address expression '{text}'") from None
+
+
+def _use_export_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point the export tools at a per-test root so nothing lands in the real home."""
+    # Deferred: helpers is imported before the fake binaryninja is installed, so a
+    # module-level binja_plugin import here would pull in the real (absent) package.
+    from binja_plugin import tools
+
+    root = tmp_path / "exports"
+    monkeypatch.setattr(tools, "_EXPORT_ROOT", root)
+    return root
