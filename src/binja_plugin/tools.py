@@ -11,7 +11,6 @@ import csv
 import io
 import json
 import re
-import sys
 import time
 from bisect import bisect_right
 from collections import deque
@@ -116,8 +115,8 @@ _EXPORT_FORMATS = Literal["csv", "json"]
 _MAX_ANNOTATE_ITEMS = 100
 _MAX_ANNOTATE_NAME_CHARS = 256
 _MAX_ANNOTATE_COMMENT_CHARS = 65536
-_MAX_ANNOTATE_TYPE_CHARS = 8192
-_ANNOTATE_FIELDS = frozenset({"addr", "name", "comment", "prototype", "type"})
+_MAX_ANNOTATE_PROTOTYPE_CHARS = 8192
+_ANNOTATE_FIELDS = frozenset({"addr", "name", "comment", "prototype"})
 # Schema-side description of one rex_annotate_many item. The bundled mcp layer cannot
 # describe object arrays structurally: mcp.Schema hands the item through as decoded JSON
 # and the handler validates every field, so this schema is what the client sees while
@@ -131,8 +130,7 @@ _ANNOTATE_ITEMS_SCHEMA: dict[str, Any] = {
         },
         "name": {"type": "string", "minLength": 1, "maxLength": _MAX_ANNOTATE_NAME_CHARS},
         "comment": {"type": "string", "maxLength": _MAX_ANNOTATE_COMMENT_CHARS},
-        "prototype": {"type": "string", "minLength": 1, "maxLength": _MAX_ANNOTATE_TYPE_CHARS},
-        "type": {"type": "string", "minLength": 1, "maxLength": _MAX_ANNOTATE_TYPE_CHARS},
+        "prototype": {"type": "string", "minLength": 1, "maxLength": _MAX_ANNOTATE_PROTOTYPE_CHARS},
     },
     "required": ["addr"],
 }
@@ -168,6 +166,21 @@ def _validate_range(name: str, value: int, minimum: int, maximum: int | None = N
     return value
 
 
+def _validate_text(name: str, value: str, maximum: int, too_large_code: str) -> str:
+    """Reject an empty or over-cap string argument instead of silently normalizing it.
+
+    The string-cap counterpart of _validate_range: the empty check follows the bundled
+    mcp layer's argument-error convention, and ``too_large_code`` names the over-cap
+    code — the per-parameter ``*_too_large`` family for strings that persist or are
+    echoed whole, ``invalid_params`` for bounded path/list-entry parameters.
+    """
+    if not value:
+        raise mcp.ToolError("invalid_params", f"{name} must not be empty")
+    if len(value) > maximum:
+        raise mcp.ToolError(too_large_code, f"{name} exceeds {maximum} characters")
+    return value
+
+
 def _truncate_with_flag(value: str, limit: int = _MAX_CHARS) -> tuple[str, bool]:
     if len(value) <= limit:
         return value, False
@@ -199,8 +212,20 @@ def _resolve_section(bv: BinaryView, name: str) -> tuple[int, int]:
     return section.start, section.end
 
 
-def _drop[Item](items: Iterable[Item], count: int) -> Iterator[Item]:
-    return islice(items, min(count, sys.maxsize), None)
+def _skip(iterator: Iterator[object], offset: int) -> int:
+    """Consume and discard up to ``offset`` items, returning how many actually existed.
+
+    The one offset-skip mechanism behind _drop and _paginate. zip over range, not
+    islice: the offset is unbounded and islice rejects values above sys.maxsize.
+    """
+    return sum(1 for _ in zip(range(offset), iterator))
+
+
+def _drop[Item](items: Iterable[Item], offset: int) -> Iterator[Item]:
+    """Yield the items of ``items`` past the first ``offset``."""
+    iterator = iter(items)
+    _skip(iterator, offset)
+    return iterator
 
 
 def _paginate[Item](items: Iterable[Item], offset: int, limit: int) -> tuple[list[Item], int, bool]:
@@ -210,8 +235,7 @@ def _paginate[Item](items: Iterable[Item], offset: int, limit: int) -> tuple[lis
     not truncated.
     """
     iterator = iter(items)
-    # zip over range, not islice: offset is unbounded and islice rejects values above sys.maxsize.
-    skipped = sum(1 for _ in zip(range(offset), iterator))
+    skipped = _skip(iterator, offset)
     page = list(islice(iterator, limit))
     truncated = bool(list(islice(iterator, 1)))
     return page, skipped + len(page) + int(truncated), truncated
@@ -232,11 +256,23 @@ def _require_key(key: str) -> None:
         raise mcp.ToolError("invalid_key", "key must not be empty")
 
 
-def _require_analyzed_function(bv: BinaryView, address: int) -> Function:
+def _require_containing_function(
+    bv: BinaryView, address: int, code: str, described: str
+) -> Function:
+    """Return the function containing ``address``, or reject with the caller's convention.
+
+    One containment lookup, two deliberate client-visible error conventions (both pinned
+    by tests): scan-style tools answer ``no_function`` for a bare containment miss, while
+    argument-validating tools treat the same miss as a bad parameter.
+    """
     functions = bv.get_functions_containing(address)
     if not functions:
-        raise mcp.ToolError("invalid_params", f"no analyzed function contains {address:#x}")
+        raise mcp.ToolError(code, f"no {described} contains {address:#x}")
     return functions[0]
+
+
+def _require_analyzed_function(bv: BinaryView, address: int) -> Function:
+    return _require_containing_function(bv, address, "invalid_params", "analyzed function")
 
 
 def _compile_pattern(pattern: str) -> tuple[re.Pattern[bytes], int]:
@@ -278,14 +314,21 @@ def _iter_pattern_matches(
 
 
 def _require_function(bv: BinaryView, address: int) -> Function:
-    functions = bv.get_functions_containing(address)
-    if not functions:
-        raise mcp.ToolError("no_function", f"no function contains {address:#x}")
-    return functions[0]
+    return _require_containing_function(bv, address, "no_function", "function")
 
 
 def _function_entry(function: Function) -> dict[str, object]:
     return {"start": hex(function.start), "name": _truncate(function.name)}
+
+
+def _render_hlil_lines(hlil: Any, max_lines: int) -> tuple[list[str], bool]:
+    """Render a function's HLIL to at most ``max_lines`` truncated lines.
+
+    Shared by rex_decompile_many and rex_quick_main so both tools echo exactly the same
+    render. The flag reports lines left out by the cap, never clipped text.
+    """
+    source_lines = str(hlil).splitlines() if hlil is not None else []
+    return [_truncate(line) for line in source_lines[:max_lines]], len(source_lines) > max_lines
 
 
 def _render_function_disassembly(function: Any) -> list[tuple[int, str]]:
@@ -316,6 +359,17 @@ def _disasm_window(
     start = max(0, anchor - before)
     end = min(len(lines), anchor + 1 + after)
     return start, end
+
+
+def _validate_disasm_window(before: int, after: int) -> tuple[int, int]:
+    """Range-check the shared before/after window parameters of the disasm tools.
+
+    rex_disasm_at and rex_export_disasm expose the identical window surface with the
+    same caps, so both reject the same values with the same messages.
+    """
+    before = _validate_range("before", before, 0, _MAX_DISASM_CONTEXT)
+    after = _validate_range("after", after, 0, _MAX_DISASM_CONTEXT)
+    return before, after
 
 
 def _analysis_is_idle(bv: BinaryView) -> bool:
@@ -596,33 +650,19 @@ def _annotate_resolve(
             None,
         )
     prototype = item.get("prototype")
-    type_text = item.get("type")
-    for field_name, value in (("prototype", prototype), ("type", type_text)):
-        if value is not None and (not isinstance(value, str) or not value):
-            return (
-                _annotate_function_error(address, f"{field_name} must be a non-empty string"),
-                None,
-            )
-        if value is not None and len(value) > _MAX_ANNOTATE_TYPE_CHARS:
-            return (
-                _annotate_function_error(
-                    address, f"{field_name} exceeds {_MAX_ANNOTATE_TYPE_CHARS} characters"
-                ),
-                None,
-            )
-    if prototype is not None and type_text is not None and prototype != type_text:
+    if prototype is not None and (not isinstance(prototype, str) or not prototype):
+        return _annotate_function_error(address, "prototype must be a non-empty string"), None
+    if prototype is not None and len(prototype) > _MAX_ANNOTATE_PROTOTYPE_CHARS:
         return (
             _annotate_function_error(
-                address,
-                "prototype and type are the same operation; give identical strings or only one",
+                address, f"prototype exceeds {_MAX_ANNOTATE_PROTOTYPE_CHARS} characters"
             ),
             None,
         )
-    type_string = prototype if prototype is not None else type_text
     parsed_type: object | None = None
-    if type_string is not None:
+    if prototype is not None:
         try:
-            parsed_type, _ = bv.parse_type_string(type_string)
+            parsed_type, _ = bv.parse_type_string(prototype)
         except Exception as error:
             return _annotate_function_error(address, f"bad type: {_truncate(str(error))}"), None
     return (
@@ -648,13 +688,7 @@ def _validate_type_names(names: list[str]) -> list[str]:
     for index, name in enumerate(names):
         if not isinstance(name, str):
             raise mcp.ToolError("invalid_params", f"names[{index}] must be a string type name")
-        if not name:
-            raise mcp.ToolError("invalid_params", f"names[{index}] must not be empty")
-        if len(name) > _MAX_TYPE_NAME_CHARS:
-            raise mcp.ToolError(
-                "invalid_params",
-                f"names[{index}] exceeds {_MAX_TYPE_NAME_CHARS} characters",
-            )
+        _validate_text(f"names[{index}]", name, _MAX_TYPE_NAME_CHARS, "invalid_params")
     return names
 
 
@@ -667,12 +701,7 @@ def _validate_component_path(parameter: str, path: str) -> str:
     "/" selects the root component, which is resolved through the root_component
     property rather than the undocumented "/" pathname lookup.
     """
-    if not path:
-        raise mcp.ToolError("invalid_params", f"{parameter} must not be empty")
-    if len(path) > _MAX_COMPONENT_PATH_CHARS:
-        raise mcp.ToolError(
-            "invalid_params", f"{parameter} exceeds {_MAX_COMPONENT_PATH_CHARS} characters"
-        )
+    _validate_text(parameter, path, _MAX_COMPONENT_PATH_CHARS, "invalid_params")
     if not path.startswith("/"):
         raise mcp.ToolError(
             "invalid_params", f"{parameter} must be an absolute path starting with '/'"
@@ -700,6 +729,25 @@ def _component_child_path(parent_path: str, display_name: str) -> str:
     # removesuffix is an exact match, where a strip-set would act silently on any tail.
     prefix = parent_path.removesuffix("/")
     return f"{prefix}/{display_name}"
+
+
+def _run_undo_stack_step(
+    call: mcp.ToolCall, step: Callable[[], None], failed_code: str, verb: str, done: str
+) -> dict[str, object]:
+    """Shared body of rex_undo and rex_redo: run one undo-database step, echo the depths.
+
+    The depths are read after the step, so a caller can stop when ``undo_left`` stops
+    changing; an empty stack is a core-side no-op, not an error.
+    """
+    try:
+        step()
+    except Exception as error:
+        raise mcp.ToolError(failed_code, f"could not {verb}: {error}") from None
+    return {
+        done: True,
+        "undo_left": len(call.binary_view.file.undo_entries),
+        "redo_left": len(call.binary_view.file.redo_entries),
+    }
 
 
 @mcp.tool(read_only=True)
@@ -741,7 +789,7 @@ def rex_annotate_many(
     """Apply many function annotations in one undoable transaction.
 
     Batch counterpart of one-at-a-time renaming and commenting: up to 100 items of
-    ``{addr, name?, comment?, prototype?, type?}`` in one call. Every item resolves
+    ``{addr, name?, comment?, prototype?}`` in one call. Every item resolves
     before anything is applied; the applying items commit inside a single
     ``bv.undoable_transaction()`` (begin actions, commit on success, revert and re-raise
     on failure), so the whole batch is one undo step that ``rex_undo`` reverses as a
@@ -764,15 +812,14 @@ def rex_annotate_many(
     item order with last write winning: a repeated field is overwritten by the later
     item, and each item still counts as applied.
 
-    ``prototype`` and ``type`` are aliases, not two paths: Binary Ninja stores one user
-    type per function and both go through ``Function.set_user_type``. The string is
-    parsed per item with the parsed name discarded — unlike the ``type`` property setter,
-    which would also rename the function. Give identical strings, or only one.
+    ``prototype`` sets the function's user type — its signature: Binary Ninja stores one
+    user type per function. The string is parsed per item with the parsed name discarded,
+    unlike assigning the ``type`` property, which would also rename the function.
 
-    Per item the apply order is ``comment``, then the type, then ``name`` last, so an
-    explicit ``name`` has the final word on naming.
+    Per item the apply order is ``comment``, then the prototype, then ``name`` last, so
+    an explicit ``name`` has the final word on naming.
 
-    :param items: 1 to 100 objects of ``{addr, name?, comment?, prototype?, type?}``;
+    :param items: 1 to 100 objects of ``{addr, name?, comment?, prototype?}``;
         ``addr`` is an address expression (integer or string), the rest are strings.
     """
     bv = call.binary_view
@@ -940,10 +987,7 @@ def rex_component_add_functions(
             raise mcp.ToolError(
                 "invalid_params", f"bad address expression '{_truncate(entry)}': {error}"
             ) from None
-        functions_found = bv.get_functions_containing(address)
-        if not functions_found:
-            raise mcp.ToolError("invalid_params", f"no analyzed function contains {address:#x}")
-        resolved.append(functions_found[0])
+        resolved.append(_require_analyzed_function(bv, address))
     component = _resolve_component(call, path)
     results = []
     for function in resolved:
@@ -982,15 +1026,10 @@ def rex_component_create(
     :param name: Name of the new component; must not be empty or contain '/'.
     :param parent_path: Absolute path of the parent component (empty or "/" for top-level).
     """
-    if not name:
-        raise mcp.ToolError("invalid_params", "name must not be empty")
-    if len(name) > _MAX_COMPONENT_NAME_CHARS:
-        # Over-cap strings reject with the plugin's per-parameter *_too_large code family,
-        # not the integer-argument invalid_params convention, so the same mistake maps to
-        # the same code class in every tool.
-        raise mcp.ToolError(
-            "name_too_large", f"name exceeds {_MAX_COMPONENT_NAME_CHARS} characters"
-        )
+    # Over-cap strings reject with the plugin's per-parameter *_too_large code family,
+    # not the integer-argument invalid_params convention, so the same mistake maps to
+    # the same code class in every tool.
+    _validate_text("name", name, _MAX_COMPONENT_NAME_CHARS, "name_too_large")
     if "/" in name:
         # "/" is the path delimiter, so a name containing one can never be addressed by path.
         raise mcp.ToolError("invalid_params", "name must not contain '/'")
@@ -1199,15 +1238,8 @@ def rex_decompile_many(
         resolved.append(_require_analyzed_function(bv, address))
     rendered: list[dict[str, object]] = []
     for function in resolved:
-        hlil = function.hlil
-        source_lines = str(hlil).splitlines() if hlil is not None else []
-        rendered.append(
-            {
-                **_function_entry(function),
-                "lines": [_truncate(line) for line in source_lines[:max_lines]],
-                "truncated": len(source_lines) > max_lines,
-            }
-        )
+        lines, truncated = _render_hlil_lines(function.hlil, max_lines)
+        rendered.append({**_function_entry(function), "lines": lines, "truncated": truncated})
     return {"functions": rendered}
 
 
@@ -1222,9 +1254,10 @@ def rex_derived_string_refs(
 ) -> dict[str, object]:
     """Code references to strings derived from code or data.
 
-    rex_string_search only sees statically backed strings; this tool sweeps the view's
-    derived strings — the statically backed ones plus strings the core's string
-    recognizers synthesize, such as stack-built buffers — and resolves each string's
+    rex_string_search only sees statically backed strings and is the only tool of the
+    two with section/type filters; this tool sweeps the view's derived strings — the
+    statically backed ones plus strings the core's string recognizers synthesize, such
+    as stack-built buffers — and resolves each string's
     code references through the core. Every reported string carries at most 20 code
     refs, each with its source function and instruction address, and refs_truncated
     marks a string with more. A string without a location is still reported: its refs
@@ -1300,8 +1333,7 @@ def rex_disasm_at(
     :param after: Instructions to include after the anchor (0 to 64).
     """
     bv = call.binary_view
-    before = _validate_range("before", before, 0, _MAX_DISASM_CONTEXT)
-    after = _validate_range("after", after, 0, _MAX_DISASM_CONTEXT)
+    before, after = _validate_disasm_window(before, after)
     function = _require_analyzed_function(bv, address)
     lines = _render_function_disassembly(function)
     start, end = _disasm_window(lines, address, before, after)
@@ -1327,6 +1359,10 @@ def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
     This is the only tool that answers with a success-shaped error, so protocol-level
     error handling never fires for it — check ``error`` is None instead of relying on
     the call having raised.
+
+    The exec namespace binds the active view as ``bv``, the tool call as ``call``, and
+    the ``binaryninja`` module twice: as ``binaryninja`` and under the short alias ``bn``
+    for brevity in one-liners.
 
     :param code: Python source to execute; assign to ``result`` to return a value.
     """
@@ -1410,8 +1446,7 @@ def rex_export_disasm(
     :param filename: Plain file name inside the export root; overwritten if it exists.
     """
     bv = call.binary_view
-    before = _validate_range("before", before, 0, _MAX_DISASM_CONTEXT)
-    after = _validate_range("after", after, 0, _MAX_DISASM_CONTEXT)
+    before, after = _validate_disasm_window(before, after)
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_EXPORT_DISASM_LINES)
     _validate_export_path(filename)
     lines = _render_function_disassembly(_require_analyzed_function(bv, address))
@@ -1794,16 +1829,15 @@ def rex_quick_main(
         )
     main, method, note = _resolve_main(bv, call, functions[0])
     function = main if main is not None else functions[0]
-    hlil = function.hlil
-    source_lines = str(hlil).splitlines() if hlil is not None else []
+    lines, truncated = _render_hlil_lines(function.hlil, max_lines)
     return {
         "entry_point": hex(entry_point),
         "method": method,
         "main": hex(main.start) if main is not None else None,
         "note": note,
         "function": _function_entry(function),
-        "lines": [_truncate(line) for line in source_lines[:max_lines]],
-        "truncated": len(source_lines) > max_lines,
+        "lines": lines,
+        "truncated": truncated,
     }
 
 
@@ -1816,15 +1850,7 @@ def rex_redo(call: mcp.ToolCall) -> dict[str, object]:
     undone edit too. An empty stack is a core-side no-op, not an error; the
     post-operation depths report the state the caller lands in.
     """
-    try:
-        call.binary_view.redo()
-    except Exception as error:
-        raise mcp.ToolError("redo_failed", f"could not redo: {error}") from None
-    return {
-        "redone": True,
-        "undo_left": len(call.binary_view.file.undo_entries),
-        "redo_left": len(call.binary_view.file.redo_entries),
-    }
+    return _run_undo_stack_step(call, call.binary_view.redo, "redo_failed", "redo", "redone")
 
 
 @mcp.tool(read_only=True)
@@ -1851,18 +1877,8 @@ def rex_report_show(
         the active Binary View.
     """
     bv = call.binary_view
-    if not title:
-        raise mcp.ToolError("invalid_params", "title must not be empty")
-    if len(title) > _MAX_REPORT_TITLE_CHARS:
-        raise mcp.ToolError(
-            "title_too_large", f"title exceeds {_MAX_REPORT_TITLE_CHARS} characters"
-        )
-    if not markdown:
-        raise mcp.ToolError("invalid_params", "markdown must not be empty")
-    if len(markdown) > _MAX_REPORT_CONTENT_CHARS:
-        raise mcp.ToolError(
-            "content_too_large", f"markdown exceeds {_MAX_REPORT_CONTENT_CHARS} characters"
-        )
+    _validate_text("title", title, _MAX_REPORT_TITLE_CHARS, "title_too_large")
+    _validate_text("markdown", markdown, _MAX_REPORT_CONTENT_CHARS, "content_too_large")
     # On command-line hosts the default interaction handler displays only the plaintext
     # variant, and an empty plaintext shows nothing; the markdown is its own plaintext so
     # the report survives the degradation.
@@ -1908,6 +1924,11 @@ def rex_string_search(
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> dict[str, object]:
     """Search the binary's detected strings by substring or regular expression.
+
+    This is the filtered view over the statically backed strings: only here can a scan
+    be scoped by ``section`` or ``string_type``. rex_derived_string_refs covers the
+    wider string domain — the static ones plus recognizer-synthesized strings — but
+    carries no section/type filters; pick by filter need, not by coverage.
 
     Regular expressions run on Python's ``re`` with no timeout, so a pattern with
     catastrophic backtracking can stall the search; prefer substring mode for untrusted input.
@@ -1966,11 +1987,8 @@ def rex_struct_from_access(call: mcp.ToolCall, name: str) -> dict[str, object]:
     :param name: Name for the new structure (1 to 255 characters).
     """
     bv = call.binary_view
-    if not name:
-        raise mcp.ToolError("invalid_params", "name must not be empty")
-    if len(name) > _MAX_TYPE_NAME_CHARS:
-        # The plugin's per-parameter *_too_large string-cap code family.
-        raise mcp.ToolError("name_too_large", f"name exceeds {_MAX_TYPE_NAME_CHARS} characters")
+    # The plugin's per-parameter *_too_large string-cap code family.
+    _validate_text("name", name, _MAX_TYPE_NAME_CHARS, "name_too_large")
     try:
         structure = bv.create_structure_from_offset_access(name)
     except Exception as error:
@@ -2094,13 +2112,8 @@ def rex_type_library_export(
     :param filename: Plain file name inside the export root; overwritten if it exists.
     """
     bv = call.binary_view
-    if not library_name:
-        raise mcp.ToolError("invalid_params", "library_name must not be empty")
-    if len(library_name) > _MAX_TYPE_NAME_CHARS:
-        # The plugin's per-parameter *_too_large string-cap code family.
-        raise mcp.ToolError(
-            "library_name_too_large", f"library_name exceeds {_MAX_TYPE_NAME_CHARS} characters"
-        )
+    # The plugin's per-parameter *_too_large string-cap code family.
+    _validate_text("library_name", library_name, _MAX_TYPE_NAME_CHARS, "library_name_too_large")
     _validate_type_names(names)
     _validate_export_path(filename)
     # The schema-side Literal and the body-side check below must agree; widening to str
@@ -2241,12 +2254,4 @@ def rex_undo(call: mcp.ToolCall) -> dict[str, object]:
     one-call experiment per operation: read ``undo_left`` before and after the
     interleaved write — a depth change means this tool would roll it back.
     """
-    try:
-        call.binary_view.undo()
-    except Exception as error:
-        raise mcp.ToolError("undo_failed", f"could not undo: {error}") from None
-    return {
-        "undone": True,
-        "undo_left": len(call.binary_view.file.undo_entries),
-        "redo_left": len(call.binary_view.file.redo_entries),
-    }
+    return _run_undo_stack_step(call, call.binary_view.undo, "undo_failed", "undo", "undone")

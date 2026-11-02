@@ -2935,7 +2935,7 @@ def test_undo_and_redo_report_core_failures() -> None:
     assert "no redo entries" in exc.value.message
 
 
-def test_annotate_many_applies_name_comment_and_type_in_one_transaction() -> None:
+def test_annotate_many_applies_name_comment_and_prototype_in_one_transaction() -> None:
     view = _annotate_view()
     main, helper = view.functions
     _, annotate = get_tool("rex_annotate_many")
@@ -3075,49 +3075,36 @@ def test_annotate_many_rejects_bad_batch_shape_and_size() -> None:
     assert at_cap["applied"] == tools._MAX_ANNOTATE_ITEMS
 
 
-def test_annotate_many_treats_prototype_and_type_as_one_path() -> None:
+def test_annotate_many_rejects_the_removed_type_alias_as_an_unknown_field() -> None:
     view = _annotate_view()
     main, _helper = view.functions
     _, annotate = get_tool("rex_annotate_many")
-    # Identical strings are one set: the API has a single user-type setter underneath.
-    agree = annotate(
+    # "prototype" is the one user-type path: "type" was its alias before the collapse and
+    # is now rejected like any unknown field, so a caller cannot silently half-set a type.
+    result = annotate(
         FakeParsingToolCall(view),
         [{"addr": "0x1100", "prototype": "int main(void)", "type": "int main(void)"}],
     )
-    assert agree["applied"] == 1
-    assert main.user_type == "int main(void)"
-    committed = len(view.transactions)
-    disagree = annotate(
-        FakeParsingToolCall(view),
-        [{"addr": "0x1100", "prototype": "int main(void)", "type": "void main(void)"}],
-    )
-    assert disagree == {
+    assert result == {
         "applied": 0,
         "failed": 1,
         "failed_count": 1,
         "total": 1,
-        "results": [
-            {
-                "addr": "0x1100",
-                "ok": False,
-                "error": (
-                    "prototype and type are the same operation; give identical strings or only one"
-                ),
-            }
-        ],
+        "results": [{"addr": "0x1100", "ok": False, "error": "unknown field(s): type"}],
     }
-    # The disagreeing item staged nothing, so no second undo step was created.
-    assert len(view.transactions) == committed
+    # The rejected item staged nothing: no type applied, no undo step created.
+    assert main.user_type is None
+    assert view.transactions == []
 
 
-def test_annotate_many_rejects_an_unparsable_type_before_applying_anything() -> None:
+def test_annotate_many_rejects_an_unparsable_prototype_before_applying_anything() -> None:
     view = _annotate_view()
     main, _helper = view.functions
     view.parse_type_error = SyntaxError("expected ';'")
     _, annotate = get_tool("rex_annotate_many")
     result = annotate(
         FakeParsingToolCall(view),
-        [{"addr": "0x1100", "name": "renamed", "type": "int main(void)"}],
+        [{"addr": "0x1100", "name": "renamed", "prototype": "int main(void)"}],
     )
     assert result == {
         "applied": 0,
@@ -3142,7 +3129,7 @@ def test_annotate_many_rolls_back_when_the_core_fails_mid_apply() -> None:
             FakeParsingToolCall(view),
             [
                 {"addr": "0x1100", "name": "renamed"},
-                {"addr": "0x2000", "type": "int helper(int)"},
+                {"addr": "0x2000", "prototype": "int helper(int)"},
             ],
         )
     assert exc.value.code == "annotate_failed"
@@ -3164,7 +3151,7 @@ def test_annotate_many_rejects_oversized_or_mistyped_strings_per_item() -> None:
             {"addr": "0x1100", "comment": 5},
             {"addr": "0x1100", "comment": "c" * (tools._MAX_ANNOTATE_COMMENT_CHARS + 1)},
             {"addr": "0x1100", "prototype": ""},
-            {"addr": "0x1100", "type": "t" * (tools._MAX_ANNOTATE_TYPE_CHARS + 1)},
+            {"addr": "0x1100", "prototype": "t" * (tools._MAX_ANNOTATE_PROTOTYPE_CHARS + 1)},
         ],
     )
     rows = result["results"]
@@ -3174,7 +3161,7 @@ def test_annotate_many_rejects_oversized_or_mistyped_strings_per_item() -> None:
     assert rows[3]["error"] == "comment must be a string"
     assert rows[4]["error"] == f"comment exceeds {tools._MAX_ANNOTATE_COMMENT_CHARS} characters"
     assert rows[5]["error"] == "prototype must be a non-empty string"
-    assert rows[6]["error"] == f"type exceeds {tools._MAX_ANNOTATE_TYPE_CHARS} characters"
+    assert rows[6]["error"] == f"prototype exceeds {tools._MAX_ANNOTATE_PROTOTYPE_CHARS} characters"
     assert result["applied"] == 0
     assert result["failed"] == 7
     assert view.transactions == []
@@ -3191,7 +3178,7 @@ def test_annotate_many_accepts_strings_exactly_at_the_caps() -> None:
                 "addr": "0x1100",
                 "name": "n" * tools._MAX_ANNOTATE_NAME_CHARS,
                 "comment": "c" * tools._MAX_ANNOTATE_COMMENT_CHARS,
-                "type": "t" * tools._MAX_ANNOTATE_TYPE_CHARS,
+                "prototype": "t" * tools._MAX_ANNOTATE_PROTOTYPE_CHARS,
             }
         ],
     )
@@ -3199,7 +3186,7 @@ def test_annotate_many_accepts_strings_exactly_at_the_caps() -> None:
     assert result["failed"] == 0
     assert main.name == "n" * tools._MAX_ANNOTATE_NAME_CHARS
     assert main.comment == "c" * tools._MAX_ANNOTATE_COMMENT_CHARS
-    assert main.user_type == "t" * tools._MAX_ANNOTATE_TYPE_CHARS
+    assert main.user_type == "t" * tools._MAX_ANNOTATE_PROTOTYPE_CHARS
 
 
 def test_annotate_many_collapses_repeated_items_onto_one_function_last_write_wins() -> None:

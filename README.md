@@ -36,7 +36,7 @@ clients that already connected must reconnect to see the registered tools.
 
 | Tool | Notes |
 | --- | --- |
-| `rex_string_search` | Substring/regex search over strings, with section and type filters. |
+| `rex_string_search` | Substring/regex search over the statically backed strings; the only string scan with section and type filters. |
 | `rex_data_find` | Hex byte pattern search (`??` wildcards) over mapped segments. |
 | `rex_constant_find` | Finds constant references via the core's linear-view constant search. |
 | `rex_hlil_grep` | Regular expression search across rendered HLIL text, with a resumable cursor. |
@@ -57,7 +57,7 @@ clients that already connected must reconnect to see the registered tools.
 | `rex_function_define` | Turn the bytes at an address into a function. |
 | `rex_function_undefine` | Remove the function covering an address (destructive). |
 | `rex_string_read_at` | Read the detected string at an address. |
-| `rex_derived_string_refs` | Code references for derived (recognizer-synthesized) strings, per-string ref cap. |
+| `rex_derived_string_refs` | Code references for the wider derived-string domain (static plus recognizer-synthesized), per-string ref cap; no section/type filters. |
 | `rex_memory_write` | Patch bytes in the binary view (destructive). |
 | `rex_binary_close` | Discard unsaved changes and close the view programmatically (destructive). |
 | `rex_tag_set` | Attach a GUI-visible tag at an address, creating the tag type on demand. |
@@ -75,6 +75,12 @@ The `rx_data_find` row's speed depends on scan scope, per the project's own benc
 ([native/BENCH.md](native/BENCH.md)): ~7x when the scan covers the whole database with a
 short pattern, but parity (~0.99x) on a section-scoped scan — `section` is a first-class
 parameter of both tools, so for section-scoped work the native scan buys nothing.
+
+Both byte-pattern scans exist as `rex_*`/`rx_*` twins (`rex_data_find`/`rx_data_find`,
+and `rx_multi_find` for many patterns) and nothing gates between them: both appear in
+the tool list when both halves are installed. The selection rule: prefer the `rx_*`
+scan when the native build is present; the `rex_*` twin is the fallback that stays
+available on installs without it, carrying the same contract the `rx_*` tools mirror.
 
 Listing tools (`rex_string_search`, `rex_data_find`, `rex_derived_string_refs`,
 `rex_tag_list`, `rex_export_symbols`, and `rex_component_get`, whose count is named
