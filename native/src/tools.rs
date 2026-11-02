@@ -39,14 +39,14 @@ fn default_limit() -> u32 {
 #[derive(Deserialize, JsonSchema)]
 pub struct DataFindArgs {
     /// Hex byte pattern, e.g. "48 8b ?? 05"; "??" matches any single byte.
-    #[schemars(length(max = 8192))]
+    #[schemars(length(max = MAX_PATTERN_CHARS))]
     pub pattern: String,
     /// Only search within this section.
     #[serde(default)]
     pub section: Option<String>,
     /// Maximum number of matches to return (0 to 500).
     #[serde(default = "default_limit")]
-    #[schemars(range(min = 0, max = 500))]
+    #[schemars(range(min = 0, max = MAX_LIMIT))]
     pub limit: u32,
     /// Number of matches to skip before collecting results (>= 0).
     #[serde(default)]
@@ -59,14 +59,14 @@ pub struct DataFindArgs {
 #[derive(Deserialize, JsonSchema)]
 pub struct MultiFindArgs {
     /// Hex byte patterns, e.g. ["48 8b ?? 05", "e8 ?? ?? ?? ??"]; "??" matches any single byte.
-    #[schemars(length(min = 1, max = 64))]
+    #[schemars(length(min = 1, max = MAX_MULTI_PATTERNS))]
     pub patterns: Vec<String>,
     /// Only search within this section.
     #[serde(default)]
     pub section: Option<String>,
     /// Maximum number of matches per pattern to return (0 to 500).
     #[serde(default = "default_limit")]
-    #[schemars(range(min = 0, max = 500))]
+    #[schemars(range(min = 0, max = MAX_LIMIT))]
     pub limit: u32,
     /// Number of matches to skip per pattern before collecting results (>= 0).
     #[serde(default)]
@@ -241,6 +241,22 @@ fn matches_json(matches: &[u64]) -> serde_json::Value {
     )
 }
 
+/// Chunked-walk overlap for a pattern list: the longest pattern's length minus
+/// one, so every pattern's matches straddling a chunk edge stay visible in one
+/// window.
+///
+/// Precondition: `patterns` is non-empty — `RxMultiFind` rejects an empty list
+/// before reaching this and the tests pass literal non-empty lists — so
+/// `.max()` cannot be `None` and needs no fallback value.
+fn longest_pattern_overlap(patterns: &[HexPattern]) -> u64 {
+    (patterns
+        .iter()
+        .map(HexPattern::len)
+        .max()
+        .expect("non-empty pattern list")
+        - 1) as u64
+}
+
 /// `rx_data_find`: same contract as the Python plugin's `rex_data_find`, with
 /// the byte scan running in native Rust behind a SIMD memchr prefilter.
 struct RxDataFind;
@@ -330,10 +346,7 @@ impl TypedMcpTool for RxMultiFind {
         let matcher = MultiMatcher::new(&patterns);
         let mut buckets: Vec<RunningScan> =
             (0..patterns.len()).map(|_| RunningScan::new()).collect();
-        // Windows must stay visible for the longest pattern: a shorter overlap
-        // would drop that pattern's matches straddling a chunk edge.
-        let longest = patterns.iter().map(HexPattern::len).max().unwrap_or(1);
-        let overlap = longest.saturating_sub(1) as u64;
+        let overlap = longest_pattern_overlap(&patterns);
         for_each_segment(&*view, READ_CHUNK, bounds, overlap, |base, data| {
             matcher.scan_segment(data, base, &patterns, &mut buckets, &pagination)
         });
@@ -384,6 +397,35 @@ mod tests {
         );
         assert!(validate_pagination(500, 0).is_ok());
         assert!(validate_pagination(0, 0).is_ok());
+    }
+
+    /// The published schema's caps must equal the runtime-enforced consts:
+    /// the schema rejects typed calls while the runtime checks keep direct
+    /// invocation identical, so a value drifting between the two would be
+    /// rejected by one gate and accepted by the other. Compilation alone
+    /// would not catch a schemars attribute silently dropping its const, so
+    /// pin the generated schema against the consts directly.
+    #[test]
+    fn schema_caps_equal_the_runtime_consts() {
+        let data_find = serde_json::to_value(schemars::schema_for!(DataFindArgs)).unwrap();
+        let properties = &data_find["properties"];
+        assert_eq!(
+            properties["pattern"]["maxLength"].as_u64(),
+            Some(MAX_PATTERN_CHARS as u64)
+        );
+        assert_eq!(properties["limit"]["maximum"].as_u64(), Some(MAX_LIMIT));
+        assert_eq!(properties["limit"]["minimum"].as_u64(), Some(0));
+        assert_eq!(properties["offset"]["minimum"].as_u64(), Some(0));
+
+        let multi_find = serde_json::to_value(schemars::schema_for!(MultiFindArgs)).unwrap();
+        let properties = &multi_find["properties"];
+        assert_eq!(properties["patterns"]["minItems"].as_u64(), Some(1));
+        assert_eq!(
+            properties["patterns"]["maxItems"].as_u64(),
+            Some(MAX_MULTI_PATTERNS as u64)
+        );
+        assert_eq!(properties["limit"]["maximum"].as_u64(), Some(MAX_LIMIT));
+        assert_eq!(properties["limit"]["minimum"].as_u64(), Some(0));
     }
 
     #[test]
@@ -635,7 +677,7 @@ mod tests {
             offset: 0,
             limit: 50,
         };
-        let overlap = patterns.iter().map(|p| p.len()).max().unwrap_or(1) as u64 - 1;
+        let overlap = longest_pattern_overlap(&patterns);
         let alive = for_each_segment(&view, 4, None, overlap, |base, data| {
             matcher.scan_segment(data, base, &patterns, &mut buckets, &page)
         });
@@ -673,7 +715,7 @@ mod tests {
             offset: 0,
             limit: 50,
         };
-        let overlap = patterns.iter().map(|p| p.len()).max().unwrap_or(1) as u64 - 1;
+        let overlap = longest_pattern_overlap(&patterns);
         let alive = for_each_segment(&view, 4, None, overlap, |base, data| {
             matcher.scan_segment(data, base, &patterns, &mut buckets, &page)
         });
@@ -729,13 +771,7 @@ mod tests {
     /// every page carries the expected slice, total, and truncated flag.
     #[test]
     fn pages_tile_the_full_result() {
-        let mut lcg: u64 = 0x7a11_1a11;
-        let mut next = move || {
-            lcg = lcg
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            (lcg >> 33) as u32
-        };
+        let mut next = crate::test_rng(0x7a11_1a11);
         for case in 0..32u32 {
             let blob_len = (next() % 48) as usize;
             let blob: Vec<u8> = (0..blob_len).map(|_| (next() % 4) as u8).collect();
@@ -747,7 +783,7 @@ mod tests {
             let pat_len = 1 + (next() % 3) as usize;
             let tokens: Vec<String> = (0..pat_len)
                 .map(|_| {
-                    if next() % 3 == 0 {
+                    if next().is_multiple_of(3) {
                         "??".to_string()
                     } else {
                         format!("{:02x}", next() % 4)

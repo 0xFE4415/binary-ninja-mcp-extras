@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use aho_corasick::{AhoCorasick, MatchKind};
 
 use crate::hexpattern::{HexPattern, verify_at};
-use crate::scan::{Pagination, RunningScan};
+use crate::scan::{Pagination, RunningScan, for_each_all_wildcard_candidate};
 
 /// Cap on the number of patterns one `rx_multi_find` call accepts. The
 /// automaton and per-pattern buckets are linear in this; 64 keeps one call
@@ -118,14 +118,17 @@ impl MultiMatcher {
             }
         }
         // All-wildcard patterns match at every position; scan them directly so
-        // each bucket's own address order stays ascending.
+        // each bucket's own address order stays ascending. A truncated bucket
+        // declines the next candidate, which ends only its own enumeration —
+        // the helper's `false` is deliberately ignored so other wildcard-only
+        // buckets keep scanning (the whole walk's stop is decided below).
         for &pattern_index in &self.wildcard_only {
-            let candidates = (haystack.len() + 1).saturating_sub(patterns[pattern_index].len());
-            for candidate in 0..candidates {
-                if !buckets[pattern_index].record_new(pagination, base + candidate as u64) {
-                    break;
-                }
-            }
+            for_each_all_wildcard_candidate(
+                haystack.len(),
+                patterns[pattern_index].len(),
+                base,
+                |addr| buckets[pattern_index].record_new(pagination, addr),
+            );
         }
         !buckets.iter().all(RunningScan::is_done)
     }
@@ -281,13 +284,7 @@ mod tests {
     /// Differential test against a naive reference on pseudo-random inputs.
     #[test]
     fn agrees_with_naive_reference_on_random_inputs() {
-        let mut lcg: u64 = 0x9e37_79b9_7f4a_7c15;
-        let mut next = move || {
-            lcg = lcg
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            (lcg >> 33) as u32
-        };
+        let mut next = crate::test_rng(0x9e37_79b9_7f4a_7c15);
         for case in 0..300u32 {
             let hay_len = (next() % 48) as usize;
             let haystack: Vec<u8> = (0..hay_len).map(|_| (next() % 4) as u8).collect();
@@ -297,7 +294,7 @@ mod tests {
                 let pat_len = 1 + (next() % 4) as usize;
                 let tokens: Vec<String> = (0..pat_len)
                     .map(|_| {
-                        if next() % 3 == 0 {
+                        if next().is_multiple_of(3) {
                             "??".to_string()
                         } else {
                             format!("{:02x}", next() % 4)
