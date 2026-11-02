@@ -15,3 +15,8 @@ class AnalysisState(IntEnum):
     DisassembleState = 4
     AnalyzeState = 5
     ExtendedAnalyzeState = 6
+
+
+class DerivedStringLocationType(IntEnum):
+    DataBackedStringLocation = 0
+    CodeStringLocation = 1

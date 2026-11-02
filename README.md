@@ -54,11 +54,15 @@ clients that already connected must reconnect to see the registered tools.
 | `rex_function_define` | Turn the bytes at an address into a function. |
 | `rex_function_undefine` | Remove the function covering an address (destructive). |
 | `rex_string_read_at` | Read the detected string at an address. |
+| `rex_derived_string_refs` | Code references for derived (recognizer-synthesized) strings, per-string ref cap. |
 | `rex_memory_write` | Patch bytes in the binary view (destructive). |
 | `rex_binary_close` | Discard unsaved changes and close the view programmatically (destructive). |
 | `rex_tag_set` | Attach a GUI-visible tag at an address, creating the tag type on demand. |
 | `rex_tag_list` | List the tags set on the binary view. |
 | `rex_kv_set` / `rex_kv_get` / `rex_kv_delete` | Persistent scratch key-value store. |
+| `rex_component_create` | Create a component, optionally nested under an absolute path (destructive). |
+| `rex_component_get` | Look up a component by path with its member functions and child components. |
+| `rex_component_add_functions` | Put resolved functions into a component (destructive). |
 | `rex_eval_python` | Arbitrary `binaryninja` Python scripting (destructive escape hatch). |
 
 Search tools return `total`, `truncated`, and paginated results via `limit`/`offset` so
@@ -92,11 +96,12 @@ invocation:
 
 ## Known limits
 
-- `rex_string_search` and `rex_hlil_grep` compile model-supplied regular expressions with
-  Python's `re`, which has no match timeout. A pattern prone to catastrophic backtracking
-  (e.g. nested quantifiers like `(a+)+$`) can stall the tool invocation indefinitely; the
-  MCP server processes invocations serially while it runs. Prefer substring mode
-  (`regex=false`) when the input is not trusted, and keep regexes simple.
+- `rex_string_search`, `rex_derived_string_refs`, and `rex_hlil_grep` compile
+  model-supplied regular expressions with Python's `re`, which has no match timeout. A
+  pattern prone to catastrophic backtracking (e.g. nested quantifiers like `(a+)+$`) can
+  stall the tool invocation indefinitely; the MCP server processes invocations serially
+  while it runs. Prefer substring mode (`regex=false`) when the input is not trusted, and
+  keep regexes simple.
 
 ## Development
 

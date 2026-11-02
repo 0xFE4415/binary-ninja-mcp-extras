@@ -87,6 +87,17 @@ _MAX_EXPORT_COMPONENT_BYTES = 255
 _MAX_EXPORT_FILE_BYTES = 4 * 1024 * 1024
 _MAX_EXPORT_DISASM_LINES = 400
 _MAX_EXPORT_SYMBOLS = 2000
+# rex_derived_string_refs: the per-string code-ref echo cap. The core call itself is
+# bounded by max_items = cap + 1, so truncation is detected without enumerating past
+# what the response can echo.
+_MAX_DERIVED_STRING_REFS = 20
+# rex_component_* lexical bounds: component names persist in the database and paths are
+# echoed back whole in every response, so both get length caps before reaching the core.
+_MAX_COMPONENT_NAME_CHARS = 128
+_MAX_COMPONENT_PATH_CHARS = 512
+# rex_component_get child-component echo cap; functions are paginated instead.
+_MAX_COMPONENT_CHILDREN = 200
+_MAX_COMPONENT_ADD_FUNCTIONS = 64
 _METADATA_PREFIX = "rex/"
 _TAG_ICON = "\u25c6"
 _STRING_TYPES = Literal["AsciiString", "Utf16String", "Utf32String", "Utf8String"]
@@ -446,6 +457,50 @@ def _fit_to_export_cap[ExportRow](
             return text, dropped
         del window[-1]
         dropped = True
+
+
+def _validate_component_path(parameter: str, path: str) -> str:
+    """Lexically validate an absolute component path before handing it to the core.
+
+    Path lookups are absolute from the root component and "/"-delimited, so empty,
+    relative, trailing-slash and empty-segment paths can never resolve as written;
+    rejecting them here keeps the core lookup and the echoed path well-defined. Exactly
+    "/" selects the root component, which is resolved through the root_component
+    property rather than the undocumented "/" pathname lookup.
+    """
+    if not path:
+        raise mcp.ToolError("invalid_params", f"{parameter} must not be empty")
+    if len(path) > _MAX_COMPONENT_PATH_CHARS:
+        raise mcp.ToolError(
+            "invalid_params", f"{parameter} exceeds {_MAX_COMPONENT_PATH_CHARS} characters"
+        )
+    if not path.startswith("/"):
+        raise mcp.ToolError(
+            "invalid_params", f"{parameter} must be an absolute path starting with '/'"
+        )
+    if path != "/" and path.endswith("/"):
+        raise mcp.ToolError("invalid_params", f"{parameter} must not end with '/'")
+    if "//" in path:
+        raise mcp.ToolError("invalid_params", f"{parameter} must not contain empty path segments")
+    return path
+
+
+def _resolve_component(call: mcp.ToolCall, path: str) -> Any:
+    """Return the component at an already-validated path, "/" mapping to the root."""
+    if path == "/":
+        return call.binary_view.root_component
+    component = call.binary_view.get_component_by_path(path)
+    if component is None:
+        raise mcp.ToolError("component_not_found", f"no component at path '{_truncate(path)}'")
+    return component
+
+
+def _component_child_path(parent_path: str, display_name: str) -> str:
+    """Join a child's display name onto its parent path; top-level children get "/name"."""
+    # Validation guarantees at most one trailing slash — exactly the root's — so
+    # removesuffix is an exact match, where a strip-set would act silently on any tail.
+    prefix = parent_path.removesuffix("/")
+    return f"{prefix}/{display_name}"
 
 
 @mcp.tool(read_only=True)
@@ -1364,4 +1419,223 @@ def rex_tag_set(
         "data": data_preview,
         "data_truncated": data_truncated,
         "length": len(data),
+    }
+
+
+@mcp.tool(read_only=True)
+def rex_derived_string_refs(
+    call: mcp.ToolCall,
+    pattern: str = "",
+    regex: bool = False,
+    ignore_case: bool = False,
+    limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 20,
+    offset: Annotated[int, mcp.Minimum(0)] = 0,
+) -> dict[str, object]:
+    """Code references to strings derived from code or data.
+
+    rex_string_search only sees statically backed strings; this tool sweeps the view's
+    derived strings — the statically backed ones plus strings the core's string
+    recognizers synthesize, such as stack-built buffers — and resolves each string's
+    code references through the core. Every reported string carries at most 20 code
+    refs, each with its source function and instruction address, and refs_truncated
+    marks a string with more. A string without a location is still reported: its refs
+    come from the core's recognizer accounting, not from a backing address.
+
+    :param pattern: Substring or regular expression to match; empty matches every string.
+    :param regex: Treat pattern as a regular expression instead of a substring.
+    :param ignore_case: Match case-insensitively.
+    :param limit: Maximum number of strings to return (0 to 500).
+    :param offset: Number of matching strings to skip before collecting results (>= 0).
+    """
+    bv = call.binary_view
+    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
+    offset = _validate_range("offset", offset, 0)
+    matches_text = _text_matcher(pattern, regex, ignore_case)
+
+    def keep(derived: Any) -> bool:
+        # str() on the wrapped value is total: the API layer falls back to charmap
+        # decoding when the bytes are not UTF-8.
+        return matches_text(str(derived.value))
+
+    page, total, truncated = _paginate(filter(keep, bv.derived_strings), offset, limit)
+    strings = []
+    for derived in page:
+        refs = list(
+            bv.get_derived_string_code_refs(derived, max_items=_MAX_DERIVED_STRING_REFS + 1)
+        )
+        location = derived.location
+        strings.append(
+            {
+                "value": _truncate(str(derived.value)),
+                "location": None
+                if location is None
+                else {
+                    "type": location.location_type.name,
+                    "address": hex(location.address),
+                    "length": location.length,
+                },
+                "refs": [
+                    {
+                        "function_start": None if ref.function is None else hex(ref.function.start),
+                        "function_name": None
+                        if ref.function is None
+                        else _truncate(ref.function.name),
+                        "address": hex(ref.address),
+                    }
+                    for ref in refs[:_MAX_DERIVED_STRING_REFS]
+                ],
+                "refs_truncated": len(refs) > _MAX_DERIVED_STRING_REFS,
+            }
+        )
+    return {"total": total, "truncated": truncated, "strings": strings}
+
+
+@mcp.tool(destructive=True)
+def rex_component_create(
+    call: mcp.ToolCall,
+    name: str,
+    parent_path: str = "",
+) -> dict[str, object]:
+    """Create a component, optionally nested under an existing one.
+
+    Destructive: components persist in the analysis database. Duplicate sibling names
+    are kept distinct by the core with an automatic " (1)"-style suffix, and the
+    response reports the created component's canonical absolute path — built from its
+    display name, which is what path lookups match — so the suffix is visible
+    immediately. An empty parent_path creates a top-level component and "/" parents it
+    on the root.
+
+    :param name: Name of the new component; must not be empty or contain '/'.
+    :param parent_path: Absolute path of the parent component (empty or "/" for top-level).
+    """
+    if not name:
+        raise mcp.ToolError("invalid_params", "name must not be empty")
+    if len(name) > _MAX_COMPONENT_NAME_CHARS:
+        raise mcp.ToolError(
+            "invalid_params", f"name exceeds {_MAX_COMPONENT_NAME_CHARS} characters"
+        )
+    if "/" in name:
+        # "/" is the path delimiter, so a name containing one can never be addressed by path.
+        raise mcp.ToolError("invalid_params", "name must not contain '/'")
+    bv = call.binary_view
+    parent: Any = None
+    if parent_path:
+        _validate_component_path("parent_path", parent_path)
+        parent = _resolve_component(call, parent_path)
+    component = bv.create_component(name, parent)
+    return {
+        "path": _component_child_path(parent_path, component.display_name),
+        "display_name": _truncate(component.display_name),
+        "guid": _truncate(component.guid),
+    }
+
+
+@mcp.tool(read_only=True)
+def rex_component_get(
+    call: mcp.ToolCall,
+    path: str,
+    limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
+    offset: Annotated[int, mcp.Minimum(0)] = 0,
+) -> dict[str, object]:
+    """Look up a component by path and report its members.
+
+    The path is absolute from the root component and matched against display names,
+    exactly as the core's own pathname lookup resolves it; "/" selects the root
+    component, whose children are the top-level entries of the module tree. Member
+    functions are sorted by start address so a page is a true window of the
+    address-ordered listing, and child components are capped at 200 entries with
+    children_truncated marking the rest.
+
+    :param path: Absolute component path ("/" for the root component).
+    :param limit: Maximum number of member functions to return (0 to 500).
+    :param offset: Number of member functions to skip before collecting results (>= 0).
+    """
+    _validate_component_path("path", path)
+    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
+    offset = _validate_range("offset", offset, 0)
+    component = _resolve_component(call, path)
+    functions = sorted(component.function_list, key=lambda function: function.start)
+    total = len(functions)
+    children = component.components
+    if path == "/":
+        parent_path = None
+    else:
+        parent_path = path.rsplit("/", 1)[0] or "/"
+    return {
+        "path": path,
+        "guid": _truncate(component.guid),
+        "display_name": _truncate(component.display_name),
+        "parent_path": parent_path,
+        "functions": [
+            {"start": hex(function.start), "name": _truncate(function.name)}
+            for function in functions[offset : offset + limit]
+        ],
+        "function_count": total,
+        "truncated": offset + limit < total,
+        "children": [
+            {
+                "path": _component_child_path(path, child.display_name),
+                "display_name": _truncate(child.display_name),
+                "guid": _truncate(child.guid),
+            }
+            for child in children[:_MAX_COMPONENT_CHILDREN]
+        ],
+        "children_truncated": len(children) > _MAX_COMPONENT_CHILDREN,
+    }
+
+
+@mcp.tool(destructive=True)
+def rex_component_add_functions(
+    call: mcp.ToolCall,
+    path: str,
+    functions: list[str],
+) -> dict[str, object]:
+    """Put functions into a component.
+
+    Destructive: membership changes persist in the analysis database, and the core may
+    relocate a function that already belongs to another component. Every address
+    expression is resolved and checked before anything is added, so one bad entry
+    rejects the whole call and the component is left untouched. Each result reports the
+    core's own success flag, so a declined add is visible instead of swallowed.
+
+    :param path: Absolute component path ("/" for the root component).
+    :param functions: Address expressions of the functions to add; 1 to 64 entries.
+    """
+    bv = call.binary_view
+    _validate_component_path("path", path)
+    if not isinstance(functions, list):
+        raise mcp.ToolError("invalid_params", "functions must be a list of address expressions")
+    if not 1 <= len(functions) <= _MAX_COMPONENT_ADD_FUNCTIONS:
+        raise mcp.ToolError(
+            "invalid_params",
+            "functions must contain between 1 and "
+            f"{_MAX_COMPONENT_ADD_FUNCTIONS} address expressions",
+        )
+    resolved: list[Function] = []
+    for index, entry in enumerate(functions):
+        if not isinstance(entry, str):
+            raise mcp.ToolError(
+                "invalid_params", f"functions[{index}] must be a string address expression"
+            )
+        try:
+            address = call.parse_address(entry)
+        except Exception as error:
+            raise mcp.ToolError(
+                "invalid_params", f"bad address expression '{_truncate(entry)}': {error}"
+            ) from None
+        functions_found = bv.get_functions_containing(address)
+        if not functions_found:
+            raise mcp.ToolError("invalid_params", f"no analyzed function contains {address:#x}")
+        resolved.append(functions_found[0])
+    component = _resolve_component(call, path)
+    results = []
+    for function in resolved:
+        added = component.add_function(function)
+        results.append(
+            {"start": hex(function.start), "name": _truncate(function.name), "added": added}
+        )
+    return {
+        "path": path,
+        "added_count": sum(1 for result in results if result["added"]),
+        "results": results,
     }

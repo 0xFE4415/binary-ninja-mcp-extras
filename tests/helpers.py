@@ -291,6 +291,8 @@ class FakeBinaryView:
         analysis_progress_sequence: list[FakeAnalysisProgress] | None = None,
         analysis_info: FakeAnalysisInfo | None = None,
         file: FakeFileMetadata | None = None,
+        derived_strings: list[FakeDerivedString] | None = None,
+        component_root: FakeComponent | None = None,
     ) -> None:
         self.strings = strings if strings is not None else []
         self.segments = segments if segments is not None else []
@@ -327,6 +329,17 @@ class FakeBinaryView:
             else FakeAnalysisInfo(FakeAnalysisState.IdleState, 0, [])
         )
         self.file = file if file is not None else FakeFileMetadata()
+        self.derived_strings = derived_strings if derived_strings is not None else []
+        # max_items values the tool sent with each derived-string code-ref request, in
+        # order, so tests can pin the bounding contract without parsing responses.
+        self.derived_code_ref_requests: list[int | None] = []
+        # Every path handed to get_component_by_path, so tests can prove that paths the
+        # installed API does not document (like "/") never reach the lookup.
+        self.component_path_lookups: list[str] = []
+        self._component_root = (
+            component_root if component_root is not None else FakeComponent("__root__", "guid-root")
+        )
+        self._created_components: list[FakeComponent] = []
 
     def get_section_by_name(self, name: str) -> object:
         if name not in self._sections:
@@ -433,6 +446,52 @@ class FakeBinaryView:
     def remove_metadata(self, key: str) -> None:
         self._metadata.pop(key, None)
 
+    def get_derived_string_code_refs(
+        self, derived_string: FakeDerivedString, max_items: int | None = None
+    ) -> Iterator[FakeReferenceSource]:
+        # The real core bounds its own enumeration by max_items; mirror that so a request
+        # for cap+1 items cannot silently return the whole unbounded list.
+        self.derived_code_ref_requests.append(max_items)
+        refs = list(derived_string.refs)
+        if max_items is not None:
+            refs = refs[:max_items]
+        yield from refs
+
+    @property
+    def root_component(self) -> FakeComponent:
+        return self._component_root
+
+    def create_component(
+        self, name: str | None = None, parent: FakeComponent | None = None
+    ) -> FakeComponent:
+        # Mirrors the core's observed naming: an empty name leaves the component unnamed,
+        # and duplicate sibling names get the automatic " (1)"-style suffix shown in the
+        # installed get_component_by_path docstring example.
+        parent = parent if parent is not None else self._component_root
+        if name is None or not name:
+            base = f"unnamed-{len(self._created_components) + 1}"
+        else:
+            base = name
+        display_name = base
+        suffix = 1
+        while any(sibling.display_name == display_name for sibling in parent.children):
+            display_name = f"{base} ({suffix})"
+            suffix += 1
+        component = FakeComponent(display_name, f"guid-{len(self._created_components) + 1}")
+        parent.children.append(component)
+        self._created_components.append(component)
+        return component
+
+    def get_component_by_path(self, path: str) -> FakeComponent | None:
+        self.component_path_lookups.append(path)
+        target: FakeComponent | None = self._component_root
+        for part in path.split("/"):
+            if not part or target is None:
+                continue
+            matches = [child for child in target.children if child.display_name == part]
+            target = matches[0] if matches else None
+        return target
+
 
 class SpyBinaryView(FakeBinaryView):
     """Records the address of every read and function lookup to bound scan work."""
@@ -463,3 +522,80 @@ def get_tool(name: str) -> tuple[dict[str, object], Any]:
         if tool_name == name:
             return options, function
     raise KeyError(name)
+
+
+class FakeDerivedStringLocation:
+    """Mirrors binaryninja.binaryview.DerivedStringLocation."""
+
+    def __init__(self, type_name: str, address: int, length: int) -> None:
+        self.location_type = types.SimpleNamespace(name=type_name)
+        self.address = address
+        self.length = length
+
+
+class FakeDerivedString:
+    """Mirrors binaryninja.binaryview.DerivedString.
+
+    ``value`` is a plain str here; the real core hands back a StringRef that tools
+    convert with ``str()``. ``refs`` is the FakeReferenceSource list answered by
+    FakeBinaryView.get_derived_string_code_refs for this exact object.
+    """
+
+    def __init__(
+        self,
+        value: str,
+        location: FakeDerivedStringLocation | None = None,
+        refs: list[FakeReferenceSource] | None = None,
+    ) -> None:
+        self.value = value
+        self.location = location
+        self.refs = refs if refs is not None else []
+
+
+class FakeReferenceSource:
+    """Mirrors the binaryninja.binaryview.ReferenceSource fields the tools read."""
+
+    def __init__(self, function: FakeFunction | None, address: int) -> None:
+        self.function = function
+        self.address = address
+
+
+class FakeComponent:
+    """Mirrors the binaryninja.component.Component surface rex_component_* tools read.
+
+    ``add_function`` declines exactly the functions listed in ``rejected_functions`` so a
+    failed core add can be modeled; successful adds are recorded for all-or-nothing
+    assertions.
+    """
+
+    def __init__(
+        self,
+        display_name: str,
+        guid: str,
+        *,
+        functions: list[FakeFunction] | None = None,
+        children: list[FakeComponent] | None = None,
+        rejected_functions: list[FakeFunction] | None = None,
+    ) -> None:
+        self.display_name = display_name
+        self.name = display_name
+        self.guid = guid
+        self.functions = functions if functions is not None else []
+        self.children = children if children is not None else []
+        self.rejected_functions = rejected_functions if rejected_functions is not None else []
+        self.added_functions: list[FakeFunction] = []
+
+    @property
+    def function_list(self) -> list[FakeFunction]:
+        return list(self.functions)
+
+    @property
+    def components(self) -> list[FakeComponent]:
+        return list(self.children)
+
+    def add_function(self, function: FakeFunction) -> bool:
+        if function in self.rejected_functions:
+            return False
+        self.added_functions.append(function)
+        self.functions.append(function)
+        return True
