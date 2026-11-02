@@ -50,6 +50,11 @@ _MAX_KV_KEY_CHARS = 128
 _MAX_TAG_DATA_CHARS = 65536
 _MAX_TAG_TYPE_CHARS = 64
 _MAX_STRING_READ_CHARS = 4096
+# rex_report_show: the core receives title and markdown as unbounded strings and renders
+# them in a GUI popup named by the title, so both are capped — the markdown to keep one
+# agent call from pushing megabytes into the viewer, the title because it labels the tab.
+_MAX_REPORT_TITLE_CHARS = 256
+_MAX_REPORT_CONTENT_CHARS = 65536
 # Raw pattern-string cap for rex_data_find: bounds the regex compile and the per-chunk
 # read inflation (read_size grows with the pattern length) before any of that happens.
 _MAX_PATTERN_CHARS = 8192
@@ -1365,3 +1370,47 @@ def rex_tag_set(
         "data_truncated": data_truncated,
         "length": len(data),
     }
+
+
+@mcp.tool(read_only=True)
+def rex_report_show(
+    call: mcp.ToolCall,
+    title: Annotated[str, mcp.NonEmpty()],
+    markdown: Annotated[str, mcp.NonEmpty()],
+) -> dict[str, object]:
+    """Render a markdown triage report inside Binary Ninja.
+
+    Opens Binary Ninja's markdown report viewer on this view, so report text can link
+    back into the analysis with ``binaryninja://?expr=`` hyperlinks (e.g.
+    ``[main](binaryninja://?expr=main)``). Read-only: nothing in the view, database, or
+    filesystem changes — the report is presentation only. The markdown is also passed as
+    the API's plaintext fallback, so command-line hosts (where the viewer degrades to
+    plain text) still show the report instead of dropping it silently. Title and markdown
+    are size-capped and rejected beyond the cap, never clipped: the core receives both as
+    single unbounded strings and the title names the report tab. The response echoes only
+    a capped preview of the markdown, so an overlarge report can never flood the MCP
+    response either.
+
+    :param title: Title displayed on the report tab.
+    :param markdown: Markdown contents to render; ``binaryninja://?expr=...`` links into
+        the active Binary View.
+    """
+    bv = call.binary_view
+    if not title:
+        raise mcp.ToolError("invalid_params", "title must not be empty")
+    if len(title) > _MAX_REPORT_TITLE_CHARS:
+        raise mcp.ToolError(
+            "title_too_large", f"title exceeds {_MAX_REPORT_TITLE_CHARS} characters"
+        )
+    if not markdown:
+        raise mcp.ToolError("invalid_params", "markdown must not be empty")
+    if len(markdown) > _MAX_REPORT_CONTENT_CHARS:
+        raise mcp.ToolError(
+            "content_too_large", f"markdown exceeds {_MAX_REPORT_CONTENT_CHARS} characters"
+        )
+    # On command-line hosts the default interaction handler displays only the plaintext
+    # variant, and an empty plaintext shows nothing; the markdown is its own plaintext so
+    # the report survives the degradation.
+    bv.show_markdown_report(title, markdown, markdown)
+    preview, truncated = _truncate_with_flag(markdown)
+    return {"title": title, "length": len(markdown), "preview": preview, "truncated": truncated}

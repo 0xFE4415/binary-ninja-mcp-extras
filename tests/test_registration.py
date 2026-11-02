@@ -26,6 +26,7 @@ EXPECTED_NAMES = sorted(
         "rex_kv_set",
         "rex_memory_write",
         "rex_quick_main",
+        "rex_report_show",
         "rex_string_read_at",
         "rex_string_search",
         "rex_tag_list",

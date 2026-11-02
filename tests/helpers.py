@@ -49,6 +49,13 @@ class FakeMaximum:
         self.value = value
 
 
+class FakeNonEmpty:
+    """Mirrors binaryninja.mcp.NonEmpty; the fake decorator does not apply rejection."""
+
+    def __init__(self) -> None:
+        pass
+
+
 class FakeToolCallBase:
     pass
 
@@ -65,6 +72,7 @@ def install_fake_binaryninja() -> None:
     setattr(mcp_module, "ToolError", FakeToolError)
     setattr(mcp_module, "Minimum", FakeMinimum)
     setattr(mcp_module, "Maximum", FakeMaximum)
+    setattr(mcp_module, "NonEmpty", FakeNonEmpty)
     setattr(
         mcp_module,
         "McpToolScope",
@@ -301,6 +309,7 @@ class FakeBinaryView:
         self._tags: list[tuple[int, FakeTag]] = []
         self._tag_types: dict[str, object] = {}
         self.written: list[tuple[int, bytes]] = []
+        self.shown_reports: list[tuple[str, str, str]] = []
         self.created_functions: list[FakeFunction] = []
         self.removed_functions: list[FakeFunction] = []
         self.start = start
@@ -432,6 +441,10 @@ class FakeBinaryView:
 
     def remove_metadata(self, key: str) -> None:
         self._metadata.pop(key, None)
+
+    def show_markdown_report(self, title: str, contents: str, plaintext: str = "") -> None:
+        """Record the exact arguments BinaryView.show_markdown_report hands the core."""
+        self.shown_reports.append((title, contents, plaintext))
 
 
 class SpyBinaryView(FakeBinaryView):

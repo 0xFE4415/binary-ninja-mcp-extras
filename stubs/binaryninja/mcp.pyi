@@ -35,6 +35,10 @@ class ClampTo:
     def __init__(self, minimum: int, maximum: int) -> None: ...
 
 
+class NonEmpty:
+    def __init__(self) -> None: ...
+
+
 class IntegerExpression(int): ...
 
 
