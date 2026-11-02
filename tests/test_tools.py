@@ -1384,6 +1384,33 @@ def test_tag_list_rejects_out_of_range_limit() -> None:
     assert tag_list(_call(view), limit=0) == {"total": 2, "truncated": True, "tags": []}
 
 
+def test_tag_list_paginates_with_offset() -> None:
+    view = FakeBinaryView()
+    for index in range(4):
+        view.add_tag(0x1000 + index, "Finding", f"t{index}")
+    _, tag_list = get_tool("rex_tag_list")
+    result = tag_list(_call(view), limit=2, offset=1)
+    assert result == {
+        "total": 4,
+        "truncated": True,
+        "tags": [
+            {"address": "0x1001", "tag_type": "Finding", "data": "t1", "data_truncated": False},
+            {"address": "0x1002", "tag_type": "Finding", "data": "t2", "data_truncated": False},
+        ],
+    }
+    # A page starting past the end is empty and not truncated.
+    assert tag_list(_call(view), limit=2, offset=4) == {
+        "total": 4,
+        "truncated": False,
+        "tags": [],
+    }
+    # A negative offset is invalid on its face: rejected, never normalized to 0.
+    with pytest.raises(FakeToolError) as exc:
+        tag_list(_call(view), limit=2, offset=-1)
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == "Invalid integer parameter 'offset': Must be at least 0"
+
+
 def test_string_search_rejects_negative_offset() -> None:
     view = FakeBinaryView(
         strings=[FakeStringReference("alpha", 0x100), FakeStringReference("alphabeta", 0x120)]
@@ -2599,6 +2626,51 @@ def test_export_disasm_accepts_a_component_at_the_name_max_bound(
     assert (root / filename).exists()
 
 
+def test_export_disasm_rejects_a_symlink_escaping_the_export_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    root.mkdir(parents=True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("untouched")
+    # A symlink planted inside the root passes the purely lexical filename validation;
+    # only the containment check after resolve() can see where the write would land.
+    (root / "link.txt").symlink_to(outside)
+    view = _disasm_view()
+    _, export = get_tool("rex_export_disasm")
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(view), 0x1104, filename="link.txt")
+    assert exc.value.code == "path_escape"
+    assert str(outside) in exc.value.message
+    assert outside.read_text() == "untouched"
+    # resolve() follows intermediate components too, so a symlinked directory inside
+    # the root cannot smuggle a write out either.
+    (root / "sub").mkdir()
+    (root / "sub" / "link.txt").symlink_to(outside)
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(view), 0x1104, filename="sub/link.txt")
+    assert exc.value.code == "path_escape"
+    assert outside.read_text() == "untouched"
+
+
+def test_type_library_export_rejects_a_symlink_escaping_the_export_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    root.mkdir(parents=True)
+    outside = tmp_path / "outside.bntl"
+    outside.write_bytes(b"untouched")
+    (root / "link.bntl").symlink_to(outside)
+    view = _typed_view()
+    _, export = get_tool("rex_type_library_export")
+    # The .bntl writer goes through the same resolved path as the text exports, so the
+    # core-side write is contained by the same check.
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(view), "recovered", ["open"], filename="link.bntl")
+    assert exc.value.code == "path_escape"
+    assert outside.read_bytes() == b"untouched"
+
+
 @pytest.mark.parametrize(
     "filename",
     [
@@ -2875,9 +2947,13 @@ def test_annotate_many_applies_name_comment_and_type_in_one_transaction() -> Non
         ],
     )
     # Success rows echo the annotated function's start, not the mid-function input.
+    # "failed" is this tool's legacy count key; "applied"/"failed_count"/"total" are the
+    # uniform batch-summary keys every batch tool now carries.
     assert result == {
         "applied": 2,
         "failed": 0,
+        "failed_count": 0,
+        "total": 2,
         "results": [{"addr": "0x1100", "ok": True}, {"addr": "0x2000", "ok": True}],
     }
     assert main.name == "read_config"
@@ -2901,6 +2977,8 @@ def test_annotate_many_reports_a_missing_function_per_item() -> None:
     assert result == {
         "applied": 1,
         "failed": 1,
+        "failed_count": 1,
+        "total": 2,
         "results": [
             {"addr": "0x1800", "ok": False, "error": "no analyzed function contains 0x1800"},
             {"addr": "0x1100", "ok": True},
@@ -2921,6 +2999,8 @@ def test_annotate_many_skips_the_transaction_when_every_item_fails() -> None:
     assert result == {
         "applied": 0,
         "failed": 2,
+        "failed_count": 2,
+        "total": 2,
         "results": [
             {"addr": "0x9999", "ok": False, "error": "no analyzed function contains 0x9999"},
             {
@@ -3014,6 +3094,8 @@ def test_annotate_many_treats_prototype_and_type_as_one_path() -> None:
     assert disagree == {
         "applied": 0,
         "failed": 1,
+        "failed_count": 1,
+        "total": 1,
         "results": [
             {
                 "addr": "0x1100",
@@ -3040,6 +3122,8 @@ def test_annotate_many_rejects_an_unparsable_type_before_applying_anything() -> 
     assert result == {
         "applied": 0,
         "failed": 1,
+        "failed_count": 1,
+        "total": 1,
         "results": [{"addr": "0x1100", "ok": False, "error": "bad type: expected ';'"}],
     }
     # An item is atomic: a failing type must not leave the rename half-applied.
@@ -3118,6 +3202,28 @@ def test_annotate_many_accepts_strings_exactly_at_the_caps() -> None:
     assert main.user_type == "t" * tools._MAX_ANNOTATE_TYPE_CHARS
 
 
+def test_annotate_many_collapses_repeated_items_onto_one_function_last_write_wins() -> None:
+    view = _annotate_view()
+    main, _helper = view.functions
+    _, annotate = get_tool("rex_annotate_many")
+    # Both items resolve to main (0x1150 is mid-function), so the second item's comment
+    # overwrites the first: annotations are function-level and apply in item order.
+    result = annotate(
+        FakeParsingToolCall(view),
+        [
+            {"addr": "0x1150", "comment": "first"},
+            {"addr": "0x1100", "comment": "second", "name": "final_name"},
+        ],
+    )
+    assert result["applied"] == 2
+    assert result["failed_count"] == 0
+    assert result["total"] == 2
+    assert main.comment == "second"
+    assert main.name == "final_name"
+    # One transaction: the collapsed items are still a single undo step.
+    assert view.transactions == ["open", "commit"]
+
+
 def test_annotate_many_lists_all_unknown_fields() -> None:
     view = _annotate_view()
     _, annotate = get_tool("rex_annotate_many")
@@ -3154,6 +3260,8 @@ def test_type_library_import_attaches_and_imports(
         "library": "libc",
         "imported": [{"requested": "open", "resolved": "open_0"}],
         "failed": [{"requested": "bad", "reason": "not provided by this type library"}],
+        "applied": 1,
+        "failed_count": 1,
         "total": 2,
     }
     # The library itself was attached to the view once, before any name was imported.
@@ -3242,6 +3350,8 @@ def test_type_library_export_writes_types_to_a_bntl(
         "library": "recovered",
         "exported": ["open", "color"],
         "failed": [],
+        "applied": 2,
+        "failed_count": 0,
         "total": 2,
     }
     # The file holds exactly the bytes the (fake) core wrote, in the export root.
@@ -3279,6 +3389,8 @@ def test_type_library_export_reports_missing_types(
     assert result["failed"] == [
         {"requested": "absent", "reason": "no type with this name in the view"}
     ]
+    assert result["applied"] == 1
+    assert result["failed_count"] == 1
     assert result["total"] == 2
     assert [name for _, name, _ in view.exported_types] == ["color"]
 
@@ -3351,23 +3463,25 @@ def test_type_library_export_rejects_invalid_inputs(
     _use_export_root(monkeypatch, tmp_path)
     view = _typed_view()
     _, export = get_tool("rex_type_library_export")
-    for violation, message in (
-        ({"library_name": ""}, "library_name must not be empty"),
+    for violation, message, code in (
+        ({"library_name": ""}, "library_name must not be empty", "invalid_params"),
         (
             {"library_name": "x" * (tools._MAX_TYPE_NAME_CHARS + 1)},
             f"library_name exceeds {tools._MAX_TYPE_NAME_CHARS} characters",
+            "library_name_too_large",
         ),
-        ({"kind": "bogus"}, "kind must be 'types' or 'objects', not 'bogus'"),
+        ({"kind": "bogus"}, "kind must be 'types' or 'objects', not 'bogus'", "invalid_params"),
         (
             {"filename": "/abs/path.bntl"},
             "filename must be a plain file name, not an absolute path",
+            "invalid_params",
         ),
-        ({"filename": ""}, "filename must not be empty"),
+        ({"filename": ""}, "filename must not be empty", "invalid_params"),
     ):
         arguments = {"library_name": "recovered", "filename": "x.bntl", **violation}
         with pytest.raises(FakeToolError) as exc:
             export(_call(view), arguments.pop("library_name"), ["open"], **arguments)
-        assert exc.value.code == "invalid_params"
+        assert exc.value.code == code
         assert exc.value.message == message
     # Validation happens before the library is created: nothing was attached or exported.
     assert view.exported_types == []
@@ -3450,16 +3564,17 @@ def test_struct_from_access_reports_the_core_refusal() -> None:
 def test_struct_from_access_rejects_bad_names() -> None:
     view = FakeBinaryView()
     _, create = get_tool("rex_struct_from_access")
-    for name, message in (
-        ("", "name must not be empty"),
+    for name, message, code in (
+        ("", "name must not be empty", "invalid_params"),
         (
             "x" * (tools._MAX_TYPE_NAME_CHARS + 1),
             f"name exceeds {tools._MAX_TYPE_NAME_CHARS} characters",
+            "name_too_large",
         ),
     ):
         with pytest.raises(FakeToolError) as exc:
             create(_call(view), name)
-        assert exc.value.code == "invalid_params"
+        assert exc.value.code == code
         assert exc.value.message == message
     # Exactly at the cap the name is accepted (with the fake struct in place).
     view_at_cap = _struct_view([], 0)
@@ -3755,24 +3870,34 @@ def test_component_create_reports_the_core_suffix_for_duplicate_names() -> None:
 def test_component_create_validates_name_and_parent() -> None:
     view = _component_view()
     _, create = get_tool("rex_component_create")
-    for kwargs, message in (
-        ({"name": ""}, "name must not be empty"),
-        ({"name": "a/b"}, "name must not contain '/'"),
-        ({"name": "x" * 129}, "name exceeds 128 characters"),
+    for kwargs, message, code in (
+        ({"name": ""}, "name must not be empty", "invalid_params"),
+        ({"name": "a/b"}, "name must not contain '/'", "invalid_params"),
+        ({"name": "x" * 129}, "name exceeds 128 characters", "name_too_large"),
         (
             {"name": "ok", "parent_path": "Network"},
             "parent_path must be an absolute path starting with '/'",
+            "invalid_params",
         ),
-        ({"name": "ok", "parent_path": "/Network/"}, "parent_path must not end with '/'"),
+        (
+            {"name": "ok", "parent_path": "/Network/"},
+            "parent_path must not end with '/'",
+            "invalid_params",
+        ),
         (
             {"name": "ok", "parent_path": "/Network//Crypto"},
             "parent_path must not contain empty path segments",
+            "invalid_params",
         ),
-        ({"name": "ok", "parent_path": "y" * 513}, "parent_path exceeds 512 characters"),
+        (
+            {"name": "ok", "parent_path": "y" * 513},
+            "parent_path exceeds 512 characters",
+            "invalid_params",
+        ),
     ):
         with pytest.raises(FakeToolError) as exc:
             create(_call(view), **kwargs)
-        assert exc.value.code == "invalid_params"
+        assert exc.value.code == code
         assert exc.value.message == message
     with pytest.raises(FakeToolError) as exc:
         create(_call(view), "ok", "/Missing")
@@ -3788,6 +3913,11 @@ def test_component_add_functions_resolves_then_adds() -> None:
     result = add(FakeParsingToolCall(view), "/Network", ["0x3000", "0x5000"])
     assert result["path"] == "/Network"
     assert result["added_count"] == 2
+    # The uniform batch-summary keys, shared with rex_annotate_many and the type-library
+    # tools so a caller reads the same failed summary from every batch response.
+    assert result["applied"] == 2
+    assert result["failed_count"] == 0
+    assert result["total"] == 2
     assert result["results"] == [
         {"start": "0x3000", "name": "crypto_mix", "added": True},
         {"start": "0x5000", "name": "root_fn", "added": True},
@@ -3814,6 +3944,9 @@ def test_component_add_functions_reports_declined_adds() -> None:
     _, add = get_tool("rex_component_add_functions")
     result = add(FakeParsingToolCall(view), "/Network", ["0x1000"])
     assert result["added_count"] == 0
+    assert result["applied"] == 0
+    assert result["failed_count"] == 1
+    assert result["total"] == 1
     assert result["results"] == [{"start": "0x1000", "name": "parse_header", "added": False}]
 
 
@@ -3824,6 +3957,9 @@ def test_component_add_functions_into_the_root_component() -> None:
     assert result == {
         "path": "/",
         "added_count": 1,
+        "applied": 1,
+        "failed_count": 0,
+        "total": 1,
         "results": [{"start": "0x3000", "name": "crypto_mix", "added": True}],
     }
     assert len(view.root_component.added_functions) == 1

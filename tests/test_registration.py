@@ -54,6 +54,48 @@ ALLOWED_OPTIONS = {
     "output_schema",
 }
 
+# The only approval-policy signal an agent gets is these two markings, so every tool
+# must carry exactly one of them and the choice must be pinned per tool: a tool marked
+# neither (the decorator's neutral default) looks safe to an approval policy no matter
+# what it writes. Adding or renaming a tool updates this map in the same change.
+EXPECTED_MARKINGS: dict[str, dict[str, bool]] = {
+    "rex_analysis_wait": {"read_only": True, "destructive": False},
+    "rex_annotate_many": {"read_only": False, "destructive": True},
+    "rex_binary_close": {"read_only": False, "destructive": True},
+    "rex_call_paths": {"read_only": True, "destructive": False},
+    "rex_component_add_functions": {"read_only": False, "destructive": True},
+    "rex_component_create": {"read_only": False, "destructive": True},
+    "rex_component_get": {"read_only": True, "destructive": False},
+    "rex_constant_find": {"read_only": True, "destructive": False},
+    "rex_data_find": {"read_only": True, "destructive": False},
+    "rex_decompile_many": {"read_only": True, "destructive": False},
+    "rex_derived_string_refs": {"read_only": True, "destructive": False},
+    "rex_disasm_at": {"read_only": True, "destructive": False},
+    "rex_eval_python": {"read_only": False, "destructive": True},
+    "rex_export_disasm": {"read_only": False, "destructive": True},
+    "rex_export_symbols": {"read_only": False, "destructive": True},
+    "rex_find_functions_by_pattern": {"read_only": True, "destructive": False},
+    "rex_function_containing": {"read_only": True, "destructive": False},
+    "rex_function_define": {"read_only": False, "destructive": True},
+    "rex_function_undefine": {"read_only": False, "destructive": True},
+    "rex_hlil_grep": {"read_only": True, "destructive": False},
+    "rex_kv_delete": {"read_only": False, "destructive": True},
+    "rex_kv_get": {"read_only": True, "destructive": False},
+    "rex_kv_set": {"read_only": False, "destructive": True},
+    "rex_memory_write": {"read_only": False, "destructive": True},
+    "rex_quick_main": {"read_only": True, "destructive": False},
+    "rex_redo": {"read_only": False, "destructive": True},
+    "rex_report_show": {"read_only": True, "destructive": False},
+    "rex_string_read_at": {"read_only": True, "destructive": False},
+    "rex_string_search": {"read_only": True, "destructive": False},
+    "rex_struct_from_access": {"read_only": False, "destructive": True},
+    "rex_tag_list": {"read_only": True, "destructive": False},
+    "rex_tag_set": {"read_only": False, "destructive": True},
+    "rex_type_library_export": {"read_only": False, "destructive": True},
+    "rex_type_library_import": {"read_only": False, "destructive": True},
+    "rex_undo": {"read_only": False, "destructive": True},
+}
+
 
 def test_all_tools_are_registered_once() -> None:
     names = [name for name, _, _ in REGISTERED_TOOLS]
@@ -81,3 +123,17 @@ def test_every_tool_documents_its_parameters() -> None:
 def test_tool_options_are_supported_by_the_decorator() -> None:
     for name, options, _ in REGISTERED_TOOLS:
         assert set(options) <= ALLOWED_OPTIONS, f"{name} passes unknown options {set(options)}"
+
+
+def test_every_tool_has_a_pinned_marking() -> None:
+    names = {name for name, _, _ in REGISTERED_TOOLS}
+    # The map itself must cover every registered tool, so an added or renamed tool
+    # cannot slip through unmarked.
+    assert names == set(EXPECTED_MARKINGS)
+    for name, options, _ in REGISTERED_TOOLS:
+        expected = EXPECTED_MARKINGS[name]
+        for marking in ("read_only", "destructive"):
+            actual = options.get(marking, False)
+            assert actual is expected[marking], (
+                f"{name} marks {marking}={actual!r}, expected {expected[marking]}"
+            )

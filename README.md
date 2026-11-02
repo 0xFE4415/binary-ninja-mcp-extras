@@ -41,7 +41,7 @@ clients that already connected must reconnect to see the registered tools.
 | `rex_constant_find` | Finds constant references via the core's linear-view constant search. |
 | `rex_hlil_grep` | Regular expression search across rendered HLIL text, with a resumable cursor. |
 | `rex_find_functions_by_pattern` | Maps a byte pattern to the functions containing its matches. |
-| `rx_data_find` | The `rex_data_find` contract with the scan in native Rust (~7x faster). |
+| `rx_data_find` | `rex_data_find` contract in native Rust (speed depends on scope; see below). |
 | `rx_multi_find` | Many hex patterns in one pass via a multi-pattern automaton (Rust). |
 | `rex_call_paths` | Bounded breadth-first call-path search between two functions. |
 | `rex_disasm_at` | Address-anchored disassembly window, clipped at the function's edges. |
@@ -71,13 +71,42 @@ clients that already connected must reconnect to see the registered tools.
 | `rex_undo` / `rex_redo` | Undo/redo the view's last transaction, with post-operation stack depths (destructive). |
 | `rex_annotate_many` | Rename/comment/retype up to 100 functions in one undoable transaction (destructive). |
 
-Search tools return `total`, `truncated`, and paginated results via `limit`/`offset` so
-agents never need to page through unbounded listings. Size parameters (`limit`, `offset`,
-`max_depth`, `max_paths`, `max_functions`, `max_chars`) are range-checked, not silently
-normalized: a value outside its documented range — including above the resource cap — is
-rejected with the MCP layer's `invalid_params` argument error. Echoed strings (names, tag
-data, key values, `rex_eval_python` output) are additionally capped in length, with a
-`... [N chars truncated]` suffix and a companion `*_truncated` flag whenever a cap bites.
+The `rx_data_find` row's speed depends on scan scope, per the project's own benchmark
+([native/BENCH.md](native/BENCH.md)): ~7x when the scan covers the whole database with a
+short pattern, but parity (~0.99x) on a section-scoped scan — `section` is a first-class
+parameter of both tools, so for section-scoped work the native scan buys nothing.
+
+Listing tools (`rex_string_search`, `rex_data_find`, `rex_derived_string_refs`,
+`rex_tag_list`, `rex_export_symbols`, and `rex_component_get`, whose count is named
+`function_count`) return `total`, `truncated`, and paginated results via `limit`/`offset`
+so agents never need to page through unbounded listings. The early-stop scan tools
+(`rex_constant_find`, `rex_find_functions_by_pattern`, `rex_hlil_grep`) accept
+`limit`/`offset` too but return only `truncated` and the page, never a `total`: they stop
+scanning as soon as the requested window is known to be complete (see the section on
+scan bounds below; `rex_hlil_grep` pages through its `next_offset` cursor instead). Size
+parameters (`limit`, `offset`, `max_depth`, `max_paths`, `max_functions`, `max_chars`)
+are range-checked, not silently normalized: a value outside its documented range is
+rejected with the MCP layer's `invalid_params` argument error. An over-cap string
+argument is rejected per tool with a `*_too_large` code from the same family instead
+(`pattern_too_large`, `key_too_large`, `value_too_large`, `data_too_large`,
+`tag_type_too_large`, `title_too_large`, `content_too_large`, `name_too_large`,
+`library_name_too_large`).
+
+Echoed strings are capped in length with a `... [N chars truncated]` suffix. The suffix
+alone marks most echoes (function names, rendered HLIL and disassembly lines, string
+values, struct member types); a companion boolean flag marks the rest:
+`rex_eval_python`'s `stdout_truncated`/`result_truncated`/`error_truncated`, tag data
+(`data_truncated` in `rex_tag_list` and `rex_tag_set`), the stored kv value (`truncated`
+in `rex_kv_set`/`rex_kv_get`), `rex_report_show`'s preview, and `rex_string_read_at`'s
+value (both `truncated`). The `truncated` flags on the listing tools above mean results
+were left out of the page (more past the window, or rows dropped to fit an export byte
+cap), never a clipped string. `rex_eval_python` is also the one
+tool that reports failure in-band: an exception comes back as the response's `error`
+field (`error_truncated` when clipped) instead of raising a tool error.
+
+Batch tools (`rex_annotate_many`, `rex_component_add_functions`,
+`rex_type_library_export`, `rex_type_library_import`) answer a uniform
+`applied`/`failed_count`/`total` summary alongside their per-tool detail fields.
 
 ## Bounds on database-wide scans
 

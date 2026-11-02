@@ -466,12 +466,21 @@ def _validate_export_path(filename: str) -> None:
 
 
 def _resolve_export_path(filename: str) -> Path:
-    """Join an already-validated filename with the export root and resolve it."""
+    """Join an already-validated filename with the export root and resolve it.
+
+    The containment check runs after resolve(): _validate_export_path is purely
+    lexical, so a symlink planted inside the export root would otherwise redirect the
+    write outside it, past those checks.
+    """
     try:
         _EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
-        return (_EXPORT_ROOT / filename).resolve()
+        resolved_root = _EXPORT_ROOT.resolve()
+        resolved = (_EXPORT_ROOT / filename).resolve()
     except (OSError, ValueError) as error:
         raise mcp.ToolError("export_failed", f"could not prepare export path: {error}") from None
+    if not resolved.is_relative_to(resolved_root):
+        raise mcp.ToolError("path_escape", f"filename resolves outside the export root: {resolved}")
+    return resolved
 
 
 def _write_export_file(path: Path, text: str) -> int:
@@ -743,7 +752,17 @@ def rex_annotate_many(
     unparsable address, or an invalid field is one ``{"ok": false}`` row while the other
     items still apply. When every item fails, nothing is applied and no undo step is
     created. Each row echoes the annotated function's start on success (the input may
-    have been mid-function or a symbol name) or what was looked up on failure.
+    have been mid-function or a symbol name) or what was looked up on failure. The
+    response summary is the one every batch tool carries — ``applied``, ``failed_count``,
+    ``total`` — plus this tool's original ``failed`` count key.
+
+    Annotations are function-level, not instruction-level: an ``addr`` anywhere inside a
+    function — mid-function addresses included — annotates that whole function, so the
+    comment, user type, and name land on the function itself. Composing with
+    per-instruction producers like rex_derived_string_refs therefore collapses their
+    output onto containing functions. Items that resolve to the same function apply in
+    item order with last write winning: a repeated field is overwritten by the later
+    item, and each item still counts as applied.
 
     ``prototype`` and ``type`` are aliases, not two paths: Binary Ninja stores one user
     type per function and both go through ``Function.set_user_type``. The string is
@@ -785,7 +804,15 @@ def rex_annotate_many(
             # saying so keeps a caller from retrying a half-applied batch.
             raise mcp.ToolError("annotate_failed", f"batch rolled back: {error}") from None
     applied = sum(1 for row in results if row["ok"] is True)
-    return {"applied": applied, "failed": len(results) - applied, "results": results}
+    # Every batch tool answers the same applied/failed_count/total summary; "failed" is
+    # this tool's legacy count key, kept so existing callers do not break.
+    return {
+        "applied": applied,
+        "failed": len(results) - applied,
+        "failed_count": len(results) - applied,
+        "total": len(results),
+        "results": results,
+    }
 
 
 @mcp.tool(destructive=True)
@@ -884,7 +911,9 @@ def rex_component_add_functions(
     relocate a function that already belongs to another component. Every address
     expression is resolved and checked before anything is added, so one bad entry
     rejects the whole call and the component is left untouched. Each result reports the
-    core's own success flag, so a declined add is visible instead of swallowed.
+    core's own success flag, so a declined add is visible instead of swallowed. The
+    response summary is the one every batch tool carries: ``applied``, ``failed_count``,
+    ``total`` (``added_count`` is this tool's original name for ``applied``).
 
     :param path: Absolute component path ("/" for the root component).
     :param functions: Address expressions of the functions to add; 1 to 64 entries.
@@ -922,9 +951,15 @@ def rex_component_add_functions(
         results.append(
             {"start": hex(function.start), "name": _truncate(function.name), "added": added}
         )
+    added_count = sum(1 for result in results if result["added"])
     return {
         "path": path,
-        "added_count": sum(1 for result in results if result["added"]),
+        "added_count": added_count,
+        # The uniform batch-summary keys (see rex_annotate_many); added_count is this
+        # tool's legacy name for applied, kept so existing callers do not break.
+        "applied": added_count,
+        "failed_count": len(results) - added_count,
+        "total": len(results),
         "results": results,
     }
 
@@ -950,8 +985,11 @@ def rex_component_create(
     if not name:
         raise mcp.ToolError("invalid_params", "name must not be empty")
     if len(name) > _MAX_COMPONENT_NAME_CHARS:
+        # Over-cap strings reject with the plugin's per-parameter *_too_large code family,
+        # not the integer-argument invalid_params convention, so the same mistake maps to
+        # the same code class in every tool.
         raise mcp.ToolError(
-            "invalid_params", f"name exceeds {_MAX_COMPONENT_NAME_CHARS} characters"
+            "name_too_large", f"name exceeds {_MAX_COMPONENT_NAME_CHARS} characters"
         )
     if "/" in name:
         # "/" is the path delimiter, so a name containing one can never be addressed by path.
@@ -1284,6 +1322,12 @@ def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
     This is the escape hatch for everything the other tools do not cover. It runs arbitrary
     code with full access to the Binary Ninja API, so it is marked destructive.
 
+    Failures do not raise a tool error: an exception in ``code`` is reported in the
+    response's ``error`` field (``error_truncated`` marks clipping) with ``result`` null.
+    This is the only tool that answers with a success-shaped error, so protocol-level
+    error handling never fires for it — check ``error`` is None instead of relying on
+    the call having raised.
+
     :param code: Python source to execute; assign to ``result`` to return a value.
     """
     namespace: dict[str, object] = {
@@ -1332,7 +1376,7 @@ def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
     }
 
 
-@mcp.tool()
+@mcp.tool(destructive=True)
 def rex_export_disasm(
     call: mcp.ToolCall,
     address: mcp.Address,
@@ -1387,7 +1431,7 @@ def rex_export_disasm(
     }
 
 
-@mcp.tool()
+@mcp.tool(destructive=True)
 def rex_export_symbols(
     call: mcp.ToolCall,
     start: Annotated[int, mcp.Minimum(0)],
@@ -1544,7 +1588,7 @@ def rex_function_containing(call: mcp.ToolCall, addr: mcp.Address) -> dict[str, 
     }
 
 
-@mcp.tool()
+@mcp.tool(destructive=True)
 def rex_function_define(call: mcp.ToolCall, start: mcp.Address) -> dict[str, object]:
     """Turn the bytes at an address into a function.
 
@@ -1685,7 +1729,7 @@ def rex_kv_get(call: mcp.ToolCall, key: str) -> dict[str, object]:
     return {"key": _truncate(key), "value": text, "truncated": truncated}
 
 
-@mcp.tool()
+@mcp.tool(destructive=True)
 def rex_kv_set(call: mcp.ToolCall, key: str, value: str) -> dict[str, object]:
     """Store a string in the binary view database as persistent scratch data.
 
@@ -1902,7 +1946,7 @@ def rex_string_search(
     return {"total": total, "truncated": truncated, "strings": found}
 
 
-@mcp.tool()
+@mcp.tool(destructive=True)
 def rex_struct_from_access(call: mcp.ToolCall, name: str) -> dict[str, object]:
     """Infer and define a struct from the view's recorded offset accesses.
 
@@ -1925,7 +1969,8 @@ def rex_struct_from_access(call: mcp.ToolCall, name: str) -> dict[str, object]:
     if not name:
         raise mcp.ToolError("invalid_params", "name must not be empty")
     if len(name) > _MAX_TYPE_NAME_CHARS:
-        raise mcp.ToolError("invalid_params", f"name exceeds {_MAX_TYPE_NAME_CHARS} characters")
+        # The plugin's per-parameter *_too_large string-cap code family.
+        raise mcp.ToolError("name_too_large", f"name exceeds {_MAX_TYPE_NAME_CHARS} characters")
     try:
         structure = bv.create_structure_from_offset_access(name)
     except Exception as error:
@@ -1955,13 +2000,17 @@ def rex_struct_from_access(call: mcp.ToolCall, name: str) -> dict[str, object]:
 
 @mcp.tool(read_only=True)
 def rex_tag_list(
-    call: mcp.ToolCall, limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100
+    call: mcp.ToolCall,
+    limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
+    offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> dict[str, object]:
     """List the tags set on the binary view.
 
     :param limit: Maximum number of tags to return (0 to 500).
+    :param offset: Number of tags to skip before collecting results (>= 0).
     """
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
+    offset = _validate_range("offset", offset, 0)
     tags = []
     for address, tag in call.binary_view.get_tags():
         data, data_truncated = _truncate_with_flag(tag.data)
@@ -1973,10 +2022,16 @@ def rex_tag_list(
                 "data_truncated": data_truncated,
             }
         )
-    return {"total": len(tags), "truncated": len(tags) > limit, "tags": tags[:limit]}
+    # Like the other listing tools: total covers the whole listing, truncated marks a
+    # window that ends before it, and the page is [offset, offset + limit).
+    return {
+        "total": len(tags),
+        "truncated": offset + limit < len(tags),
+        "tags": tags[offset : offset + limit],
+    }
 
 
-@mcp.tool()
+@mcp.tool(destructive=True)
 def rex_tag_set(
     call: mcp.ToolCall, addr: mcp.Address, tag_type: str, data: str, create_missing: bool = True
 ) -> dict[str, object]:
@@ -2010,7 +2065,7 @@ def rex_tag_set(
     }
 
 
-@mcp.tool()
+@mcp.tool(destructive=True)
 def rex_type_library_export(
     call: mcp.ToolCall,
     library_name: str,
@@ -2025,7 +2080,9 @@ def rex_type_library_export(
     a plain type (``kind="types"``) or as a named object such as a function signature
     (``kind="objects"``). Referenced types are copied in or recorded as dependencies by
     the core. Names not present in the view are reported per-name under ``failed``; the
-    rest still export. The library is finalized and written through the same export-root
+    rest still export, and the uniform batch summary (``applied``/``failed_count``/
+    ``total``, shared with the other batch tools) counts both sides. The library is
+    finalized and written through the same export-root
     discipline as rex_export_disasm: validated plain filename, fixed root, and the same
     byte cap — the core serializes the .bntl itself, so the size is only known after the
     write, and an over-cap file is removed rather than left behind.
@@ -2040,8 +2097,9 @@ def rex_type_library_export(
     if not library_name:
         raise mcp.ToolError("invalid_params", "library_name must not be empty")
     if len(library_name) > _MAX_TYPE_NAME_CHARS:
+        # The plugin's per-parameter *_too_large string-cap code family.
         raise mcp.ToolError(
-            "invalid_params", f"library_name exceeds {_MAX_TYPE_NAME_CHARS} characters"
+            "library_name_too_large", f"library_name exceeds {_MAX_TYPE_NAME_CHARS} characters"
         )
     _validate_type_names(names)
     _validate_export_path(filename)
@@ -2093,11 +2151,15 @@ def rex_type_library_export(
         "library": _truncate(library_name),
         "exported": exported,
         "failed": failed,
+        # The uniform batch-summary keys (see rex_annotate_many): applied counts the
+        # exported names, failed_count the per-name failures echoed under ``failed``.
+        "applied": len(exported),
+        "failed_count": len(failed),
         "total": len(names),
     }
 
 
-@mcp.tool()
+@mcp.tool(destructive=True)
 def rex_type_library_import(call: mcp.ToolCall, path: str, names: list[str]) -> dict[str, object]:
     """Import types from a .bntl into the current binary view.
 
@@ -2108,7 +2170,9 @@ def rex_type_library_import(call: mcp.ToolCall, path: str, names: list[str]) -> 
     additive: on a name conflict the core deconflicts rather than overwriting, and the
     response's ``resolved`` field carries the name actually inserted, which may differ
     from the requested one. A name the library does not provide is reported per-name
-    under ``failed`` — the other names still import.
+    under ``failed`` — the other names still import, and the uniform batch summary
+    (``applied``/``failed_count``/``total``, shared with the other batch tools) counts
+    both sides.
 
     Reads whatever path the caller supplies; only the type-system state of the view
     changes. Bounded: 1 to 64 names per call, each at most 255 characters.
@@ -2138,6 +2202,10 @@ def rex_type_library_import(call: mcp.ToolCall, path: str, names: list[str]) -> 
         "library": _truncate(library.name) if library.name is not None else None,
         "imported": imported,
         "failed": failed,
+        # The uniform batch-summary keys (see rex_annotate_many): applied counts the
+        # imported names, failed_count the per-name failures echoed under ``failed``.
+        "applied": len(imported),
+        "failed_count": len(failed),
         "total": len(names),
     }
 
@@ -2146,12 +2214,32 @@ def rex_type_library_import(call: mcp.ToolCall, path: str, names: list[str]) -> 
 def rex_undo(call: mcp.ToolCall) -> dict[str, object]:
     """Undo the last committed transaction in the view's undo database.
 
-    The rollback for the plugin's destructive tools: one rex_undo step reverses one
-    whole rex_annotate_many batch, a rex_memory_write, and anything else committed as
-    a transaction. The stack is shared with the GUI user, so this may roll back their
-    most recent edit too. An empty stack is a core-side no-op, not an error — the
-    post-operation ``undo_left``/``redo_left`` depths let a caller stop when ``undo_left``
-    stops changing.
+    The rollback for the plugin's destructive tools. The undo database belongs to the
+    file, so the stack is shared with the GUI user and this may roll back their most
+    recent edit too. An empty stack is a core-side no-op, not an error — the
+    post-operation ``undo_left``/``redo_left`` depths let a caller stop when
+    ``undo_left`` stops changing.
+
+    Which plugin operations leave an undo entry, per the installed API source (what the
+    docstrings there document, not a live observation):
+
+    - rex_annotate_many: yes. Its batch commits inside ``BinaryView.undoable_transaction``,
+      which the API documents as creating "an Undo state containing those actions" —
+      so one batch is one entry, and this tool reverses it whole.
+    - rex_tag_set: not documented. The API documents the removal direction only
+      (``BinaryView.remove_user_data_tag`` and the Function counterparts: "will be
+      added to the current undo buffer"); ``BinaryView.add_tag``, which rex_tag_set
+      calls, says nothing about undo.
+    - rex_kv_set: not documented. ``store_metadata`` documents only its BNDB snapshot
+      persistence flags and says nothing about undo entries.
+    - rex_type_library_import: not documented. Neither ``add_type_library`` nor
+      ``import_library_type`` mentions undo.
+    - rex_memory_write: not documented. ``BinaryView.write`` says nothing about undo,
+      so whether a bare write outside a transaction is undoable is unknown here too.
+
+    The undocumented four need a live Binary Ninja to settle. The depths make that a
+    one-call experiment per operation: read ``undo_left`` before and after the
+    interleaved write — a depth change means this tool would roll it back.
     """
     try:
         call.binary_view.undo()
