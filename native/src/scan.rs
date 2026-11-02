@@ -184,6 +184,39 @@ mod tests {
     }
 
     #[test]
+    fn record_new_ignores_duplicate_addresses_without_stopping() {
+        let page = Pagination {
+            offset: 0,
+            limit: 1,
+        };
+        let mut running = RunningScan::new();
+
+        assert!(running.record_new(&page, 0x1000));
+        assert!(running.record_new(&page, 0x1000));
+        assert_eq!(running.total, 1);
+        assert_eq!(running.matches, vec![0x1000]);
+
+        assert!(!running.record_new(&page, 0x1001));
+        assert!(!running.record_new(&page, 0x1000));
+    }
+
+    #[test]
+    fn already_truncated_scan_stops_even_without_another_match() {
+        let page = Pagination {
+            offset: 0,
+            limit: 0,
+        };
+        let mut running = RunningScan::new();
+        assert!(!running.record(&page, 0x1000));
+
+        let pat = pattern("ff");
+        assert!(!scan_pattern(b"abc", 0x1000, &pat, &page, &mut running));
+        assert_eq!(running.total, 1);
+        assert_eq!(running.matches, Vec::<u64>::new());
+        assert!(running.truncated);
+    }
+
+    #[test]
     fn self_overlapping_pattern_counts_each_position() {
         let hay = b"aaaa";
         let pat = pattern("61 61"); // "aa"

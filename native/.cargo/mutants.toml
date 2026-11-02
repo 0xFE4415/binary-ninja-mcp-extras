@@ -1,0 +1,4 @@
+# Keep mutation testing on the pure parser and scanner logic.
+examine_globs = ["src/hexpattern.rs", "src/scan.rs"]
+# Build and test using the stub core rather than the Binary Ninja core.
+additional_cargo_args = ["--no-default-features"]

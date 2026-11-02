@@ -150,6 +150,15 @@ mod tests {
     }
 
     #[test]
+    fn is_empty_reflects_pattern_bytes() {
+        let empty = HexPattern { bytes: Vec::new() };
+        let non_empty = HexPattern::parse("??").unwrap();
+
+        assert!(empty.is_empty());
+        assert!(!non_empty.is_empty());
+    }
+
+    #[test]
     fn accepts_whitespace_free_and_mixed_whitespace() {
         assert_eq!(parse_ok("488b"), parse_ok("48 8b"));
         assert_eq!(parse_ok("48\t8b\n??\r05"), parse_ok("48 8b ?? 05"));

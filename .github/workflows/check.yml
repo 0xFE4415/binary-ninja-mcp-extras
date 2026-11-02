@@ -2,37 +2,94 @@ name: check
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - name: Lint Markdown
-        uses: DavidAnson/markdownlint-cli2-action@v20
-        with:
-          globs: "**/*.md"
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: "3.13"
-      - name: Run Python checks
-        run: uvx nox -s format ruff ty test
+      - name: Lint Markdown
+        uses: DavidAnson/markdownlint-cli2-action@v25
+        with:
+          globs: "**/*.md"
+      - name: Format
+        run: uvx nox -s format
+      - name: Ruff
+        run: uvx nox -s ruff
+      - name: Type check
+        run: uvx nox -s ty
+      - name: Test
+        run: uvx nox -s test
 
   native:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.13"
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Install stub-core build prerequisites
-        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+      - name: Cache apt packages
+        uses: actions/cache@v6
         with:
-          python-version: "3.13"
+          path: ~/.cache/apt/archives
+          key: apt-${{ runner.os }}-native-${{ hashFiles('.github/workflows/check.yml') }}
+      - name: Install stub-core build prerequisites
+        run: |
+          mkdir -p "$HOME/.cache/apt/archives"
+          sudo apt-get update
+          sudo apt-get \
+            -o Dir::Cache::archives="$HOME/.cache/apt/archives" \
+            install -y clang cmake ninja-build
       - name: Run native checks
         run: uvx nox -s native
+
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.13"
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache apt packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/apt/archives
+          key: apt-${{ runner.os }}-mutation-${{ hashFiles('.github/workflows/check.yml') }}
+      - name: Install build prerequisites
+        run: |
+          mkdir -p "$HOME/.cache/apt/archives"
+          sudo apt-get update
+          sudo apt-get \
+            -o Dir::Cache::archives="$HOME/.cache/apt/archives" \
+            install -y clang cmake ninja-build jq
+      - name: Install cargo-mutants
+        run: cargo install --locked cargo-mutants
+      - name: Run Python mutation gate
+        run: uvx nox -s mutation
+      - name: Run native mutation gate
+        run: uvx nox -s mutation_native

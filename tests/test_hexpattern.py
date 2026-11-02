@@ -39,3 +39,9 @@ def test_compile_reports_overlapping_matches() -> None:
     matcher, length = compile_hex_pattern("90 90")
     assert length == 2
     assert [match.start() for match in matcher.finditer(b"\x90\x90\x90")] == [0, 1]
+
+
+def test_compile_wildcard_matches_newline() -> None:
+    matcher, length = compile_hex_pattern("??")
+    assert length == 1
+    assert [match.start() for match in matcher.finditer(b"\n")] == [0]

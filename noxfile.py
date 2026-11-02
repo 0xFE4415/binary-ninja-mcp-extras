@@ -4,6 +4,12 @@ from pathlib import Path
 import nox
 
 nox.options.default_venv_backend = "uv|virtualenv"
+# mutation is slow and opt-in: run it explicitly with `nox -s mutation`.
+nox.options.sessions = ["format", "ruff", "ty", "test", "native", "check"]
+
+# Ceilings on alive (survived + timed out) mutants; lower them as mutants get killed.
+PYTHON_MUTANT_CEILING = 30
+RUST_MUTANT_CEILING = 5
 
 
 @nox.session
@@ -29,6 +35,41 @@ def ty(session: nox.Session) -> None:
 def test(session: nox.Session) -> None:
     session.install("-e", ".[test]")
     session.run("pytest", *session.posargs)
+
+
+@nox.session
+def mutation(session: nox.Session) -> None:
+    session.install("-e", ".[dev]")
+    stats = Path("mutants/mutmut-cicd-stats.json")
+    stats.unlink(missing_ok=True)
+    session.run("mutmut", "run", env={"HYPOTHESIS_PROFILE": "mutmut"})
+    session.run("mutmut", "export-cicd-stats")
+    session.run(
+        "jq",
+        "-e",
+        ".total > 0 and (.killed + .survived + .timeout) == .total"
+        f" and (.survived + .timeout) <= {PYTHON_MUTANT_CEILING}",
+        stats.as_posix(),
+        external=True,
+    )
+
+
+@nox.session(python=False)
+def mutation_native(session: nox.Session) -> None:
+    """cargo-mutants in stub-core mode; exit 2/3 only report survivors, jq gates the count."""
+    session.chdir("native")
+    outcomes = Path("mutants.out/outcomes.json")
+    outcomes.unlink(missing_ok=True)
+    session.run("cargo", "mutants", "-j", "4", success_codes=[0, 2, 3], external=True)
+    session.run(
+        "jq",
+        "-e",
+        ".total_mutants > 0"
+        " and (.caught + .missed + .timeout + .unviable) == .total_mutants"
+        f" and (.missed + .timeout) <= {RUST_MUTANT_CEILING}",
+        outcomes.as_posix(),
+        external=True,
+    )
 
 
 @nox.session(python=False)

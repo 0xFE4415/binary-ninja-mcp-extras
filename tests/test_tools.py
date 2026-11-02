@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import override
 
 import pytest
 from helpers import (
@@ -98,6 +99,10 @@ def test_string_search_truncates_long_values() -> None:
     assert result["strings"][0]["value"] == "a" * tools._MAX_CHARS + "... [88 chars truncated]"
 
 
+def test_truncate_honors_custom_limit() -> None:
+    assert tools._truncate("abcdef", 3) == "abc... [3 chars truncated]"
+
+
 def test_string_search_pagination_beyond_the_result_set() -> None:
     view = FakeBinaryView(
         strings=[FakeStringReference("ab", 0x100), FakeStringReference("ab", 0x110)]
@@ -179,6 +184,21 @@ def test_data_find_reports_overlapping_matches() -> None:
     result = find(_call(view), pattern="9090")
     assert result["matches"] == ["0x1000", "0x1001", "0x1002"]
     assert result["total"] == 3
+
+
+def test_data_find_advances_through_each_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tools, "_READ_CHUNK", 4)
+    view = SpyBinaryView(
+        segments=[FakeSegment(0x1000, 12)],
+        memory={0x1000: b"\xeb\x90" * 6},
+    )
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="eb") == {
+        "total": 6,
+        "truncated": False,
+        "matches": ["0x1000", "0x1002", "0x1004", "0x1006", "0x1008", "0x100a"],
+    }
+    assert view.read_addresses == [0x1000, 0x1004, 0x1008]
 
 
 def test_data_find_finds_matches_across_chunk_boundaries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -453,6 +473,34 @@ def test_disasm_at_anchors_past_label_lines() -> None:
     assert result["truncated"] is True
 
 
+def test_disasm_at_joins_tokens_without_separators() -> None:
+    class SplitTokenBlock(FakeBasicBlock):
+        @override
+        def get_disassembly_text(self) -> list[FakeDisassemblyLine]:
+            lines = super().get_disassembly_text()
+            lines[0].tokens = ["mov", " ", "rax"]
+            return lines
+
+    main = FakeDisasmFunction(
+        "main", 0x1100, 0x1200, blocks=[SplitTokenBlock([(0x1100, "unused")])]
+    )
+    _, disasm = get_tool("rex_disasm_at")
+    result = disasm(_call(FakeBinaryView(functions=[main])), 0x1100, before=0, after=0)
+    assert result["instructions"] == [{"address": "0x1100", "text": "mov rax"}]
+
+
+def test_disasm_at_preserves_equal_address_line_order() -> None:
+    main = FakeDisasmFunction(
+        "main",
+        0x1100,
+        0x1200,
+        blocks=[FakeBasicBlock([(0x1100, "z_label:"), (0x1100, "a_instruction")])],
+    )
+    _, disasm = get_tool("rex_disasm_at")
+    result = disasm(_call(FakeBinaryView(functions=[main])), 0x1100, before=0, after=0)
+    assert result["instructions"] == [{"address": "0x1100", "text": "a_instruction"}]
+
+
 def test_disasm_at_skips_unaddressed_lines() -> None:
     # Renderings can emit unaddressed continuation lines (a None address): they can
     # neither anchor nor be reported, so only addressed lines reach the window.
@@ -719,6 +767,16 @@ def test_hlil_grep_matches_lines() -> None:
         {"start": "0x1100", "name": "main", "lines": ["    if (recv(fd, buf, n) <= 0)"]}
     ]
     assert grep(_call(view), "RECV")["functions"] == []
+
+
+def test_hlil_grep_supports_regex_operators() -> None:
+    view = FakeBinaryView(
+        functions=[FakeFunction("main", 0x1000, 0x1010, hlil=RenderableText("call rax\n"))]
+    )
+    _, grep = get_tool("rex_hlil_grep")
+    assert grep(_call(view), r"rax+")["functions"] == [
+        {"start": "0x1000", "name": "main", "lines": ["call rax"]}
+    ]
 
 
 def test_hlil_grep_caps_lines_per_function() -> None:
@@ -1885,6 +1943,19 @@ def test_export_disasm_writes_the_window_to_a_file(
     assert (root / "main.txt").read_bytes() == expected.encode("utf-8")
 
 
+def test_export_disasm_creates_nested_export_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "nested" / "exports"
+    monkeypatch.setattr(tools, "_EXPORT_ROOT", root)
+    _, export = get_tool("rex_export_disasm")
+    result = export(_call(_disasm_view()), 0x1104, filename="main.txt")
+    assert Path(result["path"]) == root / "main.txt"
+    assert (root / "main.txt").read_bytes() == (
+        b"push rbp\nmov rbp, rsp\nsub rsp, 0x20\nmov eax, 1\nleave\nret\n"
+    )
+
+
 def test_export_disasm_caps_the_window_at_max_lines(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1922,6 +1993,13 @@ def test_export_disasm_shrinks_to_the_byte_cap(
     assert result["truncated"] is True
     assert result["bytes_written"] == len(expected)
     assert (root / "shrink.txt").read_bytes() == expected
+
+    monkeypatch.setattr(tools, "_MAX_EXPORT_FILE_BYTES", len(b"push rbp\n"))
+    exact = export(_call(view), 0x1104, filename="exact.txt")
+    assert exact["lines"] == 1
+    assert exact["bytes_written"] == len(b"push rbp\n")
+    assert exact["truncated"] is True
+    assert (root / "exact.txt").read_bytes() == b"push rbp\n"
 
 
 def test_export_disasm_rejects_a_single_line_over_the_cap(

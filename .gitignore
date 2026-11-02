@@ -1,5 +1,7 @@
 .venv/
 .nox/
+mutants/
+mutants.out*/
 __pycache__/
 *.pyc
 .ruff_cache/
