@@ -50,6 +50,9 @@ clients that already connected must reconnect to see the registered tools.
 | `rex_quick_main` | Entry point, main resolution, and main's HLIL in one fast-contact call. |
 | `rex_export_disasm` | Write a function's disassembly window to a file. |
 | `rex_export_symbols` | Write a symbol address range to a file in the export root. |
+| `rex_type_library_import` | Attach a .bntl and import a bounded list of its type names into the view. |
+| `rex_type_library_export` | Export view types/objects into a new .bntl in the export root. |
+| `rex_struct_from_access` | Infer and define a struct from the view's recorded offset accesses. |
 | `rex_function_containing` | List the functions containing an address. |
 | `rex_function_define` | Turn the bytes at an address into a function. |
 | `rex_function_undefine` | Remove the function covering an address (destructive). |

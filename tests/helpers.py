@@ -102,6 +102,8 @@ def install_fake_binaryninja() -> None:
     setattr(package, "binaryview", bv_module)
     setattr(package, "function", fn_module)
     setattr(package, "enums", enums_module)
+    setattr(package, "Type", FakeType)
+    setattr(package, "TypeLibrary", FakeTypeLibrary)
 
     for name, module in (
         ("binaryninja", package),
@@ -112,6 +114,7 @@ def install_fake_binaryninja() -> None:
     ):
         sys.modules[name] = module
     REGISTERED_TOOLS.clear()
+    TYPE_LIBRARIES_ON_DISK.clear()
 
 
 class FakeSegment:
@@ -321,6 +324,11 @@ class FakeBinaryView:
         analysis_progress_sequence: list[FakeAnalysisProgress] | None = None,
         analysis_info: FakeAnalysisInfo | None = None,
         file: FakeFileMetadata | None = None,
+        arch: FakeArchitecture | None = None,
+        library_types: dict[str, str | None] | None = None,
+        types: dict[str, FakeType] | None = None,
+        structure: FakeStructureType | None = None,
+        defined_type_name: str | None = None,
     ) -> None:
         self.strings = strings if strings is not None else []
         self.segments = segments if segments is not None else []
@@ -361,6 +369,21 @@ class FakeBinaryView:
         self.transactions: list[str] = []
         # Injected into parse_type_string to model a type string the core rejects.
         self.parse_type_error: Exception | None = None
+        # Type-system state for the type-library and struct-inference tools: ``arch`` is
+        # Optional to model views without a default architecture; ``library_types`` maps a
+        # requested name to the deconflicted name the core would insert (None fails the
+        # import); ``structure`` is what create_structure_from_offset_access hands back
+        # (None models the core refusing to build anything).
+        self.arch = arch
+        self._library_types = library_types or {}
+        self._types = types or {}
+        self._structure = structure
+        self._defined_type_name = defined_type_name
+        self.type_libraries: list[FakeTypeLibrary] = []
+        self.imported_library_types: list[tuple[FakeTypeLibrary | None, str]] = []
+        self.exported_types: list[tuple[FakeTypeLibrary, str, FakeType]] = []
+        self.exported_objects: list[tuple[FakeTypeLibrary, str, FakeType]] = []
+        self.defined_types: list[tuple[str, str, FakeStructureType]] = []
 
     def get_section_by_name(self, name: str) -> object:
         if name not in self._sections:
@@ -490,6 +513,42 @@ class FakeBinaryView:
     def remove_metadata(self, key: str) -> None:
         self._metadata.pop(key, None)
 
+    def add_type_library(self, library: FakeTypeLibrary) -> None:
+        self.type_libraries.append(library)
+
+    def import_library_type(
+        self, name: str, library: FakeTypeLibrary | None = None
+    ) -> FakeType | None:
+        self.imported_library_types.append((library, name))
+        resolved = self._library_types.get(name)
+        return FakeType(name=resolved) if resolved is not None else None
+
+    def get_type_by_name(self, name: str) -> FakeType | None:
+        return self._types.get(name)
+
+    def export_type_to_library(
+        self, library: FakeTypeLibrary, name: str, type_obj: FakeType
+    ) -> None:
+        self.exported_types.append((library, name, type_obj))
+
+    def export_object_to_library(
+        self, library: FakeTypeLibrary, name: str, type_obj: FakeType
+    ) -> None:
+        self.exported_objects.append((library, name, type_obj))
+
+    def define_type(self, type_id: str, default_name: str, type_obj: FakeStructureType) -> str:
+        self.defined_types.append((type_id, default_name, type_obj))
+        return self._defined_type_name if self._defined_type_name is not None else default_name
+
+    def create_structure_from_offset_access(self, name: str) -> FakeStructureType:
+        # Mirrors the real wrapper's refusal (binaryview.py raises when the core hands
+        # back no structure), so the failure path is exercised at the same layer.
+        if self._structure is None:
+            raise Exception(
+                "BNCreateStructureFromOffsetAccess failed to create struct from offsets"
+            )
+        return self._structure
+
 
 class SpyBinaryView(FakeBinaryView):
     """Records the address of every read and function lookup to bound scan work."""
@@ -513,6 +572,86 @@ class SpyBinaryView(FakeBinaryView):
 class FakeToolCall:
     def __init__(self, binary_view: FakeBinaryView) -> None:
         self.binary_view = binary_view
+
+
+class FakeArchitecture:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class FakeType:
+    """Mirrors the Type surface the tools touch: str() is the rendered type string, and
+    ``name`` models the deconflicted name of a NamedTypeReference (the documented return
+    contract of import_library_type)."""
+
+    def __init__(self, name: str, type_string: str = "") -> None:
+        self.name = name
+        self._type_string = type_string
+
+    @override
+    def __str__(self) -> str:
+        return self._type_string
+
+    @staticmethod
+    def generate_auto_type_id(source: str, name: str) -> str:
+        return f"auto:{source}:{name}"
+
+
+class FakeStructureMember:
+    def __init__(self, name: str, offset: int, type_obj: FakeType) -> None:
+        self.name = name
+        self.offset = offset
+        self.type = type_obj
+
+
+class FakeStructureType:
+    def __init__(self, members: list[FakeStructureMember], width: int) -> None:
+        self.members = members
+        self.width = width
+
+
+# Stands in for .bntl files on disk: tests register FakeTypeLibrary instances under the
+# path load_from_file should find, mirroring TypeLibrary.load_from_file.
+TYPE_LIBRARIES_ON_DISK: dict[str, FakeTypeLibrary] = {}
+
+
+class FakeTypeLibrary:
+    def __init__(
+        self,
+        name: str | None = None,
+        arch: FakeArchitecture | None = None,
+        file_bytes: bytes = b"BNTL",
+        finalize_result: bool = True,
+        write_error: OSError | None = None,
+    ) -> None:
+        self.name = name
+        self.arch = arch
+        self.file_bytes = file_bytes
+        self.finalize_result = finalize_result
+        self.write_error = write_error
+        self.finalized = False
+        self.written_paths: list[str] = []
+
+    @staticmethod
+    def load_from_file(path: str) -> FakeTypeLibrary | None:
+        return TYPE_LIBRARIES_ON_DISK.get(path)
+
+    @staticmethod
+    def new(arch: FakeArchitecture, name: str) -> FakeTypeLibrary:
+        return FakeTypeLibrary(name=name, arch=arch)
+
+    def finalize(self) -> bool:
+        self.finalized = True
+        return self.finalize_result
+
+    def write_to_file(self, path: str) -> None:
+        # Writes real bytes so the tool's post-write size check sees the file, like the
+        # core's BNWriteTypeLibraryToFile does.
+        if self.write_error is not None:
+            raise self.write_error
+        with open(path, "wb") as handle:
+            handle.write(self.file_bytes)
+        self.written_paths.append(path)
 
 
 def get_tool(name: str) -> tuple[dict[str, object], Any]:

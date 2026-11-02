@@ -5,18 +5,24 @@ from typing import override
 
 import pytest
 from helpers import (
+    TYPE_LIBRARIES_ON_DISK,
     FakeActiveAnalysisInfo,
     FakeAnalysisInfo,
     FakeAnalysisProgress,
     FakeAnalysisState,
+    FakeArchitecture,
     FakeBinaryView,
     FakeFileMetadata,
     FakeFunction,
     FakeSegment,
     FakeStringReference,
+    FakeStructureMember,
+    FakeStructureType,
     FakeSymbol,
     FakeToolCall,
     FakeToolError,
+    FakeType,
+    FakeTypeLibrary,
     RenderableText,
     SpyBinaryView,
     get_tool,
@@ -3118,3 +3124,340 @@ def test_annotate_many_lists_all_unknown_fields() -> None:
     assert result["results"] == [
         {"addr": "0x1100", "ok": False, "error": "unknown field(s): hue, tint"}
     ]
+
+
+# --- rex_type_library_import ----------------------------------------------------------------
+
+
+def _library_on_disk(tmp_path: Path, library: FakeTypeLibrary) -> str:
+    path = str(tmp_path / "libc.bntl")
+    TYPE_LIBRARIES_ON_DISK[path] = library
+    return path
+
+
+def test_type_library_import_attaches_and_imports(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(tools, "_EXPORT_ROOT", tmp_path / "exports")
+    library = FakeTypeLibrary(name="libc")
+    path = _library_on_disk(tmp_path, library)
+    # "open" resolves to a deconflicted name because the view already has one; "bad" is
+    # not provided by the library at all.
+    view = FakeBinaryView(library_types={"open": "open_0", "bad": None})
+    _, import_tool = get_tool("rex_type_library_import")
+    result = import_tool(_call(view), path, ["open", "bad"])
+    assert result == {
+        "library": "libc",
+        "imported": [{"requested": "open", "resolved": "open_0"}],
+        "failed": [{"requested": "bad", "reason": "not provided by this type library"}],
+        "total": 2,
+    }
+    # The library itself was attached to the view once, before any name was imported.
+    assert view.type_libraries == [library]
+    assert view.imported_library_types == [(library, "open"), (library, "bad")]
+
+
+def test_type_library_import_reports_an_unnamed_library(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _library_on_disk(tmp_path, FakeTypeLibrary(name=None))
+    view = FakeBinaryView(library_types={"open": "open"})
+    _, import_tool = get_tool("rex_type_library_import")
+    result = import_tool(_call(view), str(tmp_path / "libc.bntl"), ["open"])
+    assert result["library"] is None
+    assert result["imported"] == [{"requested": "open", "resolved": "open"}]
+
+
+def test_type_library_import_reports_a_missing_library_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(tools, "_EXPORT_ROOT", tmp_path / "exports")
+    view = FakeBinaryView()
+    _, import_tool = get_tool("rex_type_library_import")
+    with pytest.raises(FakeToolError) as exc:
+        import_tool(_call(view), str(tmp_path / "absent.bntl"), ["open"])
+    assert exc.value.code == "library_not_found"
+    # A path short enough to echo whole is echoed whole.
+    assert exc.value.message == (f"could not load a type library from '{tmp_path / 'absent.bntl'}'")
+
+
+def test_type_library_import_rejects_bad_names_lists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(tools, "_EXPORT_ROOT", tmp_path / "exports")
+    _library_on_disk(tmp_path, FakeTypeLibrary(name="libc"))
+    view = FakeBinaryView()
+    _, import_tool = get_tool("rex_type_library_import")
+    long_name = "x" * (tools._MAX_TYPE_NAME_CHARS + 1)
+    for names, message in (
+        ("open", "names must be a list of type names"),
+        ([], f"names must contain between 1 and {tools._MAX_TYPE_LIBRARY_NAMES} entries"),
+        (
+            ["a"] * (tools._MAX_TYPE_LIBRARY_NAMES + 1),
+            f"names must contain between 1 and {tools._MAX_TYPE_LIBRARY_NAMES} entries",
+        ),
+        ([1], "names[0] must be a string type name"),
+        ([""], "names[0] must not be empty"),
+        ([long_name], f"names[0] exceeds {tools._MAX_TYPE_NAME_CHARS} characters"),
+    ):
+        with pytest.raises(FakeToolError) as exc:
+            import_tool(_call(view), "/nowhere.bntl", names)
+        assert exc.value.code == "invalid_params"
+        assert exc.value.message == message
+    # Exactly at both caps — 64 entries of exactly 255 characters each — the list is
+    # accepted: the library loads, attaches, and every name reports as not provided.
+    at_cap = ["n" * tools._MAX_TYPE_NAME_CHARS] * tools._MAX_TYPE_LIBRARY_NAMES
+    at_cap_result = import_tool(_call(view), str(tmp_path / "libc.bntl"), at_cap)
+    assert at_cap_result["total"] == tools._MAX_TYPE_LIBRARY_NAMES
+    assert len(at_cap_result["failed"]) == tools._MAX_TYPE_LIBRARY_NAMES
+
+
+# --- rex_type_library_export ----------------------------------------------------------------
+
+
+def _typed_view() -> FakeBinaryView:
+    return FakeBinaryView(
+        arch=FakeArchitecture("x86_64"),
+        types={
+            "open": FakeType("open", "int open(char *path, int flags)"),
+            "color": FakeType("color", "enum color { RED, GREEN }"),
+        },
+    )
+
+
+def test_type_library_export_writes_types_to_a_bntl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    view = _typed_view()
+    _, export = get_tool("rex_type_library_export")
+    result = export(_call(view), "recovered", ["open", "color"], filename="recovered.bntl")
+    assert result == {
+        "path": str((root / "recovered.bntl").resolve()),
+        "bytes_written": 4,
+        "library": "recovered",
+        "exported": ["open", "color"],
+        "failed": [],
+        "total": 2,
+    }
+    # The file holds exactly the bytes the (fake) core wrote, in the export root.
+    assert (root / "recovered.bntl").read_bytes() == b"BNTL"
+    library = view.exported_types[0][0]
+    assert library.name == "recovered"
+    assert library.arch is not None and library.arch.name == "x86_64"
+    assert library.finalized is True
+    assert [(name, type_obj) for _, name, type_obj in view.exported_types] == [
+        ("open", view._types["open"]),
+        ("color", view._types["color"]),
+    ]
+
+
+def test_type_library_export_objects_routes_through_the_object_exporter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _typed_view()
+    _, export = get_tool("rex_type_library_export")
+    result = export(_call(view), "recovered", ["open"], kind="objects", filename="objs.bntl")
+    assert result["exported"] == ["open"]
+    assert view.exported_objects == [(view.exported_objects[0][0], "open", view._types["open"])]
+    assert view.exported_types == []
+
+
+def test_type_library_export_reports_missing_types(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _typed_view()
+    _, export = get_tool("rex_type_library_export")
+    result = export(_call(view), "recovered", ["color", "absent"], filename="mixed.bntl")
+    assert result["exported"] == ["color"]
+    assert result["failed"] == [
+        {"requested": "absent", "reason": "no type with this name in the view"}
+    ]
+    assert result["total"] == 2
+    assert [name for _, name, _ in view.exported_types] == ["color"]
+
+
+def test_type_library_export_requires_an_architecture() -> None:
+    _, export = get_tool("rex_type_library_export")
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(FakeBinaryView()), "recovered", ["open"], filename="x.bntl")
+    assert exc.value.code == "no_arch"
+    assert exc.value.message == ("the binary view has no architecture to create a type library for")
+
+
+def test_type_library_export_reports_finalize_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    broken = FakeTypeLibrary(finalize_result=False)
+    monkeypatch.setattr(FakeTypeLibrary, "new", staticmethod(lambda arch, name: broken))
+    view = FakeBinaryView(arch=FakeArchitecture("x86_64"), types={"open": FakeType("open")})
+    _, export = get_tool("rex_type_library_export")
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(view), "recovered", ["open"], filename="x.bntl")
+    assert exc.value.code == "finalize_failed"
+    assert exc.value.message == "could not finalize type library 'recovered'"
+    assert broken.written_paths == []
+
+
+def test_type_library_export_reports_write_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    broken = FakeTypeLibrary(write_error=OSError("disk full"))
+    monkeypatch.setattr(FakeTypeLibrary, "new", staticmethod(lambda arch, name: broken))
+    view = FakeBinaryView(arch=FakeArchitecture("x86_64"), types={"open": FakeType("open")})
+    _, export = get_tool("rex_type_library_export")
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(view), "recovered", ["open"], filename="broken.bntl")
+    assert exc.value.code == "export_failed"
+    assert exc.value.message == "could not write export file: disk full"
+
+
+def test_type_library_export_enforces_the_byte_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    blob = b"\x00" * 100
+    library = FakeTypeLibrary(file_bytes=blob)
+    monkeypatch.setattr(FakeTypeLibrary, "new", staticmethod(lambda arch, name: library))
+    view = FakeBinaryView(arch=FakeArchitecture("x86_64"), types={"open": FakeType("open")})
+    _, export = get_tool("rex_type_library_export")
+    # Exactly at the cap the file stays: the boundary is inclusive.
+    monkeypatch.setattr(tools, "_MAX_EXPORT_FILE_BYTES", 100)
+    result = export(_call(view), "recovered", ["open"], filename="exact.bntl")
+    assert result["bytes_written"] == 100
+    assert (root / "exact.bntl").read_bytes() == blob
+    # One byte over the cap and the file is removed, not left behind oversized.
+    monkeypatch.setattr(tools, "_MAX_EXPORT_FILE_BYTES", 99)
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(view), "recovered", ["open"], filename="huge.bntl")
+    assert exc.value.code == "export_failed"
+    assert exc.value.message == (
+        f"type library file exceeds the {tools._MAX_EXPORT_FILE_BYTES} byte export cap"
+    )
+    assert not (root / "huge.bntl").exists()
+
+
+def test_type_library_export_rejects_invalid_inputs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _typed_view()
+    _, export = get_tool("rex_type_library_export")
+    for violation, message in (
+        ({"library_name": ""}, "library_name must not be empty"),
+        (
+            {"library_name": "x" * (tools._MAX_TYPE_NAME_CHARS + 1)},
+            f"library_name exceeds {tools._MAX_TYPE_NAME_CHARS} characters",
+        ),
+        ({"kind": "bogus"}, "kind must be 'types' or 'objects', not 'bogus'"),
+        (
+            {"filename": "/abs/path.bntl"},
+            "filename must be a plain file name, not an absolute path",
+        ),
+        ({"filename": ""}, "filename must not be empty"),
+    ):
+        arguments = {"library_name": "recovered", "filename": "x.bntl", **violation}
+        with pytest.raises(FakeToolError) as exc:
+            export(_call(view), arguments.pop("library_name"), ["open"], **arguments)
+        assert exc.value.code == "invalid_params"
+        assert exc.value.message == message
+    # Validation happens before the library is created: nothing was attached or exported.
+    assert view.exported_types == []
+
+
+# --- rex_struct_from_access ------------------------------------------------------------------
+
+
+def _struct_view(members: list[FakeStructureMember], width: int) -> FakeBinaryView:
+    return FakeBinaryView(structure=FakeStructureType(members, width))
+
+
+def test_struct_from_access_creates_and_defines_the_struct() -> None:
+    members = [
+        FakeStructureMember("field_0", 0, FakeType("field_0", "int32_t")),
+        FakeStructureMember("ptr", 8, FakeType("ptr", "void *")),
+    ]
+    view = _struct_view(members, width=16)
+    _, create = get_tool("rex_struct_from_access")
+    result = create(_call(view), "ctx")
+    assert result == {
+        "name": "ctx",
+        "registered": "ctx",
+        "width": 16,
+        "member_count": 2,
+        "members": [
+            {"offset": 0, "name": "field_0", "type": "int32_t"},
+            {"offset": 8, "name": "ptr", "type": "void *"},
+        ],
+        "truncated": False,
+    }
+    # The struct is defined in the view under an auto type id derived from this tool's
+    # source marker and the requested name.
+    assert view.defined_types == [("auto:rex_struct:ctx", "ctx", view._structure)]
+
+
+def test_struct_from_access_reports_a_deconflicted_registered_name() -> None:
+    view = FakeBinaryView(
+        structure=FakeStructureType([], 0),
+        defined_type_name="ctx_0",
+    )
+    _, create = get_tool("rex_struct_from_access")
+    result = create(_call(view), "ctx")
+    assert result["registered"] == "ctx_0"
+    assert result["member_count"] == 0
+
+
+def test_struct_from_access_caps_the_echoed_members() -> None:
+    exact = [
+        FakeStructureMember(f"field_{offset}", offset, FakeType(f"field_{offset}"))
+        for offset in range(tools._MAX_STRUCT_MEMBERS)
+    ]
+    view = _struct_view(exact, width=tools._MAX_STRUCT_MEMBERS)
+    _, create = get_tool("rex_struct_from_access")
+    at_cap = create(_call(view), "ctx")
+    assert at_cap["member_count"] == tools._MAX_STRUCT_MEMBERS
+    assert len(at_cap["members"]) == tools._MAX_STRUCT_MEMBERS
+    assert at_cap["truncated"] is False
+
+    one_more = exact + [FakeStructureMember("last", tools._MAX_STRUCT_MEMBERS, FakeType("last"))]
+    over = create(_call(_struct_view(one_more, width=200)), "ctx")
+    assert over["member_count"] == tools._MAX_STRUCT_MEMBERS + 1
+    assert len(over["members"]) == tools._MAX_STRUCT_MEMBERS
+    assert over["truncated"] is True
+
+
+def test_struct_from_access_reports_the_core_refusal() -> None:
+    view = FakeBinaryView()
+    _, create = get_tool("rex_struct_from_access")
+    with pytest.raises(FakeToolError) as exc:
+        create(_call(view), "ctx")
+    assert exc.value.code == "create_failed"
+    assert exc.value.message == (
+        "could not create a structure from offset accesses: "
+        "BNCreateStructureFromOffsetAccess failed to create struct from offsets"
+    )
+    assert view.defined_types == []
+
+
+def test_struct_from_access_rejects_bad_names() -> None:
+    view = FakeBinaryView()
+    _, create = get_tool("rex_struct_from_access")
+    for name, message in (
+        ("", "name must not be empty"),
+        (
+            "x" * (tools._MAX_TYPE_NAME_CHARS + 1),
+            f"name exceeds {tools._MAX_TYPE_NAME_CHARS} characters",
+        ),
+    ):
+        with pytest.raises(FakeToolError) as exc:
+            create(_call(view), name)
+        assert exc.value.code == "invalid_params"
+        assert exc.value.message == message
+    # Exactly at the cap the name is accepted (with the fake struct in place).
+    view_at_cap = _struct_view([], 0)
+    at_cap = create(_call(view_at_cap), "x" * tools._MAX_TYPE_NAME_CHARS)
+    assert at_cap["name"] == "x" * tools._MAX_TYPE_NAME_CHARS
