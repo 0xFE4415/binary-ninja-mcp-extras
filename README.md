@@ -58,6 +58,7 @@ clients that already connected must reconnect to see the registered tools.
 | `rex_binary_close` | Discard unsaved changes and close the view programmatically (destructive). |
 | `rex_tag_set` | Attach a GUI-visible tag at an address, creating the tag type on demand. |
 | `rex_tag_list` | List the tags set on the binary view. |
+| `rex_report_show` | Render a markdown report with `binaryninja://?expr=` links into the view. |
 | `rex_kv_set` / `rex_kv_get` / `rex_kv_delete` | Persistent scratch key-value store. |
 | `rex_eval_python` | Arbitrary `binaryninja` Python scripting (destructive escape hatch). |
 
