@@ -93,16 +93,21 @@ def install_fake_binaryninja() -> None:
 
     setattr(fn_module, "Function", FakeFunctionBase)
 
+    enums_module = types.ModuleType("binaryninja.enums")
+    setattr(enums_module, "AnalysisState", FakeAnalysisState)
+
     package = types.ModuleType("binaryninja")
     setattr(package, "mcp", mcp_module)
     setattr(package, "binaryview", bv_module)
     setattr(package, "function", fn_module)
+    setattr(package, "enums", enums_module)
 
     for name, module in (
         ("binaryninja", package),
         ("binaryninja.mcp", mcp_module),
         ("binaryninja.binaryview", bv_module),
         ("binaryninja.function", fn_module),
+        ("binaryninja.enums", enums_module),
     ):
         sys.modules[name] = module
     REGISTERED_TOOLS.clear()
@@ -171,6 +176,59 @@ class FakeSymbol:
         self.name = name
 
 
+class FakeAnalysisState(enum.IntEnum):
+    """Mirrors binaryninja.enums.AnalysisState."""
+
+    InitialState = 0
+    HoldState = 1
+    IdleState = 2
+    DiscoveryState = 3
+    DisassembleState = 4
+    AnalyzeState = 5
+    ExtendedAnalyzeState = 6
+
+
+class FakeAnalysisProgress:
+    """Mirrors binaryninja.binaryview.AnalysisProgress.
+
+    ``state`` is stored as whatever the caller passes: the real core hands back a raw
+    int in at least one of the info structs (observed live), and the plugin is expected
+    to normalize through AnalysisState itself.
+    """
+
+    def __init__(self, state: int, count: int = 0, total: int = 0) -> None:
+        self.state = state
+        self.count = count
+        self.total = total
+
+
+class FakeActiveAnalysisInfo:
+    """Mirrors binaryninja.binaryview.ActiveAnalysisInfo (rex_analysis_wait reads)."""
+
+    def __init__(
+        self,
+        function: FakeFunction,
+        analysis_time: int,
+        update_count: int = 0,
+        submit_count: int = 0,
+    ) -> None:
+        self.func = function
+        self.analysis_time = analysis_time
+        self.update_count = update_count
+        self.submit_count = submit_count
+
+
+class FakeAnalysisInfo:
+    """Mirrors binaryninja.binaryview.AnalysisInfo (rex_analysis_wait reads)."""
+
+    def __init__(
+        self, state: int, analysis_time: int, active_info: list[FakeActiveAnalysisInfo]
+    ) -> None:
+        self.state = state
+        self.analysis_time = analysis_time
+        self.active_info = active_info
+
+
 class FakeFunction:
     def __init__(
         self,
@@ -190,6 +248,32 @@ class FakeFunction:
         self.callees = callees if callees is not None else []
 
 
+class FakeFileMetadata:
+    """Mirrors the FileMetadata surface rex_binary_close touches."""
+
+    def __init__(self, filename: str = "") -> None:
+        self.filename = filename
+        self._modified = False
+        self.saved_marks = 0
+        self.closed = False
+        self.close_error: Exception | None = None
+
+    @property
+    def modified(self) -> bool:
+        return self._modified
+
+    @modified.setter
+    def modified(self, value: bool) -> None:
+        self._modified = value
+        if not value:
+            self.saved_marks += 1
+
+    def close(self) -> None:
+        if self.close_error is not None:
+            raise self.close_error
+        self.closed = True
+
+
 class FakeBinaryView:
     def __init__(
         self,
@@ -203,6 +287,10 @@ class FakeBinaryView:
         end: int = 0x10000,
         constant_references: list[tuple[int, int, FakeFunction | None]] | None = None,
         symbols: list[FakeSymbol] | None = None,
+        entry_point: int = 0,
+        analysis_progress_sequence: list[FakeAnalysisProgress] | None = None,
+        analysis_info: FakeAnalysisInfo | None = None,
+        file: FakeFileMetadata | None = None,
     ) -> None:
         self.strings = strings if strings is not None else []
         self.segments = segments if segments is not None else []
@@ -217,6 +305,7 @@ class FakeBinaryView:
         self.removed_functions: list[FakeFunction] = []
         self.start = start
         self.end = end
+        self.entry_point = entry_point
         # (value, address, function) triples answered by find_all_constant; a None
         # function models a match on a line that belongs to no function (data text).
         self.constant_references = constant_references or []
@@ -224,6 +313,20 @@ class FakeBinaryView:
         self.constant_scan_yields = 0
         # Set once progress_func declines, modeling the core honoring the abort.
         self.constant_scan_aborted: bool | None = None
+        # rex_analysis_wait: successive analysis_progress reads walk this sequence; once
+        # exhausted the last snapshot repeats, modeling an engine stuck in that state.
+        self._analysis_progress_sequence = (
+            analysis_progress_sequence
+            if analysis_progress_sequence is not None
+            else [FakeAnalysisProgress(FakeAnalysisState.IdleState)]
+        )
+        self._analysis_progress_index = 0
+        self.analysis_info = (
+            analysis_info
+            if analysis_info is not None
+            else FakeAnalysisInfo(FakeAnalysisState.IdleState, 0, [])
+        )
+        self.file = file if file is not None else FakeFileMetadata()
 
     def get_section_by_name(self, name: str) -> object:
         if name not in self._sections:
@@ -270,6 +373,15 @@ class FakeBinaryView:
 
     def get_functions_containing(self, address: int) -> list[FakeFunction]:
         return [f for f in self.functions if f.start <= address < f.end]
+
+    def get_functions_by_name(self, name: str) -> list[FakeFunction]:
+        return [f for f in self.functions if f.name == name]
+
+    @property
+    def analysis_progress(self) -> FakeAnalysisProgress:
+        index = min(self._analysis_progress_index, len(self._analysis_progress_sequence) - 1)
+        self._analysis_progress_index += 1
+        return self._analysis_progress_sequence[index]
 
     def get_symbols(self, start: int | None = None, length: int | None = None) -> list[FakeSymbol]:
         """Mirror BinaryView.get_symbols(start, length): address in [start, start+length)."""

@@ -1,6 +1,8 @@
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
+from binaryninja.enums import AnalysisState
+from binaryninja.filemetadata import FileMetadata
 from binaryninja.function import Function
 
 
@@ -40,6 +42,27 @@ class Tag:
     def id(self) -> str: ...
 
 
+class ActiveAnalysisInfo:
+    """One function currently under analysis; times are in milliseconds."""
+
+    func: Function
+    analysis_time: int
+    update_count: int
+    submit_count: int
+
+
+class AnalysisInfo:
+    state: AnalysisState
+    analysis_time: int
+    active_info: list[ActiveAnalysisInfo]
+
+
+class AnalysisProgress:
+    state: AnalysisState
+    count: int
+    total: int
+
+
 class BinaryView:
     strings: list[StringReference]
     segments: list[Any]
@@ -47,8 +70,15 @@ class BinaryView:
     tag_types: Mapping[str, Any]
     start: int
     end: int
+    entry_point: int
+    analysis_progress: AnalysisProgress
+    analysis_info: AnalysisInfo
+    file: FileMetadata
 
     def get_section_by_name(self, name: str) -> Section | None: ...
+    def get_functions_by_name(
+        self, name: str, plat: Any = None, ordered_filter: Any = None
+    ) -> list[Function]: ...
     def find_all_constant(
         self,
         start: int,

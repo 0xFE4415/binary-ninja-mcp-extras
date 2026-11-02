@@ -5,7 +5,12 @@ from typing import override
 
 import pytest
 from helpers import (
+    FakeActiveAnalysisInfo,
+    FakeAnalysisInfo,
+    FakeAnalysisProgress,
+    FakeAnalysisState,
     FakeBinaryView,
+    FakeFileMetadata,
     FakeFunction,
     FakeSegment,
     FakeStringReference,
@@ -1586,11 +1591,12 @@ def test_search_tools_report_empty_results_on_an_empty_view() -> None:
 
 
 class FakeParsingToolCall(FakeToolCall):
-    """FakeToolCall with the parse_address surface rex_decompile_many reads.
+    """FakeToolCall with the parse_address surface rex_decompile_many/rex_quick_main read.
 
     Deliberately raises a plain ValueError for unparsable input instead of a ToolError:
     the handler owns the conversion of expression-parse failures to invalid_params, so
-    the fake must not hand it an error to pass through.
+    the fake must not hand it an error to pass through. ``data_<hex>`` tokens resolve the
+    way the core's address-expression parser was observed to resolve them live.
     """
 
     def parse_address(self, value: object, here: int = 0) -> int:
@@ -1598,7 +1604,10 @@ class FakeParsingToolCall(FakeToolCall):
         try:
             return int(text, 16) if text.lower().startswith("0x") else int(text, 10)
         except ValueError:
-            raise ValueError(f"unparsable address expression '{text}'") from None
+            pass
+        if text.startswith("data_"):
+            return int(text[5:], 16)
+        raise ValueError(f"unparsable address expression '{text}'") from None
 
 
 def _decompile_view() -> FakeBinaryView:
@@ -1727,6 +1736,463 @@ def test_decompile_many_rejects_bad_batch_and_max_lines() -> None:
             decompile(FakeParsingToolCall(view), ["garbage"], **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
+
+
+class FakeClock:
+    """Deterministic clock for the rex_analysis_wait loop: sleep advances the clock."""
+
+    def __init__(self) -> None:
+        self.now_ms = 0
+        self.sleeps: list[int] = []
+
+    def monotonic(self) -> float:
+        return self.now_ms / 1000
+
+    def sleep(self, seconds: float) -> None:
+        slept_ms = round(seconds * 1000)
+        self.sleeps.append(slept_ms)
+        self.now_ms += slept_ms
+
+
+def _patch_time(monkeypatch: pytest.MonkeyPatch, clock: FakeClock) -> None:
+    monkeypatch.setattr(tools.time, "sleep", clock.sleep)
+    monkeypatch.setattr(tools.time, "monotonic", clock.monotonic)
+
+
+def _running_progress(count: int = 3, total: int = 10) -> list[FakeAnalysisProgress]:
+    return [FakeAnalysisProgress(FakeAnalysisState.AnalyzeState, count, total)]
+
+
+def test_analysis_wait_returns_immediately_when_analysis_is_idle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+    _patch_time(monkeypatch, clock)
+    view = FakeBinaryView(functions=[FakeFunction("f", 0x1000, 0x1010)])
+    _, wait = get_tool("rex_analysis_wait")
+    assert wait(_call(view), timeout_ms=600000) == {
+        "completed": True,
+        "elapsed_ms": 0,
+        "progress": {"state": "IdleState", "count": 0, "total": 0},
+        "function_count": 1,
+        "in_flight": [],
+        "truncated": False,
+    }
+    # Already idle: the snapshot is answered without a single sleep.
+    assert clock.sleeps == []
+
+
+def test_analysis_wait_sleeps_until_analysis_completes(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    _patch_time(monkeypatch, clock)
+    view = FakeBinaryView(
+        analysis_progress_sequence=[
+            *_running_progress(3, 10),
+            *_running_progress(7, 10),
+            FakeAnalysisProgress(FakeAnalysisState.IdleState, 10, 10),
+        ],
+        functions=[FakeFunction("a", 0x1000, 0x1010), FakeFunction("b", 0x2000, 0x2010)],
+    )
+    _, wait = get_tool("rex_analysis_wait")
+    result = wait(_call(view), timeout_ms=60000)
+    assert result["completed"] is True
+    assert result["elapsed_ms"] == 200
+    assert result["progress"] == {"state": "IdleState", "count": 10, "total": 10}
+    assert clock.sleeps == [100, 100]
+
+
+def test_analysis_wait_stops_at_the_deadline_and_snapshots(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    _patch_time(monkeypatch, clock)
+    view = FakeBinaryView(analysis_progress_sequence=_running_progress(1, 10))
+    _, wait = get_tool("rex_analysis_wait")
+    result = wait(_call(view), timeout_ms=350)
+    # The server hold is bounded by timeout_ms plus one slice: 350 ms of budget, four
+    # 100 ms slices because the deadline check happens between slices.
+    assert result == {
+        "completed": False,
+        "elapsed_ms": 400,
+        "progress": {"state": "AnalyzeState", "count": 1, "total": 10},
+        "function_count": 0,
+        "in_flight": [],
+        "truncated": False,
+    }
+    assert clock.sleeps == [100, 100, 100, 100]
+
+
+def test_analysis_wait_zero_timeout_snapshots_without_sleeping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+    _patch_time(monkeypatch, clock)
+    view = FakeBinaryView(analysis_progress_sequence=_running_progress())
+    _, wait = get_tool("rex_analysis_wait")
+    result = wait(_call(view), timeout_ms=0)
+    assert result["completed"] is False
+    assert result["elapsed_ms"] == 0
+    assert result["progress"] == {"state": "AnalyzeState", "count": 3, "total": 10}
+    assert clock.sleeps == []
+
+
+def test_analysis_wait_rejects_out_of_range_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    _patch_time(monkeypatch, clock)
+    _, wait = get_tool("rex_analysis_wait")
+    for value, requirement in (
+        (-1, "at least 0"),
+        (tools._MAX_ANALYSIS_WAIT_MS + 1, f"at most {tools._MAX_ANALYSIS_WAIT_MS}"),
+    ):
+        message = f"Invalid integer parameter 'timeout_ms': Must be {requirement}"
+        with pytest.raises(FakeToolError) as exc:
+            wait(_call(FakeBinaryView()), timeout_ms=value)
+        assert exc.value.code == "invalid_params"
+        assert exc.value.message == message
+    # The range bounds themselves are accepted, not normalized.
+    wait(_call(FakeBinaryView()), timeout_ms=0)
+    wait(_call(FakeBinaryView()), timeout_ms=tools._MAX_ANALYSIS_WAIT_MS)
+    assert clock.sleeps == []
+
+
+def test_analysis_wait_reports_in_flight_functions_most_expensive_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+    _patch_time(monkeypatch, clock)
+    view = FakeBinaryView(
+        analysis_info=FakeAnalysisInfo(
+            FakeAnalysisState.AnalyzeState,
+            18940,
+            [
+                FakeActiveAnalysisInfo(FakeFunction("fast", 0x2000, 0x2100), 40),
+                FakeActiveAnalysisInfo(FakeFunction("slow", 0x1000, 0x1100), 18900),
+                FakeActiveAnalysisInfo(FakeFunction("n" * 600, 0x3000, 0x3100), 5),
+            ],
+        )
+    )
+    _, wait = get_tool("rex_analysis_wait")
+    result = wait(_call(view), timeout_ms=0)
+    # Sorted by per-function analysis time, the debrief's hotspot profiler, and long
+    # names go through the same echo cap as every other tool.
+    assert result["in_flight"] == [
+        {"start": "0x1000", "name": "slow", "analysis_time_ms": 18900},
+        {"start": "0x2000", "name": "fast", "analysis_time_ms": 40},
+        {
+            "start": "0x3000",
+            "name": "n" * tools._MAX_CHARS + "... [88 chars truncated]",
+            "analysis_time_ms": 5,
+        },
+    ]
+    assert result["truncated"] is False
+
+
+def test_analysis_wait_caps_the_in_flight_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    _patch_time(monkeypatch, clock)
+    active = [
+        FakeActiveAnalysisInfo(
+            FakeFunction(f"f{i:02d}", 0x1000 + 0x10 * i, 0x1010 + 0x10 * i), analysis_time=100 - i
+        )
+        for i in range(tools._MAX_ANALYSIS_INFLIGHT + 1)
+    ]
+    view = FakeBinaryView(
+        analysis_info=FakeAnalysisInfo(FakeAnalysisState.AnalyzeState, 60, active)
+    )
+    _, wait = get_tool("rex_analysis_wait")
+    result = wait(_call(view), timeout_ms=0)
+    assert result["truncated"] is True
+    assert len(result["in_flight"]) == tools._MAX_ANALYSIS_INFLIGHT
+    # The cap keeps the most expensive functions, in cost order.
+    assert [entry["name"] for entry in result["in_flight"]] == [
+        f"f{i:02d}" for i in range(tools._MAX_ANALYSIS_INFLIGHT)
+    ]
+    # Exactly at the cap nothing was dropped, so the flag stays false.
+    at_cap = FakeBinaryView(
+        analysis_info=FakeAnalysisInfo(FakeAnalysisState.AnalyzeState, 60, active[:-1])
+    )
+    assert wait(_call(at_cap), timeout_ms=0)["truncated"] is False
+
+
+def test_binary_close_discards_and_closes() -> None:
+    file_metadata = FakeFileMetadata(filename="/tmp/probe")
+    view = FakeBinaryView(file=file_metadata)
+    file_metadata.modified = True
+    _, close = get_tool("rex_binary_close")
+    assert close(_call(view)) == {"closed": True, "path": "/tmp/probe"}
+    # The modified flag is cleared first (the BNMarkFileSaved path) and the file is
+    # closed through the core: nothing is written, nothing survives the call.
+    assert file_metadata.saved_marks == 1
+    assert file_metadata.closed is True
+
+
+def test_binary_close_reports_close_failures() -> None:
+    file_metadata = FakeFileMetadata(filename="/tmp/probe")
+    file_metadata.close_error = OSError("wedged")
+    view = FakeBinaryView(file=file_metadata)
+    _, close = get_tool("rex_binary_close")
+    with pytest.raises(FakeToolError) as exc:
+        close(_call(view))
+    assert exc.value.code == "close_failed"
+    assert "wedged" in exc.value.message
+
+
+def _quick_main_view(entry_hlil: str | None) -> FakeBinaryView:
+    """A stripped-style view: entry _start with the given HLIL, no function named main."""
+    entry = FakeFunction(
+        "_start",
+        0x1000,
+        0x1100,
+        hlil=RenderableText(entry_hlil) if entry_hlil is not None else None,
+    )
+    main = FakeFunction(
+        "sub_401234", 0x401234, 0x401400, hlil=RenderableText("void sub_401234() {\n    return;\n}")
+    )
+    return FakeBinaryView(entry_point=0x1000, functions=[entry, main])
+
+
+def test_quick_main_resolves_main_from_the_entry_function_symbol() -> None:
+    view = FakeBinaryView(
+        entry_point=0x1000,
+        functions=[
+            FakeFunction(
+                "main", 0x1000, 0x1100, hlil=RenderableText("int main() {\n    return 0;\n}")
+            )
+        ],
+    )
+    _, quick = get_tool("rex_quick_main")
+    assert quick(FakeParsingToolCall(view)) == {
+        "entry_point": "0x1000",
+        "method": "symbol",
+        "main": "0x1000",
+        "note": None,
+        "function": {"start": "0x1000", "name": "main"},
+        "lines": ["int main() {", "    return 0;", "}"],
+        "truncated": False,
+    }
+
+
+def test_quick_main_resolves_a_main_symbol_off_the_entry() -> None:
+    # Two functions carry the symbol; the lowest address wins deterministically. The
+    # entry HLIL holds no __libc_start_main, so the symbol lookup is what resolved it.
+    view = FakeBinaryView(
+        entry_point=0x1000,
+        functions=[
+            FakeFunction(
+                "_start", 0x1000, 0x1100, hlil=RenderableText("void _start() {\n    return;\n}")
+            ),
+            FakeFunction(
+                "main", 0x402000, 0x402100, hlil=RenderableText("int main() {\n    return 1;\n}")
+            ),
+            FakeFunction(
+                "main", 0x401234, 0x401400, hlil=RenderableText("int main() {\n    return 0;\n}")
+            ),
+        ],
+    )
+    _, quick = get_tool("rex_quick_main")
+    result = quick(FakeParsingToolCall(view))
+    assert result["method"] == "symbol"
+    assert result["main"] == "0x401234"
+    assert result["function"]["name"] == "main"
+    assert result["note"] is None
+
+
+def test_quick_main_resolves_a_underscore_main_symbol() -> None:
+    view = FakeBinaryView(
+        entry_point=0x1000,
+        functions=[
+            FakeFunction("_start", 0x1000, 0x1100),
+            FakeFunction(
+                "_main", 0x2000, 0x2100, hlil=RenderableText("int _main() {\n    return 0;\n}")
+            ),
+        ],
+    )
+    _, quick = get_tool("rex_quick_main")
+    result = quick(FakeParsingToolCall(view))
+    assert result["method"] == "symbol"
+    assert result["main"] == "0x2000"
+
+
+def test_quick_main_parses_the_main_pointer_from_the_entry_hlil() -> None:
+    _, quick = get_tool("rex_quick_main")
+    # Data-variable token: the shape a stripped entry stub renders for the main pointer.
+    data_view = _quick_main_view(
+        "void _start() {\n    __libc_start_main(data_401234, __return_addr.d, &ubp_av);\n}"
+    )
+    result = quick(FakeParsingToolCall(data_view))
+    assert result["method"] == "entry-arg"
+    assert result["main"] == "0x401234"
+    assert result["function"]["name"] == "sub_401234"
+    assert result["note"] is None
+    assert result["truncated"] is False
+    # Raw pointer token: no parse_address roundtrip needed.
+    hex_view = _quick_main_view(
+        "void _start() {\n    __libc_start_main(0x401234, __return_addr.d);\n}"
+    )
+    assert quick(FakeParsingToolCall(hex_view))["main"] == "0x401234"
+    # Single-argument call: the token ends at the closing parenthesis.
+    only_arg_view = _quick_main_view("void _start() {\n    __libc_start_main(data_401234);\n}")
+    assert quick(FakeParsingToolCall(only_arg_view))["main"] == "0x401234"
+    # A pointer-deref token embeds its address: extraction must not need parse_address
+    # here, and the hex digits must survive uppercase renderings.
+    deref_view = _quick_main_view(
+        "void _start() {\n    __libc_start_main(*0x401F00, __return_addr.d);\n}"
+    )
+    deref_view.functions.append(FakeFunction("sub_401f00", 0x401F00, 0x402000))
+    deref_result = quick(FakeParsingToolCall(deref_view))
+    assert deref_result["method"] == "entry-arg"
+    assert deref_result["main"] == "0x401f00"
+    assert deref_result["note"] is None
+
+
+def test_quick_main_falls_back_to_the_entry_function_and_says_so() -> None:
+    _, quick = get_tool("rex_quick_main")
+    # No main symbol, no __libc_start_main call anywhere in the entry's HLIL.
+    view = _quick_main_view("void _start() {\n    char *p = 0;\n}")
+    view.functions.append(FakeFunction("handler", 0x2000, 0x2100))
+    result = quick(FakeParsingToolCall(view))
+    assert result["method"] == "entry-fallback"
+    assert result["main"] is None
+    assert result["note"] == (
+        "no main symbol and no parsable __libc_start_main pointer in the entry function"
+    )
+    assert result["function"] == {"start": "0x1000", "name": "_start"}
+    assert result["lines"] == ["void _start() {", "    char *p = 0;", "}"]
+
+
+def test_first_call_argument_is_anchored_at_the_marker() -> None:
+    # Direct unit tests on the helper: through the tool's small response these
+    # extraction shapes are observationally identical, but the helper's exact contract
+    # is what keeps resolution honest.
+    extract = tools._first_call_argument
+    marker = tools._MAIN_LIBC_MARKER
+    assert extract("__libc_start_main(data_401234, argv)", marker) == "data_401234"
+    # Spaces around the token are stripped, and only the first argument is taken.
+    assert extract("__libc_start_main( data_401234 , argv)", marker) == "data_401234"
+    # The paren search starts at the marker: an earlier call's "(bar)" is not taken.
+    assert extract("foo(bar) __libc_start_main(data_1)", marker) == "data_1"
+    # Only the first "(" after the marker opens the argument list.
+    assert extract("__libc_start_main(data_401234, foo(bar))", marker) == "data_401234"
+    # The marker is searched left-to-right too: a later mention must not win.
+    assert extract("__libc_start_main(data_401234)  # libc_start_main wrapper", marker) == (
+        "data_401234"
+    )
+    # A single-argument call ends at the closing parenthesis.
+    assert extract("__libc_start_main(data_401234)", marker) == "data_401234"
+    assert extract("__libc_start_main(data_401234))", marker) == "data_401234"
+    # No opening or closing parenthesis: no argument to take.
+    assert extract("tail call to __libc_start_main", marker) is None
+    assert extract("libc_start_main def)", marker) is None
+    assert extract("__libc_start_main(foo", marker) is None
+
+
+def test_quick_main_reports_a_candidate_that_is_not_a_function() -> None:
+    _, quick = get_tool("rex_quick_main")
+    view = _quick_main_view("void _start() {\n    __libc_start_main(0x999999, __return_addr.d);\n}")
+    result = quick(FakeParsingToolCall(view))
+    assert result["method"] == "entry-fallback"
+    assert result["main"] is None
+    assert (
+        result["note"]
+        == "found candidate main address 0x999999 but no analyzed function contains it"
+    )
+
+
+def test_quick_main_fallback_notes_cover_the_unresolvable_entries() -> None:
+    _, quick = get_tool("rex_quick_main")
+    expected_note = "no main symbol and no parsable __libc_start_main pointer in the entry function"
+    # Entry HLIL exists but the pointer argument renders unparsable.
+    unparsable = quick(
+        FakeParsingToolCall(
+            _quick_main_view("void _start() {\n    __libc_start_main(argc, argv);\n}")
+        )
+    )
+    assert unparsable["method"] == "entry-fallback"
+    assert unparsable["note"] == expected_note
+    # Marker present but the call never opens a parenthesis on its line.
+    no_call = quick(
+        FakeParsingToolCall(
+            _quick_main_view(
+                "void _start() {\n    // tail call to __libc_start_main\n    return;\n}"
+            )
+        )
+    )
+    assert no_call["note"] == expected_note
+    # Call opens but never closes on its line, and the rest renders unparsable.
+    unterminated = quick(
+        FakeParsingToolCall(_quick_main_view("void _start() {\n    __libc_start_main(foo\n}"))
+    )
+    assert unterminated["note"] == expected_note
+    # Entry never lifted: nothing to parse, HLIL comes back empty.
+    unlifted = quick(FakeParsingToolCall(_quick_main_view(None)))
+    assert unlifted["note"] == "the entry function has no HLIL yet"
+    assert unlifted["lines"] == []
+    assert unlifted["truncated"] is False
+
+
+def test_quick_main_rejects_bad_max_lines_and_truncates_render() -> None:
+    _, quick = get_tool("rex_quick_main")
+    # Range errors are decided before the entry function is even resolved.
+    for kwargs, message in (
+        ({"max_lines": 0}, "Invalid integer parameter 'max_lines': Must be at least 1"),
+        (
+            {"max_lines": tools._MAX_DECOMPILE_LINES + 1},
+            f"Invalid integer parameter 'max_lines': Must be at most {tools._MAX_DECOMPILE_LINES}",
+        ),
+    ):
+        with pytest.raises(FakeToolError) as exc:
+            quick(FakeParsingToolCall(FakeBinaryView()), **kwargs)
+        assert exc.value.code == "invalid_params"
+        assert exc.value.message == message
+    # The bounds themselves are accepted.
+    resolvable = FakeBinaryView(
+        entry_point=0x1000, functions=[FakeFunction("main", 0x1000, 0x1100)]
+    )
+    quick(FakeParsingToolCall(resolvable), max_lines=1)
+    quick(FakeParsingToolCall(resolvable), max_lines=tools._MAX_DECOMPILE_LINES)
+    # A longer render is clipped at max_lines and flagged, and long lines go through the
+    # shared echo cap.
+    view = FakeBinaryView(
+        entry_point=0x1000,
+        functions=[
+            FakeFunction(
+                "main",
+                0x1000,
+                0x1100,
+                hlil=RenderableText("a" * 600 + "\n    return 0;\n}"),
+            )
+        ],
+    )
+    result = quick(FakeParsingToolCall(view), max_lines=1)
+    assert result["lines"] == ["a" * tools._MAX_CHARS + "... [88 chars truncated]"]
+    assert result["truncated"] is True
+
+
+def test_quick_main_resolves_an_unlifted_main_to_empty_lines() -> None:
+    # A main symbol can exist where HLIL was never lifted; an empty render is the honest
+    # answer, same as rex_decompile_many.
+    view = FakeBinaryView(
+        entry_point=0x1000,
+        functions=[FakeFunction("_start", 0x1000, 0x1100), FakeFunction("main", 0x2000, 0x2100)],
+    )
+    _, quick = get_tool("rex_quick_main")
+    result = quick(FakeParsingToolCall(view))
+    assert result == {
+        "entry_point": "0x1000",
+        "method": "symbol",
+        "main": "0x2000",
+        "note": None,
+        "function": {"start": "0x2000", "name": "main"},
+        "lines": [],
+        "truncated": False,
+    }
+
+
+def test_quick_main_errors_when_no_function_contains_the_entry_point() -> None:
+    view = FakeBinaryView(entry_point=0x1000, functions=[FakeFunction("main", 0x2000, 0x2100)])
+    _, quick = get_tool("rex_quick_main")
+    with pytest.raises(FakeToolError) as exc:
+        quick(FakeParsingToolCall(view))
+    assert exc.value.code == "no_function"
+    assert exc.value.message == "no analyzed function contains the entry point 0x1000"
 
 
 def _find_functions_view() -> FakeBinaryView:

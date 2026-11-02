@@ -46,6 +46,8 @@ clients that already connected must reconnect to see the registered tools.
 | `rex_call_paths` | Bounded breadth-first call-path search between two functions. |
 | `rex_disasm_at` | Address-anchored disassembly window, clipped at the function's edges. |
 | `rex_decompile_many` | HLIL render for up to 16 functions in one batch call. |
+| `rex_analysis_wait` | Bounded wait for background analysis; triage-style snapshot at expiry. |
+| `rex_quick_main` | Entry point, main resolution, and main's HLIL in one fast-contact call. |
 | `rex_export_disasm` | Write a function's disassembly window to a file. |
 | `rex_export_symbols` | Write a symbol address range to a file in the export root. |
 | `rex_function_containing` | List the functions containing an address. |
@@ -53,6 +55,7 @@ clients that already connected must reconnect to see the registered tools.
 | `rex_function_undefine` | Remove the function covering an address (destructive). |
 | `rex_string_read_at` | Read the detected string at an address. |
 | `rex_memory_write` | Patch bytes in the binary view (destructive). |
+| `rex_binary_close` | Discard unsaved changes and close the view programmatically (destructive). |
 | `rex_tag_set` | Attach a GUI-visible tag at an address, creating the tag type on demand. |
 | `rex_tag_list` | List the tags set on the binary view. |
 | `rex_kv_set` / `rex_kv_get` / `rex_kv_delete` | Persistent scratch key-value store. |

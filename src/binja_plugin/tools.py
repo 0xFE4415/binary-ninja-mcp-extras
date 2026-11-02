@@ -12,6 +12,7 @@ import io
 import json
 import re
 import sys
+import time
 from bisect import bisect_right
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
@@ -23,6 +24,7 @@ from typing import Annotated, Any, Literal
 import binaryninja
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
+from binaryninja.enums import AnalysisState
 from binaryninja.function import Function
 
 from binja_plugin.hexpattern import HexPatternError, compile_hex_pattern
@@ -64,6 +66,19 @@ _MAX_DECOMPILE_LINES = 400
 # rex_find_functions_by_pattern example matches per function: triage wants a handful of
 # hit addresses; rex_data_find already returns full match lists.
 _MAX_FIND_FUNCTIONS_EXAMPLES = 5
+# rex_analysis_wait: the wait runs on the MCP server thread in ~100 ms slices, so the
+# hold is bounded by timeout_ms plus one slice; the in-flight cap bounds the echoed
+# hotspot list (per-function analysis time doubles as an analysis profiler).
+_MAX_ANALYSIS_WAIT_MS = 600000
+_ANALYSIS_WAIT_SLICE_MS = 100
+_MAX_ANALYSIS_INFLIGHT = 10
+# rex_quick_main's resolution chain: function symbols first, then the __libc_start_main
+# pointer argument of the entry stub, then an explicitly named entry-function fallback.
+_MAIN_SYMBOL_NAMES = ("main", "_main")
+_MAIN_LIBC_MARKER = "libc_start_main"
+_MAIN_FALLBACK_NOTE = (
+    "no main symbol and no parsable __libc_start_main pointer in the entry function"
+)
 # rex_export_* tools: sweeps write to one fixed directory and echo only a summary, so a
 # large export can never flood the MCP response. The byte cap bounds each file; the
 # window caps bound how much a single call selects before serialization.
@@ -246,6 +261,125 @@ def _disasm_window(
     return start, end
 
 
+def _analysis_is_idle(bv: BinaryView) -> bool:
+    """IdleState is the only state where the analysis engine has nothing queued."""
+    return bv.analysis_progress.state == AnalysisState.IdleState
+
+
+def _analysis_snapshot(bv: BinaryView) -> dict[str, object]:
+    """Triage-style progress snapshot: engine state plus the in-flight analysis hotspots.
+
+    Only the progress state is echoed, normalized through AnalysisState() before the name
+    is taken: analysis_progress arrives already converted to the enum by the API layer,
+    while analysis_info.state comes back as a raw int, so the conversion keeps the echo
+    well-defined whatever shape a value arrives in. The in-flight list keeps the most
+    expensive functions only, with an explicit truncated flag instead of pagination — it
+    is a point-in-time snapshot, not a sweep.
+    """
+    progress = bv.analysis_progress
+    in_flight = sorted(
+        bv.analysis_info.active_info, key=lambda entry: entry.analysis_time, reverse=True
+    )
+    return {
+        "progress": {
+            "state": AnalysisState(progress.state).name,
+            "count": progress.count,
+            "total": progress.total,
+        },
+        "function_count": len(bv.functions),
+        "in_flight": [
+            {
+                "start": hex(entry.func.start),
+                "name": _truncate(entry.func.name),
+                "analysis_time_ms": entry.analysis_time,
+            }
+            for entry in in_flight[:_MAX_ANALYSIS_INFLIGHT]
+        ],
+        "truncated": len(in_flight) > _MAX_ANALYSIS_INFLIGHT,
+    }
+
+
+def _first_call_argument(line: str, marker: str) -> str | None:
+    """Return the first argument token of the call following ``marker`` on ``line``."""
+    start = line.find("(", line.find(marker))
+    if start == -1:
+        return None
+    argument = line[start + 1 :]
+    comma = argument.find(",")
+    if comma != -1:
+        argument = argument[:comma]
+    else:
+        closing = argument.find(")")
+        if closing == -1:
+            return None
+        argument = argument[:closing]
+    return argument.strip()
+
+
+def _argument_address(call: mcp.ToolCall, argument: str | None) -> int | None:
+    """Resolve a rendered HLIL argument token to an address, or None.
+
+    Rendered pointers embed their address ("0x401234", "*0x401234"); any other token
+    goes through the core's address-expression parser, which resolves symbol and
+    data-variable names (both verified live).
+    """
+    if argument is None:
+        return None
+    hex_match = re.search(r"0x[0-9a-fA-F]+", argument)
+    if hex_match is not None:
+        return int(hex_match.group(0), 16)
+    try:
+        return call.parse_address(argument)
+    except Exception:
+        return None
+
+
+def _entry_argument_main(
+    bv: BinaryView, call: mcp.ToolCall, entry: Function
+) -> tuple[Function | None, str | None]:
+    """Find main as the __libc_start_main-style pointer argument of the entry function.
+
+    Returns (main, None) on success, or (None, reason) naming what blocked resolution.
+    """
+    hlil = entry.hlil
+    if hlil is None:
+        return None, "the entry function has no HLIL yet"
+    for line in str(hlil).splitlines():
+        if _MAIN_LIBC_MARKER not in line:
+            continue
+        address = _argument_address(call, _first_call_argument(line, _MAIN_LIBC_MARKER))
+        if address is None:
+            return None, _MAIN_FALLBACK_NOTE
+        functions = bv.get_functions_containing(address)
+        if functions:
+            return functions[0], None
+        return (
+            None,
+            f"found candidate main address {address:#x} but no analyzed function contains it",
+        )
+    return None, _MAIN_FALLBACK_NOTE
+
+
+def _resolve_main(
+    bv: BinaryView, call: mcp.ToolCall, entry: Function
+) -> tuple[Function | None, str, str | None]:
+    """Resolve main: function symbol first, then the entry stub's pointer argument.
+
+    Returns (main, method, note); the note is set only when main could not be resolved
+    at all, so the entry-fallback response can say why.
+    """
+    if entry.name in _MAIN_SYMBOL_NAMES:
+        return entry, "symbol", None
+    for name in _MAIN_SYMBOL_NAMES:
+        candidates = sorted(bv.get_functions_by_name(name), key=lambda function: function.start)
+        if candidates:
+            return candidates[0], "symbol", None
+    main, note = _entry_argument_main(bv, call, entry)
+    if main is not None:
+        return main, "entry-arg", note
+    return None, "entry-fallback", note
+
+
 def _validate_export_path(filename: str) -> None:
     """Reject filenames that could escape or abuse the export root.
 
@@ -312,6 +446,60 @@ def _fit_to_export_cap[ExportRow](
             return text, dropped
         del window[-1]
         dropped = True
+
+
+@mcp.tool(read_only=True)
+def rex_analysis_wait(
+    call: mcp.ToolCall,
+    timeout_ms: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_ANALYSIS_WAIT_MS)],
+) -> dict[str, object]:
+    """Bounded wait for background analysis with a progress snapshot at expiry.
+
+    Fires nothing itself: pair it with the async bn_analysis_update. This tool then
+    sleeps in ~100 ms slices until the analysis engine goes idle or the deadline
+    passes, so the server hold is bounded by timeout_ms plus one slice either way —
+    never the whole-analysis hold of bn_analysis_update_and_wait. timeout_ms=0 is a
+    pure snapshot. The response mirrors what bn_binary_triage exposes about analysis:
+    the engine state with its count/total, the function count, and the in-flight
+    functions with their per-function analysis time (the hotspot profiler), capped at
+    the 10 most expensive entries with a ``truncated`` flag.
+
+    :param timeout_ms: Maximum time to wait in milliseconds (0 to 600000); 0 snapshots
+        the current state without waiting.
+    """
+    bv = call.binary_view
+    timeout_ms = _validate_range("timeout_ms", timeout_ms, 0, _MAX_ANALYSIS_WAIT_MS)
+    started = time.monotonic()
+    deadline = started + timeout_ms / 1000
+    completed = _analysis_is_idle(bv)
+    while not completed and time.monotonic() < deadline:
+        time.sleep(_ANALYSIS_WAIT_SLICE_MS / 1000)
+        completed = _analysis_is_idle(bv)
+    elapsed_ms = round((time.monotonic() - started) * 1000)
+    return {"completed": completed, "elapsed_ms": elapsed_ms, **_analysis_snapshot(bv)}
+
+
+@mcp.tool(destructive=True)
+def rex_binary_close(call: mcp.ToolCall) -> dict[str, object]:
+    """Discard this view's unsaved changes and close it.
+
+    The stock bn_binary_close refuses a modified view with ``requires_user_choice``,
+    so agent-created views survive the agent. This tool closes programmatically: it
+    clears the file's modified flag (``FileMetadata.modified = False``, the
+    BNMarkFileSaved path — nothing is written to disk) and then closes the file
+    through the core (``FileMetadata.close``, verified live on a scratch copy of
+    /bin/true). Destructive: unpatched bytes, tags, and unsaved analysis state are
+    lost; save first if any of it is worth keeping.
+    """
+    file_metadata = call.binary_view.file
+    # The UI adapter keys its discard refusal on this flag; clearing it is the
+    # programmatic equivalent of choosing "Discard" in the close prompt.
+    file_metadata.modified = False
+    try:
+        file_metadata.close()
+    except Exception as error:
+        raise mcp.ToolError("close_failed", f"could not close the view: {error}") from None
+    return {"closed": True, "path": _truncate(file_metadata.filename)}
 
 
 @mcp.tool(read_only=True)
@@ -1005,6 +1193,46 @@ def rex_memory_write(call: mcp.ToolCall, addr: mcp.Address, hex_data: str) -> di
         raise mcp.ToolError("invalid_hex", "hex_data must contain hex byte pairs") from None
     written = call.binary_view.write(addr, data)
     return {"address": hex(addr), "bytes_written": written}
+
+
+@mcp.tool(read_only=True)
+def rex_quick_main(
+    call: mcp.ToolCall,
+    max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
+) -> dict[str, object]:
+    """One-call fast contact: the entry point, main, and main's HLIL.
+
+    main is resolved from a function symbol named main/_main (the entry function itself
+    or a symbol lookup), else from the __libc_start_main-style pointer argument parsed
+    out of the entry function's HLIL — the shape a stripped binary's entry stub renders
+    for the main pointer. HLIL is generated lazily per function, so this works while
+    whole-binary analysis is still running in the background. When neither resolves,
+    the response says so explicitly (method "entry-fallback" plus a note) and renders
+    the entry function's HLIL instead; it never presents the entry function as main.
+
+    :param max_lines: HLIL lines to render (1 to 400).
+    """
+    bv = call.binary_view
+    max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
+    entry_point = bv.entry_point
+    functions = bv.get_functions_containing(entry_point)
+    if not functions:
+        raise mcp.ToolError(
+            "no_function", f"no analyzed function contains the entry point {entry_point:#x}"
+        )
+    main, method, note = _resolve_main(bv, call, functions[0])
+    function = main if main is not None else functions[0]
+    hlil = function.hlil
+    source_lines = str(hlil).splitlines() if hlil is not None else []
+    return {
+        "entry_point": hex(entry_point),
+        "method": method,
+        "main": hex(main.start) if main is not None else None,
+        "note": note,
+        "function": _function_entry(function),
+        "lines": [_truncate(line) for line in source_lines[:max_lines]],
+        "truncated": len(source_lines) > max_lines,
+    }
 
 
 @mcp.tool(read_only=True)

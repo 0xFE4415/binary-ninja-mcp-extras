@@ -6,6 +6,8 @@ from helpers import REGISTERED_TOOLS
 
 EXPECTED_NAMES = sorted(
     [
+        "rex_analysis_wait",
+        "rex_binary_close",
         "rex_call_paths",
         "rex_constant_find",
         "rex_data_find",
@@ -23,6 +25,7 @@ EXPECTED_NAMES = sorted(
         "rex_kv_get",
         "rex_kv_set",
         "rex_memory_write",
+        "rex_quick_main",
         "rex_string_read_at",
         "rex_string_search",
         "rex_tag_list",
