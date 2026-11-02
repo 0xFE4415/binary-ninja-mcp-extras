@@ -131,14 +131,16 @@ pub fn scan_pattern(
     if haystack.len() < pattern_len {
         return true;
     }
-    let last_start = haystack.len() - pattern_len;
     if let Some((offset, anchor)) = pattern.first_concrete() {
         for hit in memchr_iter(anchor, haystack) {
             // The candidate match starts `offset` bytes before the anchor.
             let Some(candidate) = hit.checked_sub(offset) else {
                 continue;
             };
-            if candidate > last_start {
+            if candidate
+                .checked_add(pattern_len)
+                .is_none_or(|end| end > haystack.len())
+            {
                 // Anchors only move right, so no later candidate can fit.
                 break;
             }
