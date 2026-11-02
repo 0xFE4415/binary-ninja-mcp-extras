@@ -96,7 +96,9 @@ rejected with the MCP layer's `invalid_params` argument error. An over-cap strin
 argument is rejected per tool with a `*_too_large` code from the same family instead
 (`pattern_too_large`, `key_too_large`, `value_too_large`, `data_too_large`,
 `tag_type_too_large`, `title_too_large`, `content_too_large`, `name_too_large`,
-`library_name_too_large`).
+`library_name_too_large`) — except path and list-entry parameters (component paths,
+`rex_type_library_*` `names` entries, export filename components), which keep
+`invalid_params`.
 
 Echoed strings are capped in length with a `... [N chars truncated]` suffix. The suffix
 alone marks most echoes (function names, rendered HLIL and disassembly lines, string

@@ -502,7 +502,14 @@ class FakeBinaryView:
 
     @contextlib.contextmanager
     def undoable_transaction(self) -> Generator[None]:
-        """Record the lifecycle the real context manager drives: commit, or revert + raise."""
+        """Record the lifecycle the real context manager drives: commit, or revert + raise.
+
+        A committed transaction also leaves one undo entry: the installed API documents
+        ``BinaryView.undoable_transaction`` as creating "an Undo state containing those
+        actions" (binaryview.py:5114-5117), so rex_undo reversing a committed batch is
+        modelable here. Operations the API does not document as undoable (tag, metadata,
+        type-library writes) push nothing, matching the rex_undo docstring's provenance.
+        """
         self.transactions.append("open")
         try:
             yield
@@ -510,6 +517,7 @@ class FakeBinaryView:
             self.transactions.append("revert")
             raise
         self.transactions.append("commit")
+        self.file.undo_entries.append("rex_annotate_many batch")
 
     @property
     def tag_types(self) -> dict[str, object]:

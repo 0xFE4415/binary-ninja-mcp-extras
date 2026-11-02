@@ -3211,6 +3211,34 @@ def test_annotate_many_collapses_repeated_items_onto_one_function_last_write_win
     assert view.transactions == ["open", "commit"]
 
 
+def test_annotate_batch_leaves_one_undo_entry_that_rex_undo_reverses() -> None:
+    view = _annotate_view()
+    _, annotate = get_tool("rex_annotate_many")
+    _, undo = get_tool("rex_undo")
+    # The API documents undoable_transaction as creating an Undo state containing the
+    # batch's actions, so the fake models the committed entry (helpers.py). This pins the
+    # rex_undo docstring's one settled composition claim: one batch is one undo step and
+    # rex_undo reverses it whole. The tag/metadata/type-library writes the API leaves
+    # undocumented push nothing here, so the fake cannot pin those either way.
+    annotate(FakeParsingToolCall(view), [{"addr": "0x1100", "name": "renamed"}])
+    assert view.file.undo_entries == ["rex_annotate_many batch"]
+    assert undo(_call(view)) == {"undone": True, "undo_left": 0, "redo_left": 1}
+    assert view.file.undo_entries == []
+    assert view.file.redo_entries == ["rex_annotate_many batch"]
+    # A batch the core rolls back mid-apply commits nothing, so there is no entry to undo.
+    rollback_view = _annotate_view()
+    rollback_view.functions[1].user_type_error = RuntimeError("core exploded")
+    with pytest.raises(FakeToolError):
+        annotate(
+            FakeParsingToolCall(rollback_view),
+            [
+                {"addr": "0x1100", "name": "renamed"},
+                {"addr": "0x2000", "prototype": "int helper(int)"},
+            ],
+        )
+    assert rollback_view.file.undo_entries == []
+
+
 def test_annotate_many_lists_all_unknown_fields() -> None:
     view = _annotate_view()
     _, annotate = get_tool("rex_annotate_many")
