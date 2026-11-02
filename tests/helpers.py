@@ -322,6 +322,25 @@ class FakeBinaryView:
         self._metadata.pop(key, None)
 
 
+class SpyBinaryView(FakeBinaryView):
+    """Records the address of every read and function lookup to bound scan work."""
+
+    def __init__(self, **options: Any) -> None:
+        super().__init__(**options)
+        self.read_addresses: list[int] = []
+        self.lookup_addresses: list[int] = []
+
+    @override
+    def read(self, address: int, length: int) -> bytes | None:
+        self.read_addresses.append(address)
+        return super().read(address, length)
+
+    @override
+    def get_functions_containing(self, address: int) -> list[FakeFunction]:
+        self.lookup_addresses.append(address)
+        return super().get_functions_containing(address)
+
+
 class FakeToolCall:
     def __init__(self, binary_view: FakeBinaryView) -> None:
         self.binary_view = binary_view

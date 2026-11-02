@@ -95,11 +95,7 @@ impl HexPattern {
     /// prefilter needle.
     pub fn first_concrete_run(&self) -> Option<(usize, Vec<u8>)> {
         let start = self.bytes.iter().position(Option::is_some)?;
-        let run = self.bytes[start..]
-            .iter()
-            .take_while(|byte| byte.is_some())
-            .filter_map(|byte| *byte)
-            .collect();
+        let run = self.bytes[start..].iter().map_while(|byte| *byte).collect();
         Some((start, run))
     }
 }
@@ -182,7 +178,7 @@ mod tests {
             HexPattern::parse("48 zz").unwrap_err().message,
             "invalid hex byte token 'zz'"
         );
-        // A single '?' is not a wildcard token; the odd-length check fires first.
+        // A lone '?' next to a digit is neither "??" nor a hex byte, so token parsing rejects it.
         assert_eq!(
             HexPattern::parse("4?").unwrap_err().message,
             "invalid hex byte token '4?'"

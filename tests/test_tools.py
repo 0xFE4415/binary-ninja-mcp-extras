@@ -12,6 +12,7 @@ from helpers import (
     FakeToolCall,
     FakeToolError,
     RenderableText,
+    SpyBinaryView,
     get_tool,
 )
 
@@ -136,6 +137,28 @@ def test_string_search_errors() -> None:
     assert exc.value.message == (
         f"Invalid integer parameter 'limit': Must be at most {tools._MAX_LIMIT}"
     )
+
+
+def test_string_search_section_includes_its_start_and_excludes_its_end() -> None:
+    view = FakeBinaryView(
+        strings=[
+            FakeStringReference("before", 0xFF),
+            FakeStringReference("first", 0x100),
+            FakeStringReference("last", 0x11F),
+            FakeStringReference("at-end", 0x120),
+        ],
+        sections={"s": (0x100, 0x120)},
+    )
+    _, search = get_tool("rex_string_search")
+    values = [entry["value"] for entry in search(_call(view), section="s")["strings"]]
+    assert values == ["first", "last"]
+
+
+def test_string_search_reports_an_invalid_regex_before_a_missing_section() -> None:
+    _, search = get_tool("rex_string_search")
+    with pytest.raises(FakeToolError) as exc:
+        search(_call(FakeBinaryView()), pattern="(", regex=True, section="nope")
+    assert exc.value.code == "invalid_regex"
 
 
 def test_data_find_finds_pattern_and_wildcards() -> None:
@@ -267,6 +290,49 @@ def test_data_find_skips_unreadable_segments() -> None:
     view = FakeBinaryView(segments=[FakeSegment(0x9000, 0x10)])
     _, find = get_tool("rex_data_find")
     assert find(_call(view), pattern="ff")["total"] == 0
+
+
+def test_data_find_reports_an_invalid_pattern_before_a_missing_section() -> None:
+    _, find = get_tool("rex_data_find")
+    with pytest.raises(FakeToolError) as exc:
+        find(_call(FakeBinaryView()), pattern="zz", section="nope")
+    assert exc.value.code == "invalid_pattern"
+
+
+def _holes_view() -> SpyBinaryView:
+    return SpyBinaryView(
+        segments=[
+            FakeSegment(0x800, 0x10),  # wholly unreadable
+            FakeSegment(0x1000, 0x20),  # readable only from its third chunk on
+            FakeSegment(0x2000, 0x10),
+        ],
+        memory={
+            0x1010: b"\x00\x00\x00\x00\xeb\x0e\x00\x00",
+            0x2000: b"\x00\x00\x00\x00\xeb\x0e\x00\x00",
+        },
+        sections={"gap": (0x5000, 0x5010), "second": (0x2002, 0x2010)},
+    )
+
+
+def test_data_find_recovers_matches_after_unreadable_holes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tools, "_READ_CHUNK", 8)
+    _, find = get_tool("rex_data_find")
+    # Empty reads skip a chunk, not the rest of the segment or the remaining segments.
+    assert find(_call(_holes_view()), pattern="eb0e")["matches"] == ["0x1014", "0x2004"]
+
+
+def test_data_find_section_outside_every_segment_reads_nothing() -> None:
+    view = _holes_view()
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="eb0e", section="gap") == {
+        "total": 0,
+        "truncated": False,
+        "matches": [],
+    }
+    assert view.read_addresses == []
+    assert find(_call(view), pattern="eb0e", section="second")["matches"] == ["0x2004"]
 
 
 class FakeDisassemblyLine:
@@ -1752,6 +1818,43 @@ def test_find_functions_by_pattern_reports_empty_results_on_empty_views() -> Non
         functions=[FakeFunction("f", 0x1000, 0x1100)],
     )
     assert find(_call(unreadable), "eb0e") == {"truncated": False, "functions": []}
+
+
+def test_find_functions_by_pattern_uses_the_first_of_overlapping_functions() -> None:
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, 8)],
+        memory={0x1000: b"\x00\x00\x00\x00\xeb\x0e\x00\x00"},
+        functions=[FakeFunction("narrow", 0x1004, 0x1008), FakeFunction("wide", 0x1000, 0x1100)],
+    )
+    _, find = get_tool("rex_find_functions_by_pattern")
+    assert find(_call(view), "eb0e") == {
+        "truncated": False,
+        "functions": [
+            {"start": "0x1004", "name": "narrow", "match_count": 1, "addresses": ["0x1004"]}
+        ],
+    }
+
+
+def test_find_functions_by_pattern_stops_scanning_past_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tools, "_READ_CHUNK", 16)
+    count = 20
+    view = SpyBinaryView(
+        segments=[FakeSegment(0x1000, 16 * count)],
+        memory={0x1000: (b"\xeb\x0e" + b"\x90" * 14) * count},
+        functions=[
+            FakeFunction(f"f{index}", 0x1000 + 16 * index, 0x1010 + 16 * index)
+            for index in range(count)
+        ],
+    )
+    _, find = get_tool("rex_find_functions_by_pattern")
+    result = find(_call(view), "eb0e", limit=1)
+    assert result["truncated"] is True
+    assert [entry["name"] for entry in result["functions"]] == ["f0"]
+    # The second function's match proves truncation; no later chunk is read or looked up.
+    assert view.lookup_addresses == [0x1000, 0x1010]
+    assert view.read_addresses == [0x1000, 0x1010]
 
 
 # --- rex_export_disasm / rex_export_symbols -------------------------------------------------

@@ -142,7 +142,7 @@ def _paginate[Item](items: Iterable[Item], offset: int, limit: int) -> tuple[lis
     skipped = sum(1 for _ in zip(range(offset), iterator))
     page = list(islice(iterator, limit))
     truncated = bool(list(islice(iterator, 1)))
-    return page, skipped + len(page) + truncated, truncated
+    return page, skipped + len(page) + int(truncated), truncated
 
 
 def _text_matcher(pattern: str, regex: bool, ignore_case: bool) -> Callable[[str], bool]:
@@ -191,7 +191,7 @@ def _iter_pattern_matches(
 ) -> Iterator[int]:
     """Yield absolute match addresses, optionally clipped to a section range."""
     for segment in bv.segments:
-        start, end = int(segment.start), int(segment.start + segment.length)
+        start, end = int(segment.start), segment.start + segment.length
         if bounds is not None:
             start = max(start, bounds[0])
             end = min(end, bounds[1])
@@ -592,13 +592,13 @@ def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
 
     stdout, stdout_truncated = _truncate_with_flag(buffer.getvalue(), _MAX_EVAL_STDOUT_CHARS)
     if error_message is not None:
-        error, error_truncated = _truncate_with_flag(error_message)
+        message, error_truncated = _truncate_with_flag(error_message)
         return {
             "stdout": stdout,
             "stdout_truncated": stdout_truncated,
             "result": None,
             "result_truncated": False,
-            "error": error,
+            "error": message,
             "error_truncated": error_truncated,
         }
     result, result_truncated = (
@@ -920,13 +920,13 @@ def rex_hlil_grep(
             else:
                 # "--" keeps windows apart even when their context ranges overlap.
                 lines = []
-                for index in matched[:3]:
+                for match_index in matched[:3]:
                     if lines:
                         lines.append("--")
-                    before = source_lines[max(0, index - context_before) : index]
-                    after = source_lines[index + 1 : index + 1 + context_after]
+                    before = source_lines[max(0, match_index - context_before) : match_index]
+                    after = source_lines[match_index + 1 : match_index + 1 + context_after]
                     lines.extend("  " + _truncate(line) for line in before)
-                    lines.append("> " + _truncate(source_lines[index]))
+                    lines.append("> " + _truncate(source_lines[match_index]))
                     lines.extend("  " + _truncate(line) for line in after)
             matches.append(
                 {

@@ -128,7 +128,7 @@ fn section_not_found_error(name: &str) -> McpToolError {
 }
 
 /// Clip a segment's address range to the optional section bounds; `None` when
-/// nothing remains (the Python loop's `seg_start >= seg_end` skip).
+/// nothing remains (empty ranges yield no windows in the walk below).
 fn clamp_to_bounds(range: (u64, u64), bounds: Option<(u64, u64)>) -> Option<(u64, u64)> {
     let (start, end) = match bounds {
         None => range,
@@ -138,8 +138,7 @@ fn clamp_to_bounds(range: (u64, u64), bounds: Option<(u64, u64)>) -> Option<(u64
 }
 
 /// Walk `[start, end)` in overlapping read windows, mirroring the Python
-/// plugin's chunked-read loop in `rex_data_find`
-/// (src/binja_plugin/tools.py:279-296).
+/// plugin's chunked-read loop in `_iter_pattern_matches`.
 ///
 /// Invariant re-derived from that loop: window k reads
 /// `[start + k*chunk, min(start + k*chunk + chunk + overlap, end))` and
@@ -596,7 +595,7 @@ mod tests {
     /// Short and empty window reads (unreadable holes) must not stall or
     /// misalign the walk: the position advances to the next chunk boundary
     /// regardless, so matches after the hole are recovered — the Python loop's
-    /// behavior (tools.py:282-294), which the old whole-segment read dropped
+    /// behavior (`_iter_pattern_matches`), which the old whole-segment read dropped
     /// entirely.
     #[test]
     fn recovers_matches_after_short_and_empty_reads() {

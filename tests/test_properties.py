@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import csv
+import io
+import json
 import re
+import tempfile
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -9,11 +15,13 @@ from helpers import (
     FakeFunction,
     FakeSegment,
     FakeStringReference,
+    FakeSymbol,
     FakeToolCall,
     FakeToolError,
+    RenderableText,
     get_tool,
 )
-from hypothesis import assume, given
+from hypothesis import assume, example, given
 from hypothesis import strategies as st
 
 from binja_plugin import tools
@@ -34,21 +42,26 @@ def test_compiled_pattern_matches_its_own_bytes(tokens: list[str]) -> None:
     assert length == len(tokens)
 
 
-@given(
-    tokens=st.lists(st.sampled_from(_TOKENS), min_size=1, max_size=8),
-    blob=st.lists(st.sampled_from(_BLOB_BYTES), max_size=48).map(bytes),
-)
-def test_matches_agree_with_naive_search(tokens: list[str], blob: bytes) -> None:
-    matcher, length = compile_hex_pattern(" ".join(tokens))
-    expected = [
+def _naive_pattern_starts(blob: bytes, tokens: list[str]) -> list[int]:
+    return [
         index
-        for index in range(len(blob) - length + 1)
+        for index in range(len(blob) - len(tokens) + 1)
         if all(
             token == "??" or blob[index + offset] == int(token, 16)
             for offset, token in enumerate(tokens)
         )
     ]
-    assert [match.start() for match in matcher.finditer(blob)] == expected
+
+
+@given(
+    tokens=st.lists(st.sampled_from(_TOKENS), min_size=1, max_size=8),
+    blob=st.lists(st.sampled_from(_BLOB_BYTES), max_size=48).map(bytes),
+)
+def test_matches_agree_with_naive_search(tokens: list[str], blob: bytes) -> None:
+    matcher, _ = compile_hex_pattern(" ".join(tokens))
+    assert [match.start() for match in matcher.finditer(blob)] == _naive_pattern_starts(
+        blob, tokens
+    )
 
 
 # --- rex_string_search pagination -------------------------------------------------
@@ -84,7 +97,6 @@ def _check_page(
     assert offset >= 0
     assert 0 <= limit <= tools._MAX_LIMIT
     assert page[items_key] == everything[offset : offset + limit]
-    assert len(page[items_key]) <= tools._MAX_LIMIT
     assert page["total"] == min(true_total, offset + limit + 1)
     assert page["truncated"] is (true_total > offset + limit)
 
@@ -502,3 +514,321 @@ def test_regex_ignore_case_agrees_with_substring_ignore_case(
     assert [entry["address"] for entry in sensitive["strings"]] == [
         address for address in caseless_addresses if address in sensitive_addresses
     ]
+
+
+# --- _paginate against plain slicing -----------------------------------------------------
+#
+# Offsets are unbounded above (the schema only requires >= 0), so go well past sys.maxsize.
+
+
+@given(
+    items=st.lists(st.integers(), max_size=12),
+    offset=st.integers(min_value=0, max_value=2**70),
+    limit=st.integers(min_value=0, max_value=15),
+)
+def test_paginate_agrees_with_slicing(items: list[int], offset: int, limit: int) -> None:
+    page, total, truncated = tools._paginate(iter(items), offset, limit)
+    assert page == items[offset : offset + limit]
+    assert truncated is (len(items) > offset + limit)
+    assert total == min(len(items), offset + limit + 1)
+
+
+@given(
+    count=st.integers(min_value=0, max_value=12),
+    offset=st.integers(min_value=0, max_value=2**70),
+    limit=st.integers(min_value=0, max_value=15),
+)
+def test_paginate_consumes_at_most_one_item_past_the_window(
+    count: int, offset: int, limit: int
+) -> None:
+    consumed = 0
+
+    def counted() -> Iterator[int]:
+        nonlocal consumed
+        for item in range(count):
+            consumed += 1
+            yield item
+
+    tools._paginate(counted(), offset, limit)
+    assert consumed <= min(count, offset + limit + 1)
+
+
+# --- chunked memory scan ---------------------------------------------------------------
+#
+# Chunk size and section bounds are implementation details of the scan: the matches must
+# equal a naive search of the blob, whatever the chunk size, and a section clips matches
+# to those lying entirely inside it.
+
+
+@given(
+    blob=st.lists(st.sampled_from(_BLOB_BYTES), max_size=48).map(bytes),
+    tokens=st.lists(st.sampled_from(_TOKENS), min_size=1, max_size=3),
+    chunk=st.integers(min_value=1, max_value=16),
+    first=st.integers(min_value=0, max_value=52),
+    last=st.integers(min_value=0, max_value=52),
+)
+def test_data_find_is_independent_of_the_read_chunk_and_clips_to_the_section(
+    blob: bytes, tokens: list[str], chunk: int, first: int, last: int
+) -> None:
+    low, high = min(first, last), max(first, last)
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x2000, max(len(blob), 1))],
+        memory={0x2000: blob} if blob else {},
+        sections={"s": (0x2000 + low, 0x2000 + high)},
+    )
+    _, find = get_tool("rex_data_find")
+    call = FakeToolCall(view)
+    pattern = " ".join(tokens)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(tools, "_READ_CHUNK", chunk)
+        unbounded = find(call, pattern=pattern, limit=tools._MAX_LIMIT)
+        bounded = find(call, pattern=pattern, limit=tools._MAX_LIMIT, section="s")
+    starts = _naive_pattern_starts(blob, tokens)
+    assert unbounded["matches"] == [hex(0x2000 + index) for index in starts]
+    assert bounded["matches"] == [
+        hex(0x2000 + index) for index in starts if low <= index and index + len(tokens) <= high
+    ]
+
+
+# --- rex_find_functions_by_pattern ----------------------------------------------------------
+#
+# Disjoint, ascending functions make the full result predictable from the naive match
+# list: per-function counts and example addresses, in first-match order. Every page is the
+# exact slice of it, including for offsets past any integer a C-level slice accepts.
+
+
+@example(blob=b"\x00", tokens=["00"], layout=[(0, 4)], limit=0, offset=2**63)
+@given(
+    blob=st.lists(st.sampled_from(_BLOB_BYTES), max_size=48).map(bytes),
+    tokens=st.lists(st.sampled_from(_TOKENS), min_size=1, max_size=3),
+    layout=st.lists(
+        st.tuples(st.integers(min_value=0, max_value=6), st.integers(min_value=1, max_value=12)),
+        max_size=6,
+    ),
+    limit=st.integers(min_value=0, max_value=tools._MAX_LIMIT),
+    offset=st.integers(min_value=0, max_value=2**63),
+)
+def test_find_functions_by_pattern_pages_tile_the_full_result(
+    blob: bytes, tokens: list[str], layout: list[tuple[int, int]], limit: int, offset: int
+) -> None:
+    functions: list[FakeFunction] = []
+    cursor = 0x3000
+    for index, (gap, length) in enumerate(layout):
+        start = cursor + gap
+        functions.append(FakeFunction(f"f{index}", start, start + length))
+        cursor = start + length
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x3000, max(len(blob), 1))],
+        memory={0x3000: blob} if blob else {},
+        functions=functions,
+    )
+    _, find = get_tool("rex_find_functions_by_pattern")
+    call = FakeToolCall(view)
+    pattern = " ".join(tokens)
+
+    addresses = [0x3000 + index for index in _naive_pattern_starts(blob, tokens)]
+    expected: list[dict[str, object]] = []
+    for function in functions:
+        inside = [address for address in addresses if function.start <= address < function.end]
+        if inside:
+            expected.append(
+                {
+                    "start": hex(function.start),
+                    "name": function.name,
+                    "match_count": len(inside),
+                    "addresses": [hex(a) for a in inside[: tools._MAX_FIND_FUNCTIONS_EXAMPLES]],
+                }
+            )
+    full = find(call, pattern=pattern, limit=tools._MAX_LIMIT)
+    assert full == {"truncated": False, "functions": expected}
+
+    page = find(call, pattern=pattern, limit=limit, offset=offset)
+    assert page["functions"] == expected[offset : offset + limit]
+    assert page["truncated"] is (len(expected) > offset + limit)
+
+
+# --- rex_hlil_grep paging ------------------------------------------------------------------
+#
+# The documented contract: pass next_offset back as offset until truncated is false and the
+# concatenated pages are the full result. A function with no HLIL is skipped, not counted.
+
+_HLIL_BODIES = st.lists(
+    st.none() | st.lists(st.text(alphabet="ab ", min_size=1, max_size=4), max_size=5),
+    max_size=8,
+)
+
+
+def _hlil_view(bodies: list[list[str] | None]) -> FakeBinaryView:
+    return FakeBinaryView(
+        functions=[
+            FakeFunction(
+                f"f{index}",
+                0x1000 + 0x10 * index,
+                0x1008 + 0x10 * index,
+                hlil=None if lines is None else RenderableText("\n".join(lines)),
+            )
+            for index, lines in enumerate(bodies)
+        ]
+    )
+
+
+def _expected_hlil_hits(bodies: list[list[str] | None]) -> list[tuple[int, dict[str, object]]]:
+    expected: list[tuple[int, dict[str, object]]] = []
+    for index, lines in enumerate(bodies):
+        hits = [line for line in lines or [] if "a" in line]
+        if hits:
+            entry: dict[str, object] = {
+                "start": hex(0x1000 + 0x10 * index),
+                "name": f"f{index}",
+                "lines": hits[:3],
+            }
+            expected.append((index, entry))
+    return expected
+
+
+@given(
+    bodies=_HLIL_BODIES,
+    limit=st.integers(min_value=1, max_value=tools._MAX_HLIL_GREP_LIMIT),
+)
+def test_hlil_grep_pages_chain_through_next_offset(
+    bodies: list[list[str] | None], limit: int
+) -> None:
+    _, grep = get_tool("rex_hlil_grep")
+    call = FakeToolCall(_hlil_view(bodies))
+    chained: list[dict[str, object]] = []
+    next_offset = 0
+    while True:
+        page = grep(call, regex="a", limit=limit, offset=next_offset)
+        chained.extend(page["functions"])
+        if not page["truncated"]:
+            break
+        # Strict progress bounds the loop by the function count.
+        assert page["next_offset"] > next_offset
+        next_offset = page["next_offset"]
+    assert chained == [entry for _, entry in _expected_hlil_hits(bodies)]
+
+
+@given(
+    bodies=_HLIL_BODIES,
+    limit=st.integers(min_value=0, max_value=tools._MAX_HLIL_GREP_LIMIT),
+    offset=st.integers(min_value=0, max_value=2**63),
+)
+def test_hlil_grep_offset_selects_the_functions_from_that_index(
+    bodies: list[list[str] | None], limit: int, offset: int
+) -> None:
+    _, grep = get_tool("rex_hlil_grep")
+    page = grep(FakeToolCall(_hlil_view(bodies)), regex="a", limit=limit, offset=offset)
+    expected = [entry for index, entry in _expected_hlil_hits(bodies) if index >= offset]
+    assert page["functions"] == expected[:limit]
+
+
+def _reference_hlil_lines(body: list[str], before: int, after: int) -> list[str]:
+    hits = [position for position, line in enumerate(body) if "a" in line][:3]
+    if before == 0 and after == 0:
+        return [body[hit] for hit in hits]
+    lines: list[str] = []
+    for number, hit in enumerate(hits):
+        if number > 0:
+            lines.append("--")
+        first = max(hit - before, 0)
+        last = min(hit + after, len(body) - 1)
+        for position in range(first, last + 1):
+            marker = "> " if position == hit else "  "
+            lines.append(marker + body[position])
+    return lines
+
+
+@example(body=["b", "a", "b", "a", "a", "a", "b"], before=3, after=2)
+@given(
+    body=st.lists(st.sampled_from(["a", "b", "ab", " "]), min_size=1, max_size=14),
+    before=st.integers(min_value=0, max_value=tools._MAX_HLIL_GREP_CONTEXT),
+    after=st.integers(min_value=0, max_value=tools._MAX_HLIL_GREP_CONTEXT),
+)
+def test_hlil_grep_context_windows_match_an_index_based_reference(
+    body: list[str], before: int, after: int
+) -> None:
+    _, grep = get_tool("rex_hlil_grep")
+    call = FakeToolCall(_hlil_view([body]))
+    result = grep(call, regex="a", context_before=before, context_after=after)
+    expected = _reference_hlil_lines(body, before, after)
+    assert [entry["lines"] for entry in result["functions"]] == ([expected] if expected else [])
+
+
+# --- rex_disasm_at window ----------------------------------------------------------------
+#
+# Differential test against the plain linear anchor scan: the anchor is the last line at
+# or before the address (shared addresses included), else the first line.
+
+
+@given(
+    addresses=st.lists(st.integers(min_value=0, max_value=30), max_size=12).map(sorted),
+    address=st.integers(min_value=-2, max_value=32),
+    before=st.integers(min_value=0, max_value=tools._MAX_DISASM_CONTEXT),
+    after=st.integers(min_value=0, max_value=tools._MAX_DISASM_CONTEXT),
+)
+def test_disasm_window_matches_a_linear_anchor_scan(
+    addresses: list[int], address: int, before: int, after: int
+) -> None:
+    lines = [(line_address, "insn") for line_address in addresses]
+    # Reference implementation: the linear scan that predates the bisect lookup.
+    anchor = 0
+    for index, line_address in enumerate(addresses):
+        if line_address > address:
+            break
+        anchor = index
+    assert tools._disasm_window(lines, address, before, after) == (
+        max(0, anchor - before),
+        min(len(lines), anchor + 1 + after),
+    )
+
+
+# --- export tools ---------------------------------------------------------------------------
+
+
+@given(filename=st.text(alphabet="ab./\\\x00", max_size=12))
+def test_validated_export_filenames_stay_inside_the_export_root(filename: str) -> None:
+    try:
+        tools._validate_export_path(filename)
+    except FakeToolError:
+        return
+    root = Path(tempfile.gettempdir()) / "rex-export-property-root"
+    assert (root / filename).resolve().is_relative_to(root.resolve())
+
+
+@given(
+    addresses=st.lists(st.integers(min_value=0x1000, max_value=0x1040), unique=True, max_size=12),
+    start=st.integers(min_value=0x1000, max_value=0x1040),
+    span=st.integers(min_value=1, max_value=0x41),
+    limit=st.integers(min_value=0, max_value=tools._MAX_EXPORT_SYMBOLS),
+    offset=st.integers(min_value=0, max_value=2**63),
+    file_format=st.sampled_from(["csv", "json"]),
+)
+def test_export_symbols_writes_the_exact_sorted_window(
+    addresses: list[int], start: int, span: int, limit: int, offset: int, file_format: str
+) -> None:
+    view = FakeBinaryView(
+        symbols=[FakeSymbol(address, "FunctionSymbol", f"s{address:x}") for address in addresses]
+    )
+    _, export = get_tool("rex_export_symbols")
+    in_range = sorted(address for address in addresses if start <= address < start + span)
+    window = in_range[offset : offset + limit]
+    with tempfile.TemporaryDirectory() as directory, pytest.MonkeyPatch.context() as patch:
+        patch.setattr(tools, "_EXPORT_ROOT", Path(directory) / "exports")
+        result = export(
+            FakeToolCall(view),
+            start,
+            start + span,
+            limit=limit,
+            offset=offset,
+            format=file_format,
+            filename="symbols",
+        )
+        content = Path(result["path"]).read_text(encoding="utf-8")
+    if file_format == "csv":
+        written = [row[0] for row in list(csv.reader(io.StringIO(content)))[1:]]
+    else:
+        written = [row["symbol_address"] for row in json.loads(content)]
+    assert written == [hex(address) for address in window]
+    assert result["rows"] == len(window)
+    assert result["total"] == len(in_range)
+    assert result["truncated"] is (len(in_range) > offset + limit)
