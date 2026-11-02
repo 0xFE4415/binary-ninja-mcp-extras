@@ -3865,3 +3865,80 @@ def test_component_add_functions_validates_inputs() -> None:
     # At the batch cap the call still goes through.
     at_cap = add(FakeParsingToolCall(view), "/Network", ["0x3000"] * 64)
     assert at_cap["added_count"] == 64
+
+
+def test_report_show_renders_the_markdown_report() -> None:
+    view = FakeBinaryView()
+    _, show = get_tool("rex_report_show")
+    markdown = "# Triage\n\n- `main` at 0x1100: recv-then-stack-copy\n[binaryninja://?expr=main]\n"
+    result = show(_call(view), title="Triage report", markdown=markdown)
+    # The markdown goes to the core whole; the markdown itself doubles as the plaintext
+    # fallback, so command-line hosts render the same report instead of nothing.
+    assert view.shown_reports == [("Triage report", markdown, markdown)]
+    assert result == {
+        "title": "Triage report",
+        "length": len(markdown),
+        "preview": markdown,
+        "truncated": False,
+    }
+
+
+def test_report_show_truncates_only_the_echoed_preview() -> None:
+    view = FakeBinaryView()
+    _, show = get_tool("rex_report_show")
+    markdown = "a" * (tools._MAX_CHARS + 88)
+    result = show(_call(view), title="r", markdown=markdown)
+    assert view.shown_reports == [("r", markdown, markdown)]
+    assert result["preview"] == "a" * tools._MAX_CHARS + "... [88 chars truncated]"
+    assert result["truncated"] is True
+    assert result["length"] == len(markdown)
+
+
+def test_report_show_rejects_oversized_markdown_without_rendering() -> None:
+    view = FakeBinaryView()
+    _, show = get_tool("rex_report_show")
+    with pytest.raises(FakeToolError) as exc:
+        show(_call(view), title="r", markdown="x" * (tools._MAX_REPORT_CONTENT_CHARS + 1))
+    assert exc.value.code == "content_too_large"
+    assert exc.value.message == f"markdown exceeds {tools._MAX_REPORT_CONTENT_CHARS} characters"
+    assert view.shown_reports == []
+
+
+def test_report_show_rejects_oversized_title_without_rendering() -> None:
+    view = FakeBinaryView()
+    _, show = get_tool("rex_report_show")
+    with pytest.raises(FakeToolError) as exc:
+        show(_call(view), title="t" * (tools._MAX_REPORT_TITLE_CHARS + 1), markdown="m")
+    assert exc.value.code == "title_too_large"
+    assert exc.value.message == f"title exceeds {tools._MAX_REPORT_TITLE_CHARS} characters"
+    assert view.shown_reports == []
+
+
+def test_report_show_honors_both_caps_exactly() -> None:
+    view = FakeBinaryView()
+    _, show = get_tool("rex_report_show")
+    title = "t" * tools._MAX_REPORT_TITLE_CHARS
+    markdown = "m" * tools._MAX_REPORT_CONTENT_CHARS
+    result = show(_call(view), title=title, markdown=markdown)
+    assert view.shown_reports == [(title, markdown, markdown)]
+    assert result["length"] == tools._MAX_REPORT_CONTENT_CHARS
+    assert result["truncated"] is True
+
+
+def test_report_show_rejects_empty_title_and_markdown() -> None:
+    view = FakeBinaryView()
+    _, show = get_tool("rex_report_show")
+    for kwargs, parameter in (
+        ({"title": "", "markdown": "m"}, "title"),
+        ({"title": "t", "markdown": ""}, "markdown"),
+    ):
+        with pytest.raises(FakeToolError) as exc:
+            show(_call(view), **kwargs)
+        assert exc.value.code == "invalid_params"
+        assert exc.value.message == f"{parameter} must not be empty"
+    assert view.shown_reports == []
+
+
+def test_report_show_is_read_only() -> None:
+    options, _ = get_tool("rex_report_show")
+    assert options == {"read_only": True}

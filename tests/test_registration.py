@@ -32,6 +32,7 @@ EXPECTED_NAMES = sorted(
         "rex_memory_write",
         "rex_quick_main",
         "rex_redo",
+        "rex_report_show",
         "rex_string_read_at",
         "rex_string_search",
         "rex_struct_from_access",
