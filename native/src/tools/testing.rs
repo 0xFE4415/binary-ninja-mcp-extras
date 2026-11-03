@@ -6,10 +6,9 @@ use super::walk::{ChunkedReadView, for_each_segment};
 use crate::hexpattern::HexPattern;
 use crate::scan::{Pagination, RunningScan, scan_pattern};
 
-/// A tiny stand-in for BinaryView: ascending, non-overlapping readable
-/// runs. A read returns the contiguous bytes available from `position`
-/// inside the run it starts in — the short or empty read an unreadable
-/// hole produces.
+/// A tiny stand-in for BinaryView: ascending, non-overlapping readable runs;
+/// a read returns the contiguous bytes available from `position` — the short
+/// or empty read an unreadable hole produces.
 pub(super) struct FakeView {
     pub(super) segments: Vec<(u64, u64)>,
     pub(super) runs: Vec<(u64, Vec<u8>)>,
@@ -35,9 +34,7 @@ impl ChunkedReadView for FakeView {
     }
 }
 
-/// Drive the production `for_each_segment` — clamp_to_bounds +
-/// for_each_window + the reusable read buffer — with FakeView standing in
-/// for the BinaryView FFI, which cannot run in tests.
+/// Drive the production `for_each_segment` with `FakeView` standing in for BinaryView.
 pub(super) fn scan_fake_view(
     view: &FakeView,
     chunk: u64,

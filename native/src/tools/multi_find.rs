@@ -108,13 +108,9 @@ fn prefix_pattern_error(index: usize, error: McpToolError) -> McpToolError {
     McpToolError::new(code, format!("pattern {index}: {message}"))
 }
 
-/// Chunked-walk overlap for a pattern list: the longest pattern's length minus
-/// one, so every pattern's matches straddling a chunk edge stay visible in one
-/// window.
-///
-/// Precondition: `patterns` is non-empty — `RxMultiFind` rejects an empty list
-/// before reaching this and the tests pass literal non-empty lists — so
-/// `.max()` cannot be `None` and needs no fallback value.
+// Chunked-walk overlap: the longest pattern's length minus one, so every
+// pattern's matches straddling a chunk edge stay visible in one window.
+// Precondition: `patterns` is non-empty (the tool rejects an empty list first).
 fn longest_pattern_overlap(patterns: &[HexPattern]) -> u64 {
     (patterns
         .iter()
@@ -139,9 +135,9 @@ mod tests {
         assert_eq!(error.message, "pattern 2: invalid hex byte token 'zz'");
     }
 
-    /// The multi-pattern walk overlaps windows by the LONGEST pattern minus
-    /// one: a per-pattern shorter overlap would drop the longer pattern's
-    /// match straddling a chunk edge.
+    // The multi-pattern walk overlaps windows by the LONGEST pattern minus one:
+    // a per-pattern shorter overlap would drop the longer pattern's match
+    // straddling a chunk edge.
     #[test]
     fn multi_walk_overlaps_by_the_longest_pattern() {
         let patterns = vec![
@@ -167,12 +163,11 @@ mod tests {
         assert_eq!(buckets[1].matches, vec![0x1003]);
     }
 
-    /// The overlap that protects the longest pattern re-exposes the seam zone
-    /// of every window in its successor: a shorter pattern's match starting
-    /// there is fully visible in two consecutive windows and must still be
-    /// counted once per bucket — the per-pattern `rex_data_find` contract the
-    /// multi result promises. Regression: '33 eb' starting exactly at the
-    /// 0x1004 seam was recorded in window 0 and again in window 1.
+    // The overlap protecting the longest pattern re-exposes the seam zone to
+    // its successor window: a shorter pattern's match there is fully visible in
+    // two consecutive windows and must still count once per bucket. Regression:
+    // '33 eb' starting exactly at the 0x1004 seam was recorded in window 0 and
+    // again in window 1.
     #[test]
     fn multi_seam_matches_of_shorter_patterns_are_counted_once() {
         let patterns = vec![

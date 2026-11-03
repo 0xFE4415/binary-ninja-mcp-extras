@@ -1,12 +1,7 @@
-//! The MCP tools this plugin registers: `rx_data_find` and `rx_multi_find`,
-//! one submodule per tool.
-//!
-//! `rx_data_find` mirrors the Python plugin's `rex_data_find` contract exactly
-//! (result shape, pagination, error codes) so the two can be benchmarked
-//! head-to-head; only the scan itself is native Rust. `rx_multi_find` is the
-//! new capability: many patterns in one pass over the bytes. The shared
-//! Python-parity validation and result shaping live here; both tools walk
-//! memory through the chunked segment walk in [`walk`].
+//! The MCP tools this plugin registers: `rx_data_find` (the Python plugin's
+//! contract with the scan in native Rust) and `rx_multi_find` (many patterns in
+//! one pass). Shared Python-parity validation and result shaping live here;
+//! both tools walk memory through [`walk`].
 
 mod data_find;
 mod multi_find;
@@ -28,8 +23,7 @@ use multi_find::RxMultiFind;
 /// `rex_data_find`'s limit cap.
 const MAX_LIMIT: u64 = 500;
 
-/// Window-read size cap, matching `_READ_CHUNK` in the Python plugin: reads
-/// are chunked so no single read ever allocates the whole segment.
+/// Window-read size cap, matching `_READ_CHUNK` in the Python plugin.
 const READ_CHUNK: u64 = 4 * 1024 * 1024;
 
 fn default_limit() -> u32 {
@@ -40,9 +34,9 @@ fn invalid_param(name: &str, requirement: &str) -> McpToolError {
     McpToolError::invalid_params(format!("Invalid integer parameter '{name}': {requirement}"))
 }
 
-/// Validate `limit`/`offset` like the Python plugin's `_validate_range`; the
-/// schema already rejects these for typed calls, this keeps direct invocation
-/// identical and covers the unsigned-unreachable lower bounds explicitly.
+/// Validate `limit`/`offset` like the Python plugin's `_validate_range`: the
+/// schema already rejects these for typed calls; this keeps direct invocation
+/// identical.
 fn validate_pagination(limit: u32, offset: u64) -> Result<Pagination, McpToolError> {
     let limit = u64::from(limit);
     if limit > MAX_LIMIT {
@@ -66,7 +60,7 @@ fn parse_checked_pattern(pattern: &str) -> Result<HexPattern, McpToolError> {
 }
 
 /// Resolve the optional section name to inclusive-exclusive bounds, mirroring
-/// the Python plugin's `_resolve_section` including its error text.
+/// the Python plugin's `_resolve_section`.
 fn resolve_bounds(
     view: &BinaryView,
     section: Option<&str>,
@@ -80,8 +74,7 @@ fn resolve_bounds(
         .transpose()
 }
 
-/// The `section_not_found` error with the Python plugin's exact text, echo
-/// truncated like its `_truncate` does.
+/// The `section_not_found` error with the Python plugin's exact truncated text.
 fn section_not_found_error(name: &str) -> McpToolError {
     McpToolError::new(
         "section_not_found",
@@ -122,12 +115,9 @@ mod tests {
         assert!(validate_pagination(0, 0).is_ok());
     }
 
-    /// The published schema's caps must equal the runtime-enforced consts:
-    /// the schema rejects typed calls while the runtime checks keep direct
-    /// invocation identical, so a value drifting between the two would be
-    /// rejected by one gate and accepted by the other. Compilation alone
-    /// would not catch a schemars attribute silently dropping its const, so
-    /// pin the generated schema against the consts directly.
+    // The published schema's caps must equal the runtime-enforced consts, or a
+    // value drifting between them is rejected by one gate and accepted by the
+    // other; compilation alone cannot catch a schemars attribute dropping its const.
     #[test]
     fn schema_caps_equal_the_runtime_consts() {
         let data_find = serde_json::to_value(schemars::schema_for!(DataFindArgs)).unwrap();

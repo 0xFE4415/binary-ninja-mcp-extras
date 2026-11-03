@@ -1,20 +1,9 @@
-//! One-pass multi-pattern scan: an Aho-Corasick automaton over each pattern's
-//! first concrete byte run, with wildcard verification at every candidate hit.
-//!
-//! This is the capability the Python plugin cannot offer: `N` hex patterns in a
-//! single pass over the bytes instead of `N` serial `rex_data_find` calls.
-//!
-//! Why this decomposition: hex patterns with `??` wildcards are not literals, so
-//! they cannot go into an Aho-Corasick automaton directly. But every occurrence
-//! of a pattern contains its first concrete run at a fixed offset, so:
-//!
-//! 1. all patterns' concrete runs go into one automaton,
-//! 2. `find_overlapping_iter` yields every run hit (overlaps included, which is
-//!    what keeps self-overlapping patterns correct),
-//! 3. each hit is verified against its full pattern, wildcards and all.
-//!
-//! Every pattern occurrence therefore produces at least one automaton hit, and
-//! verification discards false hits, so the result equals the naive scan.
+//! One-pass multi-pattern scan: hex patterns with `??` wildcards cannot enter
+//! an Aho-Corasick automaton directly, but every occurrence contains its first
+//! concrete byte run at a fixed offset — so all patterns' concrete runs go into
+//! one automaton, `find_overlapping_iter` yields every run hit (overlaps
+//! included, keeping self-overlapping patterns correct), and each hit is
+//! verified against its full pattern. The result equals the naive scan.
 
 use std::collections::HashMap;
 
@@ -23,13 +12,9 @@ use aho_corasick::{AhoCorasick, MatchKind};
 use crate::hexpattern::{HexPattern, verify_at};
 use crate::scan::{Pagination, RunningScan, for_each_all_wildcard_candidate};
 
-/// Cap on the number of patterns one `rx_multi_find` call accepts. The
-/// automaton and per-pattern buckets are linear in this; 64 keeps one call
-/// small while covering realistic signature-set slices.
+/// Cap on the number of patterns one `rx_multi_find` call accepts.
 pub const MAX_MULTI_PATTERNS: usize = 64;
 
-/// The owner of one automaton needle: the pattern it prefilters and the offset
-/// of the needle inside that pattern.
 struct NeedleOwner {
     pattern_index: usize,
     needle_offset: usize,
@@ -38,11 +23,11 @@ struct NeedleOwner {
 /// The compiled multi-pattern matcher for one `rx_multi_find` call.
 pub struct MultiMatcher {
     automaton: AhoCorasick,
-    /// Owners per automaton pattern id; several owners may share one needle
-    /// when different patterns start with the same concrete run.
+    // Owners per automaton pattern id; several owners may share one needle
+    // when different patterns start with the same concrete run.
     owners: Vec<Vec<NeedleOwner>>,
-    /// Indices of patterns with no concrete byte at all; they match at every
-    /// position and are scanned directly instead of through the automaton.
+    // Indices of patterns with no concrete byte at all; scanned directly
+    // instead of through the automaton.
     wildcard_only: Vec<usize>,
 }
 
@@ -70,8 +55,7 @@ impl MultiMatcher {
             });
         }
         let automaton = AhoCorasick::builder()
-            // Standard semantics report every hit as soon as it is seen, which
-            // is what find_overlapping_iter needs for overlapping occurrences.
+            // Standard semantics report every hit as seen — what find_overlapping_iter needs.
             .match_kind(MatchKind::Standard)
             .build(&needles)
             .expect("aho-corasick build of concrete byte runs");
@@ -83,10 +67,8 @@ impl MultiMatcher {
     }
 
     /// Scan one in-memory segment for every pattern, updating per-pattern
-    /// buckets. `base` is the absolute address of `haystack[0]`.
-    ///
-    /// Returns `false` when every bucket's window is exhausted; the caller must
-    /// stop scanning further segments.
+    /// buckets (`base` = absolute address of `haystack[0]`). Returns `false`
+    /// when every bucket's window is exhausted.
     pub fn scan_segment(
         &self,
         haystack: &[u8],
@@ -108,8 +90,8 @@ impl MultiMatcher {
                 if !verify_at(haystack, candidate, pattern.bytes()) {
                     continue;
                 }
-                // Shorter-than-longest patterns re-see their seam matches in
-                // the next window; count each address once.
+                // Shorter patterns re-see their seam matches in the next
+                // window; count each address once.
                 if !bucket.record_new(pagination, base + candidate as u64)
                     && buckets.iter().all(RunningScan::is_done)
                 {
@@ -117,11 +99,9 @@ impl MultiMatcher {
                 }
             }
         }
-        // All-wildcard patterns match at every position; scan them directly so
-        // each bucket's own address order stays ascending. A truncated bucket
-        // declines the next candidate, which ends only its own enumeration —
-        // the helper's `false` is deliberately ignored so other wildcard-only
-        // buckets keep scanning (the whole walk's stop is decided below).
+        // All-wildcard buckets scan directly so each bucket's address order
+        // stays ascending; a declined candidate ends only its own enumeration,
+        // so the helper's `false` is deliberately ignored here.
         for &pattern_index in &self.wildcard_only {
             for_each_all_wildcard_candidate(
                 haystack.len(),
@@ -161,8 +141,8 @@ mod tests {
         buckets
     }
 
-    /// Known-answer test for the crate behavior this design rests on:
-    /// find_overlapping_iter must report self-overlapping occurrences.
+    // Known-answer test for the crate behavior this design rests on:
+    // find_overlapping_iter must report self-overlapping occurrences.
     #[test]
     fn aho_corasick_reports_overlapping_hits() {
         let patterns = parse_all(&["61 61"]); // "aa"
@@ -281,7 +261,7 @@ mod tests {
         assert_eq!(buckets[0].total, 3);
     }
 
-    /// Differential test against a naive reference on pseudo-random inputs.
+    // Differential test against a naive reference on pseudo-random inputs.
     #[test]
     fn agrees_with_naive_reference_on_random_inputs() {
         let mut next = crate::test_rng(0x9e37_79b9_7f4a_7c15);

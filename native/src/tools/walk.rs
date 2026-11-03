@@ -4,8 +4,6 @@
 
 use binaryninja::binary_view::{BinaryView, BinaryViewBase};
 
-/// Clip a segment's address range to the optional section bounds; `None` when
-/// nothing remains (empty ranges yield no windows in the walk below).
 fn clamp_to_bounds(range: (u64, u64), bounds: Option<(u64, u64)>) -> Option<(u64, u64)> {
     let (start, end) = match bounds {
         None => range,
@@ -14,44 +12,21 @@ fn clamp_to_bounds(range: (u64, u64), bounds: Option<(u64, u64)>) -> Option<(u64
     (start < end).then_some((start, end))
 }
 
-/// Walk `[start, end)` in overlapping read windows, mirroring the Python
-/// plugin's chunked-read loop in `_iter_pattern_matches`.
-///
-/// Invariant re-derived from that loop: window k reads
-/// `[start + k*chunk, min(start + k*chunk + chunk + overlap, end))` and
-/// `position` advances by `chunk` unconditionally — the windows depend only on
-/// `(start, end, chunk, overlap)`, never on what the reads return. Consecutive
-/// windows overlap by exactly `overlap` bytes, so every (`overlap + 1`)-byte
-/// match whose start address lies in window k is fully visible in window k, and
-/// every match start belongs to exactly one window: no match is missed and none
-/// is reported twice. Advancing past short or empty reads (unreadable holes) is
-/// what recovers matches located after the hole.
-///
-/// `overlap` is the scan's pattern length minus one (the longest pattern's, for
-/// the multi-pattern scan). `window(position, read_size)` returns `false` to
-/// stop the walk early.
+// Walk [start, end) in windows of `chunk + overlap` bytes, advancing by `chunk`
+// unconditionally: consecutive windows overlap by `overlap` bytes, so every
+// (`overlap + 1`)-byte match start is fully visible in exactly one window, and
+// advancing past short reads (unreadable holes) recovers matches after the hole.
 fn for_each_window<F>(start: u64, end: u64, chunk: u64, overlap: u64, mut window: F) -> bool
 where
     F: FnMut(u64, u64) -> bool,
 {
-    let mut position = start;
-    while position < end {
-        let read_size = (chunk + overlap).min(end - position);
-        if !window(position, read_size) {
-            return false;
-        }
-        let Some(next) = position.checked_add(chunk) else {
-            break;
-        };
-        position = next;
-    }
-    true
+    std::iter::successors(Some(start), |position| position.checked_add(chunk))
+        .take_while(|position| *position < end)
+        .all(|position| window(position, (chunk + overlap).min(end - position)))
 }
 
-/// The view surface the chunked segment walk needs: mapped ranges plus bounded
-/// reads. A local seam so tests can drive `for_each_segment` itself — the
-/// `BinaryView` FFI cannot run outside the core, and a test-local copy of the
-/// composition would drift from the wiring it claims to cover.
+/// Read surface for the chunked walk — a local seam so tests can drive
+/// `for_each_segment` without the BinaryView FFI, which cannot run outside the core.
 pub(super) trait ChunkedReadView {
     /// Ascending, non-overlapping readable address ranges.
     fn segment_ranges(&self) -> Vec<(u64, u64)>;
@@ -76,10 +51,9 @@ impl ChunkedReadView for BinaryView {
     }
 }
 
-/// Read every mapped segment (clipped to `bounds`) through the chunked window
-/// walk and run `step` over each window's bytes in address order. `step`
-/// receives the window's base address and the bytes actually read, which may be
-/// shorter than requested (or empty) when the core hits an unreadable hole.
+/// Read every mapped segment (clipped to `bounds`) through the window walk,
+/// feeding `step` each window's base address and the bytes actually read.
+/// Returns `false` as soon as `step` declines a window.
 pub(super) fn for_each_segment<V: ChunkedReadView, F>(
     view: &V,
     chunk: u64,
@@ -90,23 +64,17 @@ pub(super) fn for_each_segment<V: ChunkedReadView, F>(
 where
     F: FnMut(u64, &[u8]) -> bool,
 {
-    // One reusable buffer for the largest possible window, allocated once per
-    // scan — never the whole segment (a multi-GB segment must not allocate).
+    // One reusable buffer for the largest possible window — never a whole-segment allocation.
     let mut buffer = vec![0u8; usize::try_from(chunk + overlap).unwrap_or(usize::MAX)];
-    for (start, end) in view.segment_ranges() {
-        let Some((start, end)) = clamp_to_bounds((start, end), bounds) else {
-            continue;
-        };
-        let alive = for_each_window(start, end, chunk, overlap, |position, read_size| {
-            let read_size = read_size as usize;
-            let size = view.read_into(&mut buffer[..read_size], position);
-            step(position, &buffer[..size])
-        });
-        if !alive {
-            return false;
-        }
-    }
-    true
+    view.segment_ranges()
+        .iter()
+        .filter_map(|range| clamp_to_bounds(*range, bounds))
+        .all(|(start, end)| {
+            for_each_window(start, end, chunk, overlap, |position, read_size| {
+                let size = view.read_into(&mut buffer[..read_size as usize], position);
+                step(position, &buffer[..size])
+            })
+        })
 }
 
 #[cfg(test)]

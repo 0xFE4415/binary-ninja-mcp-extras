@@ -16,10 +16,8 @@ use super::{
 use crate::hexpattern::MAX_PATTERN_CHARS;
 use crate::scan::{RunningScan, scan_pattern};
 
-// No `binary` field: `binary` is a server-reserved argument for BinaryView-scoped
-// tools — `BNRegisterMcpTool` rejects a schema that declares it, and the server
-// strips it before invoking the handler (verified live). `require_binary_view`
-// resolves the view from the tool call itself. The fields mirror `rex_data_find`.
+// No `binary` field: it is a server-reserved argument — `BNRegisterMcpTool`
+// rejects a schema that declares it, and the server strips it before invoking.
 #[derive(Deserialize, JsonSchema)]
 pub struct DataFindArgs {
     #[schemars(length(max = MAX_PATTERN_CHARS))]
@@ -34,8 +32,7 @@ pub struct DataFindArgs {
     pub offset: u64,
 }
 
-/// `rx_data_find`: same contract as the Python plugin's `rex_data_find`, with
-/// the byte scan running in native Rust behind a SIMD memchr prefilter.
+/// `rx_data_find`: the Python plugin's `rex_data_find` contract, scan in native Rust.
 pub(super) struct RxDataFind;
 
 impl TypedMcpTool for RxDataFind {
@@ -54,8 +51,7 @@ impl TypedMcpTool for RxDataFind {
         call: &McpToolCall,
         args: DataFindArgs,
     ) -> Result<McpToolResult, McpToolError> {
-        // View resolution first, matching the Python handler's order
-        // (bv = call.binary_view before any validation).
+        // View resolution first, matching the Python handler's order.
         let view = call.require_binary_view()?;
         let pagination = validate_pagination(args.limit, args.offset)?;
         let pattern = parse_checked_pattern(&args.pattern)?;
@@ -97,11 +93,10 @@ mod tests {
         assert_eq!(running.matches, vec![0x1002, 0x1006]);
     }
 
-    /// Python test_data_find_matches_straddling_chunk_boundaries analog: a
-    /// match straddling the chunk edge is visible only because each window
-    /// extends pattern_length - 1 bytes past the chunk, and a match starting
-    /// exactly at the edge is reported once because every match start belongs
-    /// to exactly one window.
+    // Python test_data_find_matches_straddling_chunk_boundaries analog: a match
+    // straddling the chunk edge is visible only because each window extends
+    // pattern_length - 1 bytes past the chunk, and a match starting exactly at
+    // the edge is reported once because every match start belongs to one window.
     #[test]
     fn straddling_and_boundary_matches_are_found_exactly_once() {
         let pattern = HexPattern::parse("33 eb").unwrap();
@@ -126,11 +121,8 @@ mod tests {
         assert_eq!(running.matches, vec![0x1004]);
     }
 
-    /// Short and empty window reads (unreadable holes) must not stall or
-    /// misalign the walk: the position advances to the next chunk boundary
-    /// regardless, so matches after the hole are recovered — the Python loop's
-    /// behavior (`_iter_pattern_matches`), which the old whole-segment read dropped
-    /// entirely.
+    // Short and empty window reads (unreadable holes) must not stall the walk:
+    // the position advances regardless, so matches after the hole are recovered.
     #[test]
     fn recovers_matches_after_short_and_empty_reads() {
         let view = FakeView {
@@ -172,10 +164,9 @@ mod tests {
         assert_eq!(running.matches[499], 0x1000 + 499);
     }
 
-    /// Python test_data_find_pages_tile_the_full_result analog (seeded LCG, no
-    /// rand dependency): consecutive pages (limit 2, offset 0, 2, 4, ...)
-    /// reproduce the full untruncated result with no gaps or duplicates, and
-    /// every page carries the expected slice, total, and truncated flag.
+    // Python test_data_find_pages_tile_the_full_result analog: consecutive
+    // pages (limit 2, offset 0, 2, 4, ...) reproduce the full untruncated
+    // result with no gaps or duplicates.
     #[test]
     fn pages_tile_the_full_result() {
         let mut next = crate::test_rng(0x7a11_1a11);
