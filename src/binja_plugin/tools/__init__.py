@@ -10,7 +10,7 @@ tests patch ``_READ_CHUNK``/``_EXPORT_ROOT`` as module globals of ``binja_plugin
 """
 
 import re
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterable, Iterator
 from itertools import islice
 from pathlib import Path
@@ -300,14 +300,12 @@ def _fit_to_export_cap[ExportRow](
     text = serialize(window)
     if len(text.encode("utf-8")) <= _MAX_EXPORT_FILE_BYTES:
         return text, False
-    low, high = 1, len(window) - 1
-    while low < high:
-        mid = (low + high + 1) // 2
-        if len(serialize(window[:mid]).encode("utf-8")) <= _MAX_EXPORT_FILE_BYTES:
-            low = mid
-        else:
-            high = mid - 1
-    del window[low:]
+    fitting = bisect_left(
+        range(1, len(window)),
+        _MAX_EXPORT_FILE_BYTES + 1,
+        key=lambda length: len(serialize(window[:length]).encode("utf-8")),
+    )
+    del window[fitting:]
     return serialize(window), True
 
 

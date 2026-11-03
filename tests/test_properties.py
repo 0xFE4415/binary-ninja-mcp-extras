@@ -507,13 +507,18 @@ def test_regex_ignore_case_agrees_with_substring_ignore_case(
     caseless = search(call, pattern=pattern, ignore_case=True, limit=500)
     as_regex = search(call, pattern=re.escape(pattern), regex=True, ignore_case=True, limit=500)
     assert as_regex == caseless
-
     sensitive = search(call, pattern=pattern, limit=500)
     caseless_addresses = [entry["address"] for entry in caseless["strings"]]
     sensitive_addresses = {entry["address"] for entry in sensitive["strings"]}
     assert [entry["address"] for entry in sensitive["strings"]] == [
         address for address in caseless_addresses if address in sensitive_addresses
     ]
+
+
+def test_compile_user_regex_adds_no_flags_beyond_ignore_case() -> None:
+    assert tools._compile_user_regex("x").flags == re.compile("x").flags
+    caseless = tools._compile_user_regex("x", ignore_case=True)
+    assert caseless.flags == re.compile("x", re.IGNORECASE).flags
 
 
 # --- _paginate against plain slicing -----------------------------------------------------
@@ -533,6 +538,7 @@ def test_paginate_agrees_with_slicing(items: list[int], offset: int, limit: int)
     assert total == min(len(items), offset + limit + 1)
 
 
+@example(count=5, offset=0, limit=1)
 @given(
     count=st.integers(min_value=0, max_value=12),
     offset=st.integers(min_value=0, max_value=2**70),
@@ -550,7 +556,7 @@ def test_paginate_consumes_at_most_one_item_past_the_window(
             yield item
 
     tools._paginate(counted(), offset, limit)
-    assert consumed <= min(count, offset + limit + 1)
+    assert consumed == min(count, offset + limit + 1)
 
 
 # --- chunked memory scan ---------------------------------------------------------------

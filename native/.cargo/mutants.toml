@@ -2,3 +2,7 @@
 examine_globs = ["src/hexpattern.rs", "src/scan.rs"]
 # Build and test using the stub core rather than the Binary Ninja core.
 additional_cargo_args = ["--no-default-features"]
+# Skip debug info in mutant builds (see [profile.mutants] in Cargo.toml).
+profile = "mutants"
+# (high << 4) and the low digit have disjoint bits, so | and ^ parse identically.
+exclude_re = ['replace \| with \^ in parse_hex_byte']

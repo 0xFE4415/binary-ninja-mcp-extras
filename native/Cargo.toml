@@ -40,3 +40,9 @@ aho-corasick = "1"
 # Keep unwinding so a panicking MCP tool becomes an internal_error result
 # instead of ending the Binary Ninja process (see mcp-tools.html).
 panic = "unwind"
+
+# cargo-mutants builds (mutants.toml selects this profile) expect their tests
+# to fail, so debug info buys nothing and only slows every mutant's build.
+[profile.mutants]
+inherits = "test"
+debug = "none"

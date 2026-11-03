@@ -82,18 +82,6 @@ jobs:
         uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: "3.13"
-      - name: Cache apt packages
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/apt/archives
-          key: apt-${{ runner.os }}-mutation-python-${{ hashFiles('.github/workflows/check.yml') }}
-      - name: Install jq
-        run: |
-          mkdir -p "$HOME/.cache/apt/archives"
-          sudo apt-get update
-          sudo apt-get \
-            -o Dir::Cache::archives="$HOME/.cache/apt/archives" \
-            install -y jq
       - name: Run Python mutation gate
         run: uvx nox -s mutation
 
@@ -125,7 +113,10 @@ jobs:
           sudo apt-get update
           sudo apt-get \
             -o Dir::Cache::archives="$HOME/.cache/apt/archives" \
-            install -y clang cmake ninja-build jq
+            install -y clang cmake ninja-build jq mold
+      # cargo-mutants links every mutant separately; mold cuts each link.
+      - name: Speed up mutant linking
+        run: echo "RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "$GITHUB_ENV"
       # Prebuilt binary instead of `cargo install --locked`, which compiled the
       # tool from source on every run; the version is pinned with the toolchain
       # to keep mutant outcomes reproducible.

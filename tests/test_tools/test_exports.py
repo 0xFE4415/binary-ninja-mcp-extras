@@ -89,6 +89,65 @@ def test_fit_to_export_cap_keeps_the_largest_fitting_prefix(
     assert tools._fit_to_export_cap(serialize, window) == (serialize(rows), False)
     assert window == rows
 
+    # A prefix serializing to exactly cap + 1 bytes is over the cap and must be dropped.
+    exact_over = ["a" * 10, "b" * 11, "c" * 10]
+    monkeypatch.setattr(tools, "_MAX_EXPORT_FILE_BYTES", 20)
+    window = list(exact_over)
+    text, dropped = tools._fit_to_export_cap(serialize, window)
+    assert text == exact_over[0]
+    assert dropped is True
+    assert window == [exact_over[0]]
+
+
+def test_fit_to_export_cap_search_converges_on_a_false_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def serialize(selected: list[str]) -> str:
+        nonlocal calls
+        calls += 1
+        if calls > 100:
+            raise RuntimeError("cap search did not converge")
+        return "".join(selected)
+
+    rows = ["x" * 10, "y" * 10, "z" * 10, "w" * 10, "v" * 10]
+    monkeypatch.setattr(tools, "_MAX_EXPORT_FILE_BYTES", 25)
+    window = list(rows)
+    text, dropped = tools._fit_to_export_cap(serialize, window)
+    assert text == rows[0] + rows[1]
+    assert dropped is True
+    assert window == rows[:2]
+
+
+def test_write_export_file_pins_utf8_lf_semantics(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: dict[str, object] = {}
+
+    class FakeHandle:
+        def __enter__(self) -> FakeHandle:
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+        def write(self, text: str) -> None:
+            opened["written"] = text
+
+    def fake_open(path: object, mode: str = "r", **kwargs: object) -> FakeHandle:
+        opened["mode"] = mode
+        opened.update(kwargs)
+        return FakeHandle()
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    text = "héllo\n"
+    assert tools._write_export_file(Path("x.txt"), text) == len(text.encode("utf-8"))
+    assert opened == {
+        "mode": "w",
+        "encoding": "utf-8",
+        "newline": "",
+        "written": text,
+    }
+
 
 def test_export_disasm_shrinks_to_the_byte_cap(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
