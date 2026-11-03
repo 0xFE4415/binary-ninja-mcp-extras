@@ -64,6 +64,54 @@ def _annotate_function_error(address: int, message: str) -> dict[str, object]:
     return {"addr": hex(address), "ok": False, "error": message}
 
 
+def _annotate_field_error(item: dict[str, Any], address: int) -> dict[str, object] | None:
+    """First validation error among the optional fields, or None when all pass.
+
+    Fields are checked in name, comment, prototype order so a multi-bad item reports
+    the same single error the item would have hit first before the split.
+    """
+    name = item.get("name")
+    if name is not None and (not isinstance(name, str) or not name):
+        return _annotate_function_error(address, "name must be a non-empty string")
+    if name is not None and len(name) > _MAX_ANNOTATE_NAME_CHARS:
+        return _annotate_function_error(
+            address, f"name exceeds {_MAX_ANNOTATE_NAME_CHARS} characters"
+        )
+    comment = item.get("comment")
+    if comment is not None and not isinstance(comment, str):
+        return _annotate_function_error(address, "comment must be a string")
+    if comment is not None and len(comment) > _MAX_ANNOTATE_COMMENT_CHARS:
+        return _annotate_function_error(
+            address, f"comment exceeds {_MAX_ANNOTATE_COMMENT_CHARS} characters"
+        )
+    prototype = item.get("prototype")
+    if prototype is not None and (not isinstance(prototype, str) or not prototype):
+        return _annotate_function_error(address, "prototype must be a non-empty string")
+    if prototype is not None and len(prototype) > _MAX_ANNOTATE_PROTOTYPE_CHARS:
+        return _annotate_function_error(
+            address, f"prototype exceeds {_MAX_ANNOTATE_PROTOTYPE_CHARS} characters"
+        )
+    return None
+
+
+def _annotate_apply_plans(bv: BinaryView, staged: list[_AnnotationPlan]) -> None:
+    """Apply every staged plan inside one undoable transaction."""
+    try:
+        with bv.undoable_transaction():
+            for plan in staged:
+                if plan.comment is not None:
+                    plan.function.comment = plan.comment
+                if plan.parsed_type is not None:
+                    plan.function.set_user_type(plan.parsed_type)
+                # Name last, so an explicit name has the final word on naming.
+                if plan.name is not None:
+                    plan.function.name = plan.name
+    except Exception as error:
+        # undoable_transaction reverted the whole batch core-side before this runs;
+        # saying so keeps a caller from retrying a half-applied batch.
+        raise mcp.ToolError("annotate_failed", f"batch rolled back: {error}") from None
+
+
 def _annotate_resolve(
     call: mcp.ToolCall, bv: BinaryView, item: Any
 ) -> tuple[dict[str, object], _AnnotationPlan | None]:
@@ -94,43 +142,19 @@ def _annotate_resolve(
             _annotate_function_error(address, f"no analyzed function contains {address:#x}"),
             None,
         )
-    function = functions[0]
+    field_error = _annotate_field_error(item, address)
+    if field_error is not None:
+        return field_error, None
     name = item.get("name")
     comment = item.get("comment")
-    if name is not None and (not isinstance(name, str) or not name):
-        return _annotate_function_error(address, "name must be a non-empty string"), None
-    if name is not None and len(name) > _MAX_ANNOTATE_NAME_CHARS:
-        return (
-            _annotate_function_error(
-                address, f"name exceeds {_MAX_ANNOTATE_NAME_CHARS} characters"
-            ),
-            None,
-        )
-    if comment is not None and not isinstance(comment, str):
-        return _annotate_function_error(address, "comment must be a string"), None
-    if comment is not None and len(comment) > _MAX_ANNOTATE_COMMENT_CHARS:
-        return (
-            _annotate_function_error(
-                address, f"comment exceeds {_MAX_ANNOTATE_COMMENT_CHARS} characters"
-            ),
-            None,
-        )
     prototype = item.get("prototype")
-    if prototype is not None and (not isinstance(prototype, str) or not prototype):
-        return _annotate_function_error(address, "prototype must be a non-empty string"), None
-    if prototype is not None and len(prototype) > _MAX_ANNOTATE_PROTOTYPE_CHARS:
-        return (
-            _annotate_function_error(
-                address, f"prototype exceeds {_MAX_ANNOTATE_PROTOTYPE_CHARS} characters"
-            ),
-            None,
-        )
     parsed_type: object | None = None
     if prototype is not None:
         try:
             parsed_type, _ = bv.parse_type_string(prototype)
         except Exception as error:
             return _annotate_function_error(address, f"bad type: {_truncate(str(error))}"), None
+    function = functions[0]
     return (
         {"addr": hex(function.start), "ok": True},
         _AnnotationPlan(function=function, name=name, comment=comment, parsed_type=parsed_type),
@@ -161,20 +185,7 @@ def rex_annotate_many(
         if plan is not None:
             staged.append(plan)
     if staged:
-        try:
-            with bv.undoable_transaction():
-                for plan in staged:
-                    if plan.comment is not None:
-                        plan.function.comment = plan.comment
-                    if plan.parsed_type is not None:
-                        plan.function.set_user_type(plan.parsed_type)
-                    # Name last, so an explicit name has the final word on naming.
-                    if plan.name is not None:
-                        plan.function.name = plan.name
-        except Exception as error:
-            # undoable_transaction reverted the whole batch core-side before this runs;
-            # saying so keeps a caller from retrying a half-applied batch.
-            raise mcp.ToolError("annotate_failed", f"batch rolled back: {error}") from None
+        _annotate_apply_plans(bv, staged)
     applied = sum(1 for row in results if row["ok"] is True)
     # Every batch tool answers the same applied/failed_count/total summary; "failed" is
     # this tool's legacy count key, kept so existing callers do not break.

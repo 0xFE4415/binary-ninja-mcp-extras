@@ -31,6 +31,8 @@ jobs:
         run: uvx nox -s format
       - name: Ruff
         run: uvx nox -s ruff
+      - name: Size gate
+        run: uvx nox -s size
       - name: Type check
         run: uvx nox -s ty
       - name: Test

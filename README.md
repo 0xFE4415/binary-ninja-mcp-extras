@@ -165,7 +165,7 @@ On a six-figure-function database, the whole-database searches stay bounded per 
 The project uses [nox](https://nox.thea.codes/) with `uv` as the default venv backend:
 
 ```bash
-uvx nox -s check   # format, ruff, ty, and pytest with a 100% line-coverage gate
+uvx nox -s check   # format, ruff, size, ty, and pytest with a 100% line-coverage gate
 uvx nox -s test    # tests only
 uvx nox -s native  # opt-in: cargo fmt, clippy -D warnings, and tests for native/
 ```
@@ -187,7 +187,7 @@ lessons the native half already paid for, and [native/BENCH.md](native/BENCH.md)
 the live benchmark protocol.
 
 CI (`.github/workflows/check.yml`) runs three jobs: `check` (markdownlint-cli2 plus
-the format, ruff, ty, and test sessions), `native`, and `mutation` (both gates).
+the format, ruff, size, ty, and test sessions), `native`, and `mutation` (both gates).
 Markdown is linted only in CI: default rules plus MD013 at 100 characters per line,
 headings and code blocks included. Keep Markdown at or under 100 columns; the local
 `check` session will not catch it.
