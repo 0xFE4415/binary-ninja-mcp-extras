@@ -7,6 +7,12 @@ class MediumLevelILOperation(IntEnum):
     MLIL_CONST_PTR = 16
 
 
+class LowLevelILOperation(IntEnum):
+    LLIL_LOAD = 8
+    LLIL_CALL = 56
+    LLIL_TAILCALL = 58
+
+
 class AnalysisState(IntEnum):
     InitialState = 0
     HoldState = 1

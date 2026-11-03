@@ -128,6 +128,14 @@ def install_fake_binaryninja() -> None:
 
     enums_module = types.ModuleType("binaryninja.enums")
     setattr(enums_module, "AnalysisState", FakeAnalysisState)
+    setattr(
+        enums_module,
+        "LowLevelILOperation",
+        enum.IntEnum(
+            "LowLevelILOperation",
+            {"LLIL_CALL": 56, "LLIL_TAILCALL": 58, "LLIL_LOAD": 8},
+        ),
+    )
 
     package = types.ModuleType("binaryninja")
     setattr(package, "mcp", mcp_module)
@@ -361,6 +369,7 @@ class FakeBinaryView:
         arch: FakeArchitecture | None = None,
         library_types: dict[str, str | None] | None = None,
         code_refs: dict[int, list[FakeReferenceSource]] | None = None,
+        data_refs: dict[int, list[int]] | None = None,
         types: dict[str, FakeType] | None = None,
         structure: FakeStructureType | None = None,
         defined_type_name: str | None = None,
@@ -417,6 +426,9 @@ class FakeBinaryView:
         # Address -> code refs pointing at it, answered by get_code_refs.
         self._code_refs = code_refs or {}
         self.code_ref_requests: list[tuple[int, int | None]] = []
+        # Address -> data-ref source addresses, answered by get_data_refs.
+        self._data_refs = data_refs or {}
+        self.data_ref_requests: list[tuple[int, int | None]] = []
         self._types = types or {}
         self._structure = structure
         self._defined_type_name = defined_type_name
@@ -643,6 +655,16 @@ class FakeBinaryView:
             refs = refs[:max_items]
         yield from refs
 
+    def get_data_refs(
+        self, addr: int, length: int | None = None, max_items: int | None = None
+    ) -> Iterator[int]:
+        # Same bounding contract as get_code_refs above.
+        self.data_ref_requests.append((addr, max_items))
+        refs = list(self._data_refs.get(addr, []))
+        if max_items is not None:
+            refs = refs[:max_items]
+        yield from refs
+
     @property
     def root_component(self) -> FakeComponent:
         return self._component_root
@@ -830,11 +852,30 @@ class FakeDerivedString:
 
 
 class FakeReferenceSource:
-    """Mirrors the binaryninja.binaryview.ReferenceSource fields the tools read."""
+    """Mirrors the binaryninja.binaryview.ReferenceSource fields the tools read.
 
-    def __init__(self, function: FakeFunction | None, address: int) -> None:
+    ``arch`` is the architecture name, ``llil_operation`` the operation of the LLIL
+    instruction at the reference site; the real ``llil`` property is None without a
+    function or arch, or when no instruction exists at the address.
+    """
+
+    def __init__(
+        self,
+        function: FakeFunction | None,
+        address: int,
+        arch: str | None = None,
+        llil_operation: int | None = None,
+    ) -> None:
         self.function = function
+        self.arch = None if arch is None else FakeArchitecture(arch)
         self.address = address
+        self._llil_operation = llil_operation
+
+    @property
+    def llil(self) -> object | None:
+        if self.function is None or self.arch is None or self._llil_operation is None:
+            return None
+        return types.SimpleNamespace(operation=self._llil_operation)
 
 
 class FakeComponent:
