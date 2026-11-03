@@ -81,6 +81,7 @@ mod tests {
         // Python test_data_find_finds_matches_across_chunk_boundaries analog.
         let view = FakeView {
             segments: vec![(0x1000, 0x1008)],
+            unreadable_segments: Vec::new(),
             runs: vec![(0x1000, b"\x00\x00\x33\xeb\x00\x00\x33\xeb".to_vec())],
         };
         let pattern = HexPattern::parse("33 eb").unwrap();
@@ -106,6 +107,7 @@ mod tests {
         };
         let straddle = FakeView {
             segments: vec![(0x1000, 0x1008)],
+            unreadable_segments: Vec::new(),
             runs: vec![(0x1000, b"\x00\x00\x00\x33\xeb\x00\x00\x00".to_vec())],
         };
         let running = scan_fake_view(&straddle, 4, None, 1, &pattern, &page);
@@ -114,6 +116,7 @@ mod tests {
 
         let boundary = FakeView {
             segments: vec![(0x1000, 0x1008)],
+            unreadable_segments: Vec::new(),
             runs: vec![(0x1000, b"\x00\x00\x00\x00\x33\xeb\x00\x00".to_vec())],
         };
         let running = scan_fake_view(&boundary, 4, None, 1, &pattern, &page);
@@ -127,6 +130,7 @@ mod tests {
     fn recovers_matches_after_short_and_empty_reads() {
         let view = FakeView {
             segments: vec![(0x2000, 0x2010)],
+            unreadable_segments: Vec::new(),
             runs: vec![
                 (0x2000, b"\x90\x90".to_vec()), // short read: 2 of 5 requested
                 (0x2008, b"\x33\xeb".to_vec()), // match after the hole
@@ -142,6 +146,30 @@ mod tests {
         assert_eq!(running.matches, vec![0x2008]);
     }
 
+    // A segment whose readability flag is off must be skipped up front: even with
+    // bytes present under it, the walk opens zero windows on it (the Python
+    // test_data_find_skips_unreadable_segments analog, flag-modeled).
+    #[test]
+    fn unreadable_segments_are_skipped_up_front() {
+        let pattern = HexPattern::parse("33 eb").unwrap();
+        let page = Pagination {
+            offset: 0,
+            limit: 50,
+        };
+        let view = FakeView {
+            segments: vec![(0x1000, 0x1008), (0x2000, 0x2008)],
+            unreadable_segments: vec![(0x1000, 0x1008)],
+            runs: vec![
+                (0x1000, b"\x33\xeb\x33\xeb\x33\xeb\x33\xeb".to_vec()),
+                (0x2000, b"\x33\xeb\x00\x00\x00\x00\x00\x00".to_vec()),
+            ],
+        };
+        let running = scan_fake_view(&view, 4, None, 1, &pattern, &page);
+        // Only the readable segment is walked; the unreadable one contributes nothing.
+        assert_eq!(running.total, 1);
+        assert_eq!(running.matches, vec![0x2000]);
+    }
+
     #[test]
     fn limit_at_the_cap_through_the_scan_path() {
         // Python test_data_find_caps_limit analog: exactly at the cap the
@@ -149,6 +177,7 @@ mod tests {
         // READ_CHUNK), and the scan stops one match past the window.
         let view = FakeView {
             segments: vec![(0x1000, 0x1000 + 600)],
+            unreadable_segments: Vec::new(),
             runs: vec![(0x1000, vec![0x90; 600])],
         };
         let pattern = HexPattern::parse("90").unwrap();
@@ -176,6 +205,7 @@ mod tests {
             let segment = (0x2000, 0x2000 + (blob_len.max(1)) as u64);
             let view = FakeView {
                 segments: vec![segment],
+                unreadable_segments: Vec::new(),
                 runs: vec![(0x2000, blob)],
             };
             let pat_len = 1 + (next() % 3) as usize;

@@ -28,7 +28,9 @@ where
 /// Read surface for the chunked walk — a local seam so tests can drive
 /// `for_each_segment` without the BinaryView FFI, which cannot run outside the core.
 pub(super) trait ChunkedReadView {
-    /// Ascending, non-overlapping readable address ranges.
+    /// Ascending, non-overlapping readable address ranges: segments whose
+    /// readability flag is off are dropped at the source, so the walk never
+    /// opens a window on them (holes inside a reported range still short-read).
     fn segment_ranges(&self) -> Vec<(u64, u64)>;
     /// Fill `buffer` from `position`, returning the bytes actually read —
     /// fewer than requested (or none) at an unreadable hole.
@@ -39,6 +41,9 @@ impl ChunkedReadView for BinaryView {
     fn segment_ranges(&self) -> Vec<(u64, u64)> {
         self.segments()
             .iter()
+            // Segment::readable() is the core's readability flag for the segment's
+            // range; skipping here saves the whole walk, not just the reads.
+            .filter(|segment| segment.readable())
             .map(|segment| {
                 let range = segment.address_range();
                 (range.start, range.end)
@@ -51,8 +56,8 @@ impl ChunkedReadView for BinaryView {
     }
 }
 
-/// Read every mapped segment (clipped to `bounds`) through the window walk,
-/// feeding `step` each window's base address and the bytes actually read.
+/// Read every readable mapped segment (clipped to `bounds`) through the window
+/// walk, feeding `step` each window's base address and the bytes actually read.
 /// Returns `false` as soon as `step` declines a window.
 pub(super) fn for_each_segment<V: ChunkedReadView, F>(
     view: &V,

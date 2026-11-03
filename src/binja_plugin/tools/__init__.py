@@ -176,6 +176,10 @@ def _iter_pattern_matches(
 ) -> Iterator[int]:
     """Yield absolute match addresses, optionally clipped to a section range."""
     for segment in bv.segments:
+        # binaryview.Segment.readable is the view's readability for the segment's range
+        # (the SegmentFlag bit); skipping here saves the whole walk, not just the reads.
+        if not segment.readable:
+            continue
         start, end = int(segment.start), segment.start + segment.length
         if bounds is not None:
             start = max(start, bounds[0])
