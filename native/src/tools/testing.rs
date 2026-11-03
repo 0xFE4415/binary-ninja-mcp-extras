@@ -8,15 +8,23 @@ use crate::scan::{Pagination, RunningScan, scan_pattern};
 
 /// A tiny stand-in for BinaryView: ascending, non-overlapping readable runs;
 /// a read returns the contiguous bytes available from `position` — the short
-/// or empty read an unreadable hole produces.
+/// or empty read an unreadable hole produces. Segments listed in
+/// `unreadable_segments` model the readability flag off: they are reported
+/// unreadable even when `runs` still answers reads inside them, mirroring the
+/// real view's flag-driven skip.
 pub(super) struct FakeView {
     pub(super) segments: Vec<(u64, u64)>,
+    pub(super) unreadable_segments: Vec<(u64, u64)>,
     pub(super) runs: Vec<(u64, Vec<u8>)>,
 }
 
 impl ChunkedReadView for FakeView {
     fn segment_ranges(&self) -> Vec<(u64, u64)> {
-        self.segments.clone()
+        self.segments
+            .iter()
+            .filter(|range| !self.unreadable_segments.contains(range))
+            .copied()
+            .collect()
     }
 
     fn read_into(&self, buffer: &mut [u8], position: u64) -> usize {

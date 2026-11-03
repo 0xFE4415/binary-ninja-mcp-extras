@@ -70,6 +70,26 @@ def test_export_disasm_caps_the_window_at_max_lines(
     assert edge["truncated"] is True
 
 
+def test_fit_to_export_cap_keeps_the_largest_fitting_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def serialize(selected: list[str]) -> str:
+        return "".join(selected)
+
+    rows = ["x" * 10, "y" * 10, "z" * 10, "w" * 10]
+    monkeypatch.setattr(tools, "_MAX_EXPORT_FILE_BYTES", 21)
+    window = list(rows)
+    text, dropped = tools._fit_to_export_cap(serialize, window)
+    assert text == rows[0] + rows[1]
+    assert dropped is True
+    assert window == [rows[0], rows[1]]
+
+    monkeypatch.setattr(tools, "_MAX_EXPORT_FILE_BYTES", 40)
+    window = list(rows)
+    assert tools._fit_to_export_cap(serialize, window) == (serialize(rows), False)
+    assert window == rows
+
+
 def test_export_disasm_shrinks_to_the_byte_cap(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

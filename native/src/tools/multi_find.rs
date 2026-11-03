@@ -152,6 +152,7 @@ mod tests {
         let mut buckets = vec![RunningScan::new(), RunningScan::new()];
         let view = FakeView {
             segments: vec![(0x1000, 0x1008)],
+            unreadable_segments: Vec::new(),
             runs: vec![(0x1000, b"\x00\x00\x00\x33\xeb\x00\x00\x00".to_vec())],
         };
         let page = Pagination {
@@ -186,6 +187,7 @@ mod tests {
         // the same addresses fit one window each.
         let view = FakeView {
             segments: vec![(0x1000, 0x1010)],
+            unreadable_segments: Vec::new(),
             runs: vec![(
                 0x1000,
                 b"\x00\x00\x00\x00\x33\xeb\x00\x00\x00\x33\xeb\x00\x00\x00\x00\x00".to_vec(),
