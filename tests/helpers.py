@@ -150,9 +150,11 @@ def install_fake_binaryninja() -> None:
 
 
 class FakeSegment:
-    def __init__(self, start: int, length: int) -> None:
+    def __init__(self, start: int, length: int, readable: bool = True) -> None:
         self.start = start
         self.length = length
+        # Mirrors binaryview.Segment.readable (the SegmentFlag readability bit).
+        self.readable = readable
 
 
 class FakeStringReference:

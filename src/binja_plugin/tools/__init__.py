@@ -176,16 +176,22 @@ def _iter_pattern_matches(
 ) -> Iterator[int]:
     """Yield absolute match addresses, optionally clipped to a section range."""
     for segment in bv.segments:
+        # binaryview.Segment.readable is the view's readability for the segment's range
+        # (the SegmentFlag bit); skipping here saves the whole walk, not just the reads.
+        if not segment.readable:
+            continue
         start, end = int(segment.start), segment.start + segment.length
         if bounds is not None:
             start = max(start, bounds[0])
             end = min(end, bounds[1])
         position = start
+        read = bv.read
+        finditer = matcher.finditer
         while position < end:
             read_size = min(_READ_CHUNK + pattern_length - 1, end - position)
-            chunk = bv.read(position, read_size)
+            chunk = read(position, read_size)
             if chunk:
-                for match in matcher.finditer(chunk):
+                for match in finditer(chunk):
                     yield position + match.start()
             position += _READ_CHUNK
 
@@ -209,7 +215,7 @@ def _render_function_disassembly(function: Any) -> list[tuple[int, str]]:
         for line in block.get_disassembly_text():
             # Unaddressed continuation lines cannot anchor or be reported by address.
             if line.address is not None:
-                lines.append((line.address, "".join(str(token) for token in line.tokens)))
+                lines.append((line.address, "".join(map(str, line.tokens))))
     lines.sort(key=lambda entry: entry[0])
     return lines
 
@@ -291,13 +297,18 @@ def _fit_to_export_cap[ExportRow](
     """Serialize a result window, dropping trailing entries until it fits the byte cap."""
     if window and len(serialize(window[:1]).encode("utf-8")) > _MAX_EXPORT_FILE_BYTES:
         raise mcp.ToolError("export_failed", "first entry exceeds the export byte cap")
-    dropped = False
-    while True:
-        text = serialize(window)
-        if len(text.encode("utf-8")) <= _MAX_EXPORT_FILE_BYTES:
-            return text, dropped
-        del window[-1]
-        dropped = True
+    text = serialize(window)
+    if len(text.encode("utf-8")) <= _MAX_EXPORT_FILE_BYTES:
+        return text, False
+    low, high = 1, len(window) - 1
+    while low < high:
+        mid = (low + high + 1) // 2
+        if len(serialize(window[:mid]).encode("utf-8")) <= _MAX_EXPORT_FILE_BYTES:
+            low = mid
+        else:
+            high = mid - 1
+    del window[low:]
+    return serialize(window), True
 
 
 # The category modules import the shared helpers defined above from this namespace, so

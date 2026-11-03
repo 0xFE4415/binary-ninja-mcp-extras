@@ -43,6 +43,10 @@ _MAIN_FALLBACK_NOTE = (
     "no main symbol and no parsable __libc_start_main pointer in the entry function"
 )
 
+# Precompiled once: _argument_address runs per rendered call argument, so the compiled
+# pattern must not go through the re-module cache on every call.
+_HEX_ADDRESS_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
+
 
 def _render_hlil_lines(hlil: Any, max_lines: int) -> tuple[list[str], bool]:
     """Render a function's HLIL to at most ``max_lines`` truncated lines."""
@@ -71,7 +75,7 @@ def _argument_address(call: mcp.ToolCall, argument: str | None) -> int | None:
     """Resolve a rendered HLIL argument token to an address, or None."""
     if argument is None:
         return None
-    hex_match = re.search(r"0x[0-9a-fA-F]+", argument)
+    hex_match = _HEX_ADDRESS_PATTERN.search(argument)
     if hex_match is not None:
         return int(hex_match.group(0), 16)
     try:
@@ -197,6 +201,7 @@ def rex_hlil_grep(
     context_after = _validate_range("context_after", context_after, 0, _MAX_HLIL_GREP_CONTEXT)
     matcher = _compile_user_regex(regex)
     name_matcher = _name_filter(function_filter)
+    search = matcher.search
     matches: list[dict[str, object]] = []
     scanned = 0
     truncated = False
@@ -213,9 +218,7 @@ def rex_hlil_grep(
             continue
         scanned += 1
         source_lines = str(hlil).splitlines()
-        matched = [
-            line_index for line_index, line in enumerate(source_lines) if matcher.search(line)
-        ]
+        matched = [line_index for line_index, line in enumerate(source_lines) if search(line)]
         if matched:
             if context_before == 0 and context_after == 0:
                 lines = [_truncate(source_lines[match_index]) for match_index in matched[:3]]

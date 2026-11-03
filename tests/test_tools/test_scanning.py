@@ -164,6 +164,32 @@ def test_data_find_skips_unreadable_segments() -> None:
     assert find(_call(view), pattern="ff")["total"] == 0
 
 
+def test_data_find_skips_segments_marked_unreadable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tools, "_READ_CHUNK", 4)
+    # The segment flag says unreadable even though bytes answer reads there: the scan
+    # must skip the segment up front instead of relying on short-read recovery — and
+    # must keep scanning the segments after it (a break there would lose 0x2000).
+    skipped = SpyBinaryView(
+        segments=[FakeSegment(0x1000, 8, readable=False), FakeSegment(0x2000, 8)],
+        memory={0x1000: b"\xeb\x0e" * 4, 0x2000: b"\xeb\x0e\x90\x90\x90\x90\x90\x90"},
+    )
+    _, find = get_tool("rex_data_find")
+    assert find(_call(skipped), pattern="eb0e")["total"] == 1
+    assert skipped.read_addresses == [0x2000, 0x2004]
+    # Both scan tools go through the same segment walk: rex_find_functions_by_pattern
+    # must skip the unreadable segment too.
+    functioned = FakeBinaryView(
+        segments=[FakeSegment(0x1000, 8, readable=False), FakeSegment(0x2000, 8)],
+        memory={0x1000: b"\xeb\x0e" * 4, 0x2000: b"\xeb\x0e\x90\x90\x90\x90\x90\x90"},
+        functions=[FakeFunction("f", 0x2000, 0x2100)],
+    )
+    _, by_function = get_tool("rex_find_functions_by_pattern")
+    assert by_function(_call(functioned), "eb0e") == {
+        "truncated": False,
+        "functions": [{"start": "0x2000", "name": "f", "match_count": 1, "addresses": ["0x2000"]}],
+    }
+
+
 def test_data_find_reports_an_invalid_pattern_before_a_missing_section() -> None:
     _, find = get_tool("rex_data_find")
     with pytest.raises(FakeToolError) as exc:
