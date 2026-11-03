@@ -39,26 +39,10 @@ def rex_export_disasm(
 ) -> dict[str, object]:
     """Export one analyzed function's disassembly window to a file.
 
-    Anti-flood export: the rendered lines are written to disk and the response echoes
-    only ``path``, ``bytes_written``, ``lines`` and ``truncated`` — never the
-    disassembly text itself, so a large sweep cannot flood the MCP response. Address
-    handling matches rex_disasm_at exactly: the window is anchored at the instruction
-    containing ``address``, clipped at the containing function's edges, and an address
-    outside every analyzed function is rejected rather than snapped to the nearest one.
-
-    Accepted cost: the render materializes the whole function's disassembly lines in
-    memory before the ``max_lines`` cap and the export byte cap apply — the same cost
-    class as the existing echo tools. Each file line is the rendered instruction text
-    (the ``text`` field rex_disasm_at echoes), one instruction per line, LF endings.
-    ``truncated`` is true unless the file holds every rendered addressed line of the
-    containing function: lines were left out by the before/after window, ``max_lines``,
-    or the byte cap.
-
-    :param address: Address expression inside the target function; accepts hex like
-        0x401000, symbols, and Binary Ninja expressions.
-    :param before: Instructions to include before the anchor (0 to 64).
-    :param after: Instructions to include after the anchor (0 to 64).
-    :param max_lines: Maximum number of lines to export (1 to 400).
+    :param address: Address expression inside the target function.
+    :param before: Instructions to include before the anchor.
+    :param after: Instructions to include after the anchor.
+    :param max_lines: Maximum lines to export.
     :param filename: Plain file name inside the export root; overwritten if it exists.
     """
     bv = call.binary_view
@@ -94,28 +78,10 @@ def rex_export_symbols(
 ) -> dict[str, object]:
     """Export the symbols in an address range to a file.
 
-    Anti-flood export: symbols are written to disk and the response echoes only
-    ``path``, ``bytes_written``, ``rows``, ``total`` and ``truncated`` — never the
-    symbol table itself. Symbols come from the core's range query
-    (``bv.get_symbols(start, length)``), are sorted by address ascending, and ``total``
-    is the exact count in ``[start, end)``; the window is ``offset`` to
-    ``offset + limit`` of that sorted list.
-
-    The sort-then-slice here is a deliberate divergence from the early-stop pagination
-    of the string search tools: an export file must contain the true window of the
-    sorted listing, not an unsorted first-fit subset, and the range query already bounds
-    the enumeration cost.
-
-    CSV rows are ``symbol_address,symbol_type,name`` with commas in names quoted by the
-    csv module; JSON is an indented array of the window's rows. Both are written UTF-8
-    with LF endings. ``truncated`` is true when the window was clipped by
-    ``offset``/``limit`` or when rows were dropped from its end to fit the export byte
-    cap.
-
-    :param start: Start of the address range (inclusive, >= 0).
-    :param end: End of the address range (exclusive); must be greater than ``start``.
-    :param limit: Maximum number of symbols to export (0 to 2000).
-    :param offset: Number of sorted symbols to skip before the window starts (>= 0).
+    :param start: Start of the address range, inclusive.
+    :param end: End of the address range, exclusive; must be greater than ``start``.
+    :param limit: Maximum symbols to export.
+    :param offset: Sorted symbols to skip before the window starts.
     :param format: Output format, "csv" or "json".
     :param filename: Plain file name inside the export root; overwritten if it exists.
     """
@@ -133,7 +99,7 @@ def rex_export_symbols(
         raise mcp.ToolError("invalid_params", f"format must be 'csv' or 'json', not '{requested}'")
     symbols = bv.get_symbols(start, end - start)
     # Core symbol order is not guaranteed sorted; sort before slicing so the file holds
-    # a true window of the address-ordered listing (see the docstring above).
+    # a true window of the address-ordered listing, not an unsorted first-fit subset.
     ordered = sorted(symbols, key=lambda symbol: symbol.address)
     total = len(ordered)
     window = [

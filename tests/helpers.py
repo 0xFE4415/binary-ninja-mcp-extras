@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import enum
+import inspect
+import re
 import sys
 import types
 from collections.abc import Callable, Generator, Iterator
@@ -25,7 +27,26 @@ class FakeToolError(Exception):
 
 def _fake_tool(name: str | None = None, **options: object):
     def decorate(function: Any) -> Any:
-        REGISTERED_TOOLS.append((name or function.__name__, options, function))
+        tool_name = name or function.__name__
+        # The real binaryninja.mcp.tool refuses to register a tool whose docstring has no
+        # leading paragraph or whose parameters lack :param: lines, raising these same
+        # TypeErrors at decoration time (installed mcp.py). Mirroring both checks keeps a
+        # docstring strip that would kill real registration from passing these gates
+        # against the fake.
+        text = inspect.cleandoc(function.__doc__ or "")
+        summary = re.split(r"\n\s*\n|\n(?=:)", text, maxsplit=1)[0]
+        if not " ".join(line.strip() for line in summary.splitlines()):
+            raise TypeError(f"MCP tool '{tool_name}' needs a docstring describing it")
+        described = {
+            match.group(1) for match in re.finditer(r"^:param\s+(\w+):", text, re.MULTILINE)
+        }
+        for parameter in list(inspect.signature(function).parameters)[1:]:
+            if parameter not in described:
+                raise TypeError(
+                    f"MCP tool '{function.__name__}': parameter '{parameter}' "
+                    f"needs a ':param {parameter}:' description"
+                )
+        REGISTERED_TOOLS.append((tool_name, options, function))
         return function
 
     return decorate
@@ -511,7 +532,8 @@ class FakeBinaryView:
         ``BinaryView.undoable_transaction`` as creating "an Undo state containing those
         actions" (binaryview.py:5114-5117), so rex_undo reversing a committed batch is
         modelable here. Operations the API does not document as undoable (tag, metadata,
-        type-library writes) push nothing, matching the rex_undo docstring's provenance.
+        type-library writes) push nothing, matching the provenance note on the undo tools
+        in binja_plugin/tools/state.py.
         """
         self.transactions.append("open")
         try:

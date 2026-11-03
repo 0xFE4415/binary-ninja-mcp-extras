@@ -58,20 +58,10 @@ def rex_constant_find(
 ) -> dict[str, object]:
     """Find functions whose rendered instructions reference an immediate constant value.
 
-    Uses the core's linear-view constant search (the engine behind Search > For
-    Constant), so the core renders each function's instruction text once instead of
-    this tool generating IL for every function. A constant counts as referenced when
-    an instruction line of the function displays it as a constant or pointer token;
-    lines outside any function are ignored. The scan stops as soon as the requested
-    result window is known to be complete, and a full view sweep — the worst case,
-    reached only when ``value`` never appears — stays a bounded, core-side pass.
-    Each function reports at most the first 6 matching addresses.
-
-    :param value: Immediate value to search for, e.g. 31337 or 65534; compared
-        against displayed (unsigned) constants, so 0 to 2**64 - 1.
-    :param function_filter: Case-insensitive regular expression matched against function names.
-    :param limit: Maximum number of matching functions to return (0 to 500).
-    :param offset: Number of matching functions to skip before collecting results (>= 0).
+    :param value: Immediate value to search for, compared against displayed constants.
+    :param function_filter: Case-insensitive regex matched against function names.
+    :param limit: Maximum matching functions to return.
+    :param offset: Matching functions to skip before collecting results.
     """
     bv = call.binary_view
     value = _validate_range("value", value, 0, _MAX_CONSTANT_VALUE)
@@ -127,8 +117,8 @@ def rex_data_find(
 
     :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; "??" matches any single byte.
     :param section: Only search within this section.
-    :param limit: Maximum number of matches to return (0 to 500).
-    :param offset: Number of matches to skip before collecting results (>= 0).
+    :param limit: Maximum matches to return.
+    :param offset: Matches to skip before collecting results.
     """
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
@@ -151,18 +141,9 @@ def rex_find_functions_by_pattern(
 ) -> dict[str, object]:
     """Which functions contain a byte pattern.
 
-    Scans mapped memory rex_data_find-style (chunked reads overlapping by
-    pattern_length - 1, so straddling matches are found exactly once) and maps every
-    match to the analyzed function containing it. Matches in data or in gaps between
-    functions are ignored. Functions are reported in first-match order with a true
-    match count and up to 5 example addresses; an empty result is a valid empty list,
-    not an error. Like rex_data_find, the scan stops at the first function past the
-    requested window, so when ``truncated`` is true the counts near the end of the
-    result can be incomplete.
-
     :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; "??" matches any single byte.
-    :param limit: Maximum number of matching functions to return (0 to 500).
-    :param offset: Number of matching functions to skip before collecting results (>= 0).
+    :param limit: Maximum matching functions to return.
+    :param offset: Matching functions to skip before collecting results.
     """
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)

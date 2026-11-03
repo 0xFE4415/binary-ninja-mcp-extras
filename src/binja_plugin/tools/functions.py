@@ -28,9 +28,9 @@ def rex_call_paths(
 
     :param from_addr: Address inside the starting function.
     :param to_addr: Address inside the target function.
-    :param direction: Walk "callers" edges (what reaches the target) or "callees" edges.
-    :param max_depth: Maximum number of edges to walk from the starting function (1 to 16).
-    :param max_paths: Maximum number of paths to return (1 to 50).
+    :param direction: "callers" walks the edges reaching the target, "callees" the edges leaving.
+    :param max_depth: Maximum edges walked from the starting function.
+    :param max_paths: Maximum paths returned.
     """
     bv = call.binary_view
     max_depth = _validate_range("max_depth", max_depth, 1, _MAX_CALL_PATH_DEPTH)

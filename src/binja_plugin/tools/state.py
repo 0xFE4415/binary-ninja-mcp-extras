@@ -30,7 +30,11 @@ _METADATA_PREFIX = "rex/"
 _TAG_ICON = "\u25c6"
 
 # rex_undo/rex_redo echo post-operation stack depths (never the entry text) so an agent
-# can stop when the depth stops changing.
+# can stop when the depth stops changing. The stack is the file's undo database, shared
+# with the GUI user. Which plugin writes leave an undo entry is documented only for
+# rex_annotate_many (one batch = one entry); tag/metadata/type-library/memory writes are
+# undocumented in the API source, so settle each with a one-call undo_left experiment on
+# a live core before relying on rollback.
 
 
 def _require_key(key: str) -> None:
@@ -41,11 +45,7 @@ def _require_key(key: str) -> None:
 def _run_undo_stack_step(
     call: mcp.ToolCall, step: Callable[[], None], failed_code: str, verb: str, done: str
 ) -> dict[str, object]:
-    """Shared body of rex_undo and rex_redo: run one undo-database step, echo the depths.
-
-    The depths are read after the step, so a caller can stop when ``undo_left`` stops
-    changing; an empty stack is a core-side no-op, not an error.
-    """
+    """Shared body of rex_undo and rex_redo: run one undo-database step, echo the depths."""
     try:
         step()
     except Exception as error:
@@ -87,8 +87,6 @@ def rex_kv_get(call: mcp.ToolCall, key: str) -> dict[str, object]:
 def rex_kv_set(call: mcp.ToolCall, key: str, value: str) -> dict[str, object]:
     """Store a string in the binary view database as persistent scratch data.
 
-    Values are stored under the "rex/" metadata namespace and survive across sessions.
-
     :param key: Key to store under.
     :param value: String value to store.
     """
@@ -105,13 +103,7 @@ def rex_kv_set(call: mcp.ToolCall, key: str, value: str) -> dict[str, object]:
 
 @mcp.tool(destructive=True)
 def rex_redo(call: mcp.ToolCall) -> dict[str, object]:
-    """Redo the last undone transaction in the view's undo database.
-
-    The counterpart of rex_undo: re-applies the entry rex_undo most recently took off
-    the undo stack. The stack is shared with the GUI user, so this may redo their last
-    undone edit too. An empty stack is a core-side no-op, not an error; the
-    post-operation depths report the state the caller lands in.
-    """
+    """Redo the last undone transaction in the view's undo database."""
     return _run_undo_stack_step(call, call.binary_view.redo, "redo_failed", "redo", "redone")
 
 
@@ -123,20 +115,8 @@ def rex_report_show(
 ) -> dict[str, object]:
     """Render a markdown triage report inside Binary Ninja.
 
-    Opens Binary Ninja's markdown report viewer on this view, so report text can link
-    back into the analysis with ``binaryninja://?expr=`` hyperlinks (e.g.
-    ``[main](binaryninja://?expr=main)``). Read-only: nothing in the view, database, or
-    filesystem changes — the report is presentation only. The markdown is also passed as
-    the API's plaintext fallback, so command-line hosts (where the viewer degrades to
-    plain text) still show the report instead of dropping it silently. Title and markdown
-    are size-capped and rejected beyond the cap, never clipped: the core receives both as
-    single unbounded strings and the title names the report tab. The response echoes only
-    a capped preview of the markdown, so an overlarge report can never flood the MCP
-    response either.
-
     :param title: Title displayed on the report tab.
-    :param markdown: Markdown contents to render; ``binaryninja://?expr=...`` links into
-        the active Binary View.
+    :param markdown: Markdown to render; ``binaryninja://?expr=...`` links into the view.
     """
     bv = call.binary_view
     _validate_text("title", title, _MAX_REPORT_TITLE_CHARS, "title_too_large")
@@ -157,8 +137,8 @@ def rex_tag_list(
 ) -> dict[str, object]:
     """List the tags set on the binary view.
 
-    :param limit: Maximum number of tags to return (0 to 500).
-    :param offset: Number of tags to skip before collecting results (>= 0).
+    :param limit: Maximum tags to return.
+    :param offset: Tags to skip before collecting results.
     """
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
@@ -188,7 +168,7 @@ def rex_tag_set(
 ) -> dict[str, object]:
     """Attach a Binary Ninja tag at an address, visible in the GUI.
 
-    :param addr: Address to tag; accepts expressions like "main" or ".text + 0x10".
+    :param addr: Address expression to tag, e.g. "main" or ".text + 0x10".
     :param tag_type: Tag type name, e.g. "Crashes" or "Finding".
     :param data: Tag text.
     :param create_missing: Create tag_type when it does not exist yet.
@@ -218,33 +198,5 @@ def rex_tag_set(
 
 @mcp.tool(destructive=True)
 def rex_undo(call: mcp.ToolCall) -> dict[str, object]:
-    """Undo the last committed transaction in the view's undo database.
-
-    The rollback for the plugin's destructive tools. The undo database belongs to the
-    file, so the stack is shared with the GUI user and this may roll back their most
-    recent edit too. An empty stack is a core-side no-op, not an error — the
-    post-operation ``undo_left``/``redo_left`` depths let a caller stop when
-    ``undo_left`` stops changing.
-
-    Which plugin operations leave an undo entry, per the installed API source (what the
-    docstrings there document, not a live observation):
-
-    - rex_annotate_many: yes. Its batch commits inside ``BinaryView.undoable_transaction``,
-      which the API documents as creating "an Undo state containing those actions" —
-      so one batch is one entry, and this tool reverses it whole.
-    - rex_tag_set: not documented. The API documents the removal direction only
-      (``BinaryView.remove_user_data_tag`` and the Function counterparts: "will be
-      added to the current undo buffer"); ``BinaryView.add_tag``, which rex_tag_set
-      calls, says nothing about undo.
-    - rex_kv_set: not documented. ``store_metadata`` documents only its BNDB snapshot
-      persistence flags and says nothing about undo entries.
-    - rex_type_library_import: not documented. Neither ``add_type_library`` nor
-      ``import_library_type`` mentions undo.
-    - rex_memory_write: not documented. ``BinaryView.write`` says nothing about undo,
-      so whether a bare write outside a transaction is undoable is unknown here too.
-
-    The undocumented four need a live Binary Ninja to settle. The depths make that a
-    one-call experiment per operation: read ``undo_left`` before and after the
-    interleaved write — a depth change means this tool would roll it back.
-    """
+    """Undo the last committed transaction in the view's undo database."""
     return _run_undo_stack_step(call, call.binary_view.undo, "undo_failed", "undo", "undone")

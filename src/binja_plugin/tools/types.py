@@ -30,12 +30,7 @@ _STRUCT_TYPE_SOURCE = "rex_struct"
 
 
 def _validate_type_names(names: list[str]) -> list[str]:
-    """Range-check a caller-supplied list of type names, rejecting instead of normalizing.
-
-    Shared by the import and export type-library tools; the list cap bounds one call's
-    type-system work (each import can recursively pull in dependency libraries), and the
-    per-name cap covers names that end up persisted in the type database or the .bntl.
-    """
+    """Range-check a caller-supplied list of type names, rejecting instead of normalizing."""
     if not isinstance(names, list):
         raise mcp.ToolError("invalid_params", "names must be a list of type names")
     if not 1 <= len(names) <= _MAX_TYPE_LIBRARY_NAMES:
@@ -54,20 +49,7 @@ def _validate_type_names(names: list[str]) -> list[str]:
 def rex_struct_from_access(call: mcp.ToolCall, name: str) -> dict[str, object]:
     """Infer and define a struct from the view's recorded offset accesses.
 
-    Runs the same core call behind Binary Ninja's "Create Structure" action
-    (``bv.create_structure_from_offset_access``): the core infers the members from the
-    offset accesses recorded in the view, no C source is authored. The resulting struct
-    is then defined in the view under an auto type id derived from this tool's source
-    marker and ``name`` (``Type.generate_auto_type_id``), so a repeated call with the
-    same name replaces the earlier auto type; user types are never overwritten (the core
-    deconflicts the registered name, echoed back as ``registered``).
-
-    When the core has no usable accesses for ``name`` it refuses to build a structure
-    and the call fails with ``create_failed`` — an empty struct is only echoed if the
-    core actually hands one back. At most 128 members are echoed, with ``member_count``
-    and ``truncated`` covering the rest.
-
-    :param name: Name for the new structure (1 to 255 characters).
+    :param name: Name for the new structure.
     """
     bv = call.binary_view
     # The plugin's per-parameter *_too_large string-cap code family.
@@ -109,22 +91,9 @@ def rex_type_library_export(
 ) -> dict[str, object]:
     """Export recovered types or objects into a new .bntl in the export root.
 
-    Creates an empty type library named ``library_name`` bound to this view's
-    architecture, resolves each requested name in the view and recursively exports it as
-    a plain type (``kind="types"``) or as a named object such as a function signature
-    (``kind="objects"``). Referenced types are copied in or recorded as dependencies by
-    the core. Names not present in the view are reported per-name under ``failed``; the
-    rest still export, and the uniform batch summary (``applied``/``failed_count``/
-    ``total``, shared with the other batch tools) counts both sides. The library is
-    finalized and written through the same export-root
-    discipline as rex_export_disasm: validated plain filename, fixed root, and the same
-    byte cap — the core serializes the .bntl itself, so the size is only known after the
-    write, and an over-cap file is removed rather than left behind.
-
-    :param library_name: Name for the new type library (1 to 255 characters).
-    :param names: Type names to export from the view; 1 to 64 entries.
-    :param kind: Export entries as "types" (type definitions) or "objects"
-        (named functions/variables).
+    :param library_name: Name for the new type library.
+    :param names: 1 to 64 type names to export from the view.
+    :param kind: Export type definitions ("types") or named objects ("objects").
     :param filename: Plain file name inside the export root; overwritten if it exists.
     """
     bv = call.binary_view
@@ -192,22 +161,8 @@ def rex_type_library_export(
 def rex_type_library_import(call: mcp.ToolCall, path: str, names: list[str]) -> dict[str, object]:
     """Import types from a .bntl into the current binary view.
 
-    Loads the type library file, attaches it to the view (``bv.add_type_library``, making
-    its contents available for type/import resolution) and imports each requested name
-    (``bv.import_library_type``), which recursively pulls in dependency libraries the
-    types reference. Importing a name defines it in the view as an auto type, so this is
-    additive: on a name conflict the core deconflicts rather than overwriting, and the
-    response's ``resolved`` field carries the name actually inserted, which may differ
-    from the requested one. A name the library does not provide is reported per-name
-    under ``failed`` — the other names still import, and the uniform batch summary
-    (``applied``/``failed_count``/``total``, shared with the other batch tools) counts
-    both sides.
-
-    Reads whatever path the caller supplies; only the type-system state of the view
-    changes. Bounded: 1 to 64 names per call, each at most 255 characters.
-
     :param path: Filesystem path of the .bntl file to load.
-    :param names: Type names to import from the library; 1 to 64 entries.
+    :param names: 1 to 64 type names to import from the library.
     """
     bv = call.binary_view
     _validate_type_names(names)

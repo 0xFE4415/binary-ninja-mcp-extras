@@ -41,12 +41,7 @@ _MAX_EXPORT_FILE_BYTES = 4 * 1024 * 1024
 
 
 def _validate_range(name: str, value: int, minimum: int, maximum: int | None = None) -> int:
-    """Reject an out-of-range integer argument instead of silently normalizing it.
-
-    The code and message follow the bundled mcp layer's own argument-error convention, and
-    the schema-side ``Minimum``/``Maximum`` annotations reject the same values on the real
-    server; this body-side check keeps direct handler invocation identical.
-    """
+    """Reject an out-of-range integer argument instead of silently normalizing it."""
     if value < minimum:
         raise mcp.ToolError(
             "invalid_params", f"Invalid integer parameter '{name}': Must be at least {minimum}"
@@ -59,13 +54,7 @@ def _validate_range(name: str, value: int, minimum: int, maximum: int | None = N
 
 
 def _validate_text(name: str, value: str, maximum: int, too_large_code: str) -> str:
-    """Reject an empty or over-cap string argument instead of silently normalizing it.
-
-    The string-cap counterpart of _validate_range: the empty check follows the bundled
-    mcp layer's argument-error convention, and ``too_large_code`` names the over-cap
-    code — the per-parameter ``*_too_large`` family for strings that persist or are
-    echoed whole, ``invalid_params`` for bounded path/list-entry parameters.
-    """
+    """Reject an empty or over-cap string argument instead of silently normalizing it."""
     if not value:
         raise mcp.ToolError("invalid_params", f"{name} must not be empty")
     if len(value) > maximum:
@@ -84,6 +73,9 @@ def _truncate(value: str, limit: int = _MAX_CHARS) -> str:
 
 
 def _compile_user_regex(pattern: str, ignore_case: bool = False) -> re.Pattern[str]:
+    # Compilation and matching run on Python's re with no timeout, so a pattern with
+    # catastrophic backtracking can stall the scan; untrusted input belongs in
+    # substring mode.
     flags = re.IGNORECASE if ignore_case else 0
     try:
         return re.compile(pattern, flags)
@@ -105,11 +97,9 @@ def _resolve_section(bv: BinaryView, name: str) -> tuple[int, int]:
 
 
 def _skip(iterator: Iterator[object], offset: int) -> int:
-    """Consume and discard up to ``offset`` items, returning how many actually existed.
-
-    The one offset-skip mechanism behind _drop and _paginate. zip over range, not
-    islice: the offset is unbounded and islice rejects values above sys.maxsize.
-    """
+    """Consume and discard up to ``offset`` items, returning how many actually existed."""
+    # zip over range, not islice: the offset is unbounded and islice rejects values
+    # above sys.maxsize.
     return sum(1 for _ in zip(range(offset), iterator))
 
 
@@ -121,11 +111,7 @@ def _drop[Item](items: Iterable[Item], offset: int) -> Iterator[Item]:
 
 
 def _paginate[Item](items: Iterable[Item], offset: int, limit: int) -> tuple[list[Item], int, bool]:
-    """Return the ``[offset, offset + limit)`` page, the count seen, and whether more exist.
-
-    Consumption stops one item past the window, so the count is exact only when the page is
-    not truncated.
-    """
+    """Return the ``[offset, offset + limit)`` page, the count seen, and whether more exist."""
     iterator = iter(items)
     skipped = _skip(iterator, offset)
     page = list(islice(iterator, limit))
@@ -138,9 +124,8 @@ def _require_containing_function(
 ) -> Function:
     """Return the function containing ``address``, or reject with the caller's convention.
 
-    One containment lookup, two deliberate client-visible error conventions (both pinned
-    by tests): scan-style tools answer ``no_function`` for a bare containment miss, while
-    argument-validating tools treat the same miss as a bad parameter.
+    ``code`` is deliberate: scan-style tools answer ``no_function`` for a containment
+    miss, argument-validating tools treat the same miss as ``invalid_params``.
     """
     functions = bv.get_functions_containing(address)
     if not functions:
@@ -185,9 +170,8 @@ def _function_entry(function: Function) -> dict[str, object]:
 def _render_function_disassembly(function: Any) -> list[tuple[int, str]]:
     """Render a function's addressed disassembly lines, sorted by address.
 
-    Shared by rex_disasm_at and rex_export_disasm so both tools see exactly the same
-    render. The parameter is Any-typed: the function comes back from the Any-typed
-    binary view handle, and the stubbed Function type does not model basic_blocks.
+    Shared by rex_disasm_at and rex_export_disasm so both tools see the same render;
+    Any-typed because the stubbed Function type does not model basic_blocks.
     """
     lines: list[tuple[int, str]] = []
     for block in function.basic_blocks:
@@ -213,22 +197,14 @@ def _disasm_window(
 
 
 def _validate_disasm_window(before: int, after: int) -> tuple[int, int]:
-    """Range-check the shared before/after window parameters of the disasm tools.
-
-    rex_disasm_at and rex_export_disasm expose the identical window surface with the
-    same caps, so both reject the same values with the same messages.
-    """
+    """Range-check the shared before/after window parameters of the disasm tools."""
     before = _validate_range("before", before, 0, _MAX_DISASM_CONTEXT)
     after = _validate_range("after", after, 0, _MAX_DISASM_CONTEXT)
     return before, after
 
 
 def _validate_export_path(filename: str) -> None:
-    """Reject filenames that could escape or abuse the export root.
-
-    Pure lexical validation: no filesystem access, just the checks a plain file name must
-    pass before it is joined with the export root.
-    """
+    """Reject, purely lexically, filenames that could escape or abuse the export root."""
     if not filename:
         raise mcp.ToolError("invalid_params", "filename must not be empty")
     if filename.startswith("/"):
@@ -254,9 +230,8 @@ def _validate_export_path(filename: str) -> None:
 def _resolve_export_path(filename: str) -> Path:
     """Join an already-validated filename with the export root and resolve it.
 
-    The containment check runs after resolve(): _validate_export_path is purely
-    lexical, so a symlink planted inside the export root would otherwise redirect the
-    write outside it, past those checks.
+    The containment check must run after resolve(): a symlink planted inside the
+    export root would otherwise redirect the write outside it, past the lexical checks.
     """
     try:
         _EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -282,13 +257,7 @@ def _write_export_file(path: Path, text: str) -> int:
 def _fit_to_export_cap[ExportRow](
     serialize: Callable[[list[ExportRow]], str], window: list[ExportRow]
 ) -> tuple[str, bool]:
-    """Serialize a result window, dropping trailing entries until it fits the byte cap.
-
-    Returns the text and whether entries were dropped for size. Dropping always
-    terminates at a fitting window because a window holding only its first entry is
-    checked up front: when even that overflows the cap, no export is possible and the
-    call is rejected instead of silently writing a near-empty file.
-    """
+    """Serialize a result window, dropping trailing entries until it fits the byte cap."""
     if window and len(serialize(window[:1]).encode("utf-8")) > _MAX_EXPORT_FILE_BYTES:
         raise mcp.ToolError("export_failed", "first entry exceeds the export byte cap")
     dropped = False

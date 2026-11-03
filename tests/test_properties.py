@@ -492,8 +492,8 @@ def test_call_paths_rejects_out_of_range_bounds(max_depth: int, max_paths: int) 
 # superset of case-sensitive matching, in the same order. ASCII-only alphabets keep
 # both claims exact: str.lower() is length-preserving on ASCII, so the substring path's
 # lower()-based comparison and re.IGNORECASE coincide there. (Exotic unicode case
-# pairs are out of scope; the docstring already steers untrusted input to substring
-# mode.)
+# pairs are out of scope: regex mode runs on unbounded re, so untrusted input belongs
+# in substring mode.)
 
 
 @given(

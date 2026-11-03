@@ -22,20 +22,7 @@ _MAX_EVAL_RESULT_CHARS = 16384
 def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
     """Run trusted Python against the Binary Ninja API with the active view exposed as bv.
 
-    This is the escape hatch for everything the other tools do not cover. It runs arbitrary
-    code with full access to the Binary Ninja API, so it is marked destructive.
-
-    Failures do not raise a tool error: an exception in ``code`` is reported in the
-    response's ``error`` field (``error_truncated`` marks clipping) with ``result`` null.
-    This is the only tool that answers with a success-shaped error, so protocol-level
-    error handling never fires for it — check ``error`` is None instead of relying on
-    the call having raised.
-
-    The exec namespace binds the active view as ``bv``, the tool call as ``call``, and
-    the ``binaryninja`` module twice: as ``binaryninja`` and under the short alias ``bn``
-    for brevity in one-liners.
-
-    :param code: Python source to execute; assign to ``result`` to return a value.
+    :param code: Python source; assign to ``result`` to return a value.
     """
     namespace: dict[str, object] = {
         "bv": call.binary_view,

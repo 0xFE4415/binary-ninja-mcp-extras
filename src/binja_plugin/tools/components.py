@@ -25,14 +25,7 @@ _MAX_COMPONENT_ADD_FUNCTIONS = 64
 
 
 def _validate_component_path(parameter: str, path: str) -> str:
-    """Lexically validate an absolute component path before handing it to the core.
-
-    Path lookups are absolute from the root component and "/"-delimited, so empty,
-    relative, trailing-slash and empty-segment paths can never resolve as written;
-    rejecting them here keeps the core lookup and the echoed path well-defined. Exactly
-    "/" selects the root component, which is resolved through the root_component
-    property rather than the undocumented "/" pathname lookup.
-    """
+    """Lexically validate an absolute component path before handing it to the core."""
     _validate_text(parameter, path, _MAX_COMPONENT_PATH_CHARS, "invalid_params")
     if not path.startswith("/"):
         raise mcp.ToolError(
@@ -71,16 +64,8 @@ def rex_component_add_functions(
 ) -> dict[str, object]:
     """Put functions into a component.
 
-    Destructive: membership changes persist in the analysis database, and the core may
-    relocate a function that already belongs to another component. Every address
-    expression is resolved and checked before anything is added, so one bad entry
-    rejects the whole call and the component is left untouched. Each result reports the
-    core's own success flag, so a declined add is visible instead of swallowed. The
-    response summary is the one every batch tool carries: ``applied``, ``failed_count``,
-    ``total`` (``added_count`` is this tool's original name for ``applied``).
-
-    :param path: Absolute component path ("/" for the root component).
-    :param functions: Address expressions of the functions to add; 1 to 64 entries.
+    :param path: Absolute component path; '/' selects the root component.
+    :param functions: 1 to 64 address expressions of the functions to add.
     """
     bv = call.binary_view
     _validate_component_path("path", path)
@@ -133,15 +118,8 @@ def rex_component_create(
 ) -> dict[str, object]:
     """Create a component, optionally nested under an existing one.
 
-    Destructive: components persist in the analysis database. Duplicate sibling names
-    are kept distinct by the core with an automatic " (1)"-style suffix, and the
-    response reports the created component's canonical absolute path — built from its
-    display name, which is what path lookups match — so the suffix is visible
-    immediately. An empty parent_path creates a top-level component and "/" parents it
-    on the root.
-
     :param name: Name of the new component; must not be empty or contain '/'.
-    :param parent_path: Absolute path of the parent component (empty or "/" for top-level).
+    :param parent_path: Absolute parent path; empty or '/' creates a top-level component.
     """
     # Over-cap strings reject with the plugin's per-parameter *_too_large code family,
     # not the integer-argument invalid_params convention, so the same mistake maps to
@@ -172,16 +150,9 @@ def rex_component_get(
 ) -> dict[str, object]:
     """Look up a component by path and report its members.
 
-    The path is absolute from the root component and matched against display names,
-    exactly as the core's own pathname lookup resolves it; "/" selects the root
-    component, whose children are the top-level entries of the module tree. Member
-    functions are sorted by start address so a page is a true window of the
-    address-ordered listing, and child components are capped at 200 entries with
-    children_truncated marking the rest.
-
-    :param path: Absolute component path ("/" for the root component).
-    :param limit: Maximum number of member functions to return (0 to 500).
-    :param offset: Number of member functions to skip before collecting results (>= 0).
+    :param path: Absolute component path; '/' selects the root component.
+    :param limit: Maximum member functions to return.
+    :param offset: Member functions to skip before collecting results.
     """
     _validate_component_path("path", path)
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)

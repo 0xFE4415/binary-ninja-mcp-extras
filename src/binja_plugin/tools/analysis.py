@@ -29,21 +29,15 @@ def _analysis_is_idle(bv: BinaryView) -> bool:
 
 
 def _analysis_snapshot(bv: BinaryView) -> dict[str, object]:
-    """Triage-style progress snapshot: engine state plus the in-flight analysis hotspots.
-
-    Only the progress state is echoed, normalized through AnalysisState() before the name
-    is taken: analysis_progress arrives already converted to the enum by the API layer,
-    while analysis_info.state comes back as a raw int, so the conversion keeps the echo
-    well-defined whatever shape a value arrives in. The in-flight list keeps the most
-    expensive functions only, with an explicit truncated flag instead of pagination — it
-    is a point-in-time snapshot, not a sweep.
-    """
+    """Triage-style progress snapshot: engine state plus the in-flight analysis hotspots."""
     progress = bv.analysis_progress
     in_flight = sorted(
         bv.analysis_info.active_info, key=lambda entry: entry.analysis_time, reverse=True
     )
     return {
         "progress": {
+            # Normalized through AnalysisState() because the API layer hands the state
+            # back as the enum in one struct and as a raw int in the other.
             "state": AnalysisState(progress.state).name,
             "count": progress.count,
             "total": progress.total,
@@ -68,17 +62,7 @@ def rex_analysis_wait(
 ) -> dict[str, object]:
     """Bounded wait for background analysis with a progress snapshot at expiry.
 
-    Fires nothing itself: pair it with the async bn_analysis_update. This tool then
-    sleeps in ~100 ms slices until the analysis engine goes idle or the deadline
-    passes, so the server hold is bounded by timeout_ms plus one slice either way —
-    never the whole-analysis hold of bn_analysis_update_and_wait. timeout_ms=0 is a
-    pure snapshot. The response mirrors what bn_binary_triage exposes about analysis:
-    the engine state with its count/total, the function count, and the in-flight
-    functions with their per-function analysis time (the hotspot profiler), capped at
-    the 10 most expensive entries with a ``truncated`` flag.
-
-    :param timeout_ms: Maximum time to wait in milliseconds (0 to 600000); 0 snapshots
-        the current state without waiting.
+    :param timeout_ms: Milliseconds to wait; 0 answers a snapshot without waiting.
     """
     bv = call.binary_view
     timeout_ms = _validate_range("timeout_ms", timeout_ms, 0, _MAX_ANALYSIS_WAIT_MS)
@@ -94,16 +78,7 @@ def rex_analysis_wait(
 
 @mcp.tool(destructive=True)
 def rex_binary_close(call: mcp.ToolCall) -> dict[str, object]:
-    """Discard this view's unsaved changes and close it.
-
-    The stock bn_binary_close refuses a modified view with ``requires_user_choice``,
-    so agent-created views survive the agent. This tool closes programmatically: it
-    clears the file's modified flag (``FileMetadata.modified = False``, the
-    BNMarkFileSaved path — nothing is written to disk) and then closes the file
-    through the core (``FileMetadata.close``, verified live on a scratch copy of
-    /bin/true). Destructive: unpatched bytes, tags, and unsaved analysis state are
-    lost; save first if any of it is worth keeping.
-    """
+    """Discard this view's unsaved changes and close it."""
     file_metadata = call.binary_view.file
     # The UI adapter keys its discard refusal on this flag; clearing it is the
     # programmatic equivalent of choosing "Discard" in the close prompt.

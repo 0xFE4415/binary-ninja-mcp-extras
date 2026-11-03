@@ -44,11 +44,7 @@ _MAIN_FALLBACK_NOTE = (
 
 
 def _render_hlil_lines(hlil: Any, max_lines: int) -> tuple[list[str], bool]:
-    """Render a function's HLIL to at most ``max_lines`` truncated lines.
-
-    Shared by rex_decompile_many and rex_quick_main so both tools echo exactly the same
-    render. The flag reports lines left out by the cap, never clipped text.
-    """
+    """Render a function's HLIL to at most ``max_lines`` truncated lines."""
     source_lines = str(hlil).splitlines() if hlil is not None else []
     return [_truncate(line) for line in source_lines[:max_lines]], len(source_lines) > max_lines
 
@@ -71,12 +67,7 @@ def _first_call_argument(line: str, marker: str) -> str | None:
 
 
 def _argument_address(call: mcp.ToolCall, argument: str | None) -> int | None:
-    """Resolve a rendered HLIL argument token to an address, or None.
-
-    Rendered pointers embed their address ("0x401234", "*0x401234"); any other token
-    goes through the core's address-expression parser, which resolves symbol and
-    data-variable names (both verified live).
-    """
+    """Resolve a rendered HLIL argument token to an address, or None."""
     if argument is None:
         return None
     hex_match = re.search(r"0x[0-9a-fA-F]+", argument)
@@ -91,10 +82,7 @@ def _argument_address(call: mcp.ToolCall, argument: str | None) -> int | None:
 def _entry_argument_main(
     bv: BinaryView, call: mcp.ToolCall, entry: Function
 ) -> tuple[Function | None, str | None]:
-    """Find main as the __libc_start_main-style pointer argument of the entry function.
-
-    Returns (main, None) on success, or (None, reason) naming what blocked resolution.
-    """
+    """Find main as the __libc_start_main-style pointer argument of the entry function."""
     hlil = entry.hlil
     if hlil is None:
         return None, "the entry function has no HLIL yet"
@@ -117,11 +105,7 @@ def _entry_argument_main(
 def _resolve_main(
     bv: BinaryView, call: mcp.ToolCall, entry: Function
 ) -> tuple[Function | None, str, str | None]:
-    """Resolve main: function symbol first, then the entry stub's pointer argument.
-
-    Returns (main, method, note); the note is set only when main could not be resolved
-    at all, so the entry-fallback response can say why.
-    """
+    """Resolve main: function symbol first, then the entry stub's pointer argument."""
     if entry.name in _MAIN_SYMBOL_NAMES:
         return entry, "symbol", None
     for name in _MAIN_SYMBOL_NAMES:
@@ -142,15 +126,8 @@ def rex_decompile_many(
 ) -> dict[str, object]:
     """Batch decompilation for triage.
 
-    Renders the HLIL of up to 16 functions in one call. Every address expression is
-    resolved and checked against the analyzed functions before anything is rendered, so
-    one invalid or unanalyzed entry rejects the whole call: a result is always complete
-    or absent, never partial. HLIL rendering costs tens of milliseconds per function the
-    first time, which is what the batch cap bounds.
-
-    :param functions: Address expressions of the functions to render, in output order;
-        1 to 16 entries.
-    :param max_lines: HLIL lines to render per function (1 to 400).
+    :param functions: 1 to 16 address expressions, rendered in the order given.
+    :param max_lines: HLIL lines rendered per function.
     """
     bv = call.binary_view
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
@@ -192,16 +169,9 @@ def rex_disasm_at(
 ) -> dict[str, object]:
     """Address-anchored disassembly window.
 
-    The window is anchored at the instruction containing ``address`` and clipped at the
-    edges of the containing function: fewer instructions coming back means the function
-    ends there, not an error. An address outside every analyzed function is rejected
-    rather than snapped to the nearest one. The call renders the containing function's
-    disassembly once, so the cost scales with that function.
-
-    :param address: Address expression inside the target function; accepts hex like
-        0x401000, symbols, and Binary Ninja expressions.
-    :param before: Instructions to include before the anchor (0 to 64).
-    :param after: Instructions to include after the anchor (0 to 64).
+    :param address: Address expression inside the target function.
+    :param before: Instructions to include before the anchor.
+    :param after: Instructions to include after the anchor.
     """
     bv = call.binary_view
     before, after = _validate_disasm_window(before, after)
@@ -231,28 +201,13 @@ def rex_hlil_grep(
 ) -> dict[str, object]:
     """Search rendered HLIL text across functions with a regular expression.
 
-    Regular expressions run on Python's ``re`` with no timeout, so a pattern with
-    catastrophic backtracking can stall the scan. Each function reports at most the
-    first 3 matching HLIL lines.
-
-    With ``context_before``/``context_after`` each match comes back wrapped in that
-    many surrounding HLIL lines: the matched line is prefixed with ``"> "`` and the
-    context lines with two spaces, and consecutive windows are separated by ``"--"`` so
-    overlapping context ranges stay unambiguous. Function edges truncate the window;
-    the caps on matches per function and on echoed line length are unchanged.
-
-    Rendering HLIL is the dominant cost: tens of milliseconds per function the first
-    time a function's HLIL is generated. A single invocation never renders more than
-    ``max_functions`` functions; page through a larger database by passing the
-    ``next_offset`` of the previous result as ``offset`` until ``truncated`` is false.
-
     :param regex: Regular expression applied to every rendered HLIL line.
-    :param function_filter: Case-insensitive regular expression matched against function names.
-    :param limit: Maximum number of matching functions to return (0 to 200).
-    :param max_functions: Maximum number of functions to scan before stopping (0 to 5000).
-    :param offset: Number of functions to skip before scanning starts (>= 0).
-    :param context_before: HLIL lines to include before each match (0 to 8).
-    :param context_after: HLIL lines to include after each match (0 to 8).
+    :param function_filter: Case-insensitive regex matched against function names.
+    :param limit: Maximum matching functions to return.
+    :param max_functions: Maximum functions to scan before stopping.
+    :param offset: Functions to skip before scanning starts.
+    :param context_before: HLIL lines included before each match.
+    :param context_after: HLIL lines included after each match.
     """
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_HLIL_GREP_LIMIT)
@@ -317,15 +272,7 @@ def rex_quick_main(
 ) -> dict[str, object]:
     """One-call fast contact: the entry point, main, and main's HLIL.
 
-    main is resolved from a function symbol named main/_main (the entry function itself
-    or a symbol lookup), else from the __libc_start_main-style pointer argument parsed
-    out of the entry function's HLIL — the shape a stripped binary's entry stub renders
-    for the main pointer. HLIL is generated lazily per function, so this works while
-    whole-binary analysis is still running in the background. When neither resolves,
-    the response says so explicitly (method "entry-fallback" plus a note) and renders
-    the entry function's HLIL instead; it never presents the entry function as main.
-
-    :param max_lines: HLIL lines to render (1 to 400).
+    :param max_lines: HLIL lines to render.
     """
     bv = call.binary_view
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)

@@ -47,22 +47,13 @@ def rex_derived_string_refs(
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 20,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> dict[str, object]:
-    """Code references to strings derived from code or data.
-
-    rex_string_search only sees statically backed strings and is the only tool of the
-    two with section/type filters; this tool sweeps the view's derived strings — the
-    statically backed ones plus strings the core's string recognizers synthesize, such
-    as stack-built buffers — and resolves each string's
-    code references through the core. Every reported string carries at most 20 code
-    refs, each with its source function and instruction address, and refs_truncated
-    marks a string with more. A string without a location is still reported: its refs
-    come from the core's recognizer accounting, not from a backing address.
+    """Code references to the view's derived strings, recognizer-synthesized ones included.
 
     :param pattern: Substring or regular expression to match; empty matches every string.
     :param regex: Treat pattern as a regular expression instead of a substring.
     :param ignore_case: Match case-insensitively.
-    :param limit: Maximum number of strings to return (0 to 500).
-    :param offset: Number of matching strings to skip before collecting results (>= 0).
+    :param limit: Maximum strings to return.
+    :param offset: Matching strings to skip before collecting results.
     """
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
@@ -116,7 +107,7 @@ def rex_string_read_at(
     """Read the detected string at an address.
 
     :param addr: Address of the string.
-    :param max_chars: Truncate long string values to this many characters (1 to 4096).
+    :param max_chars: Characters past this are truncated from the echoed value.
     """
     max_chars = _validate_range("max_chars", max_chars, 1, _MAX_STRING_READ_CHARS)
     string = call.binary_view.get_string_at(addr)
@@ -145,21 +136,13 @@ def rex_string_search(
 ) -> dict[str, object]:
     """Search the binary's detected strings by substring or regular expression.
 
-    This is the filtered view over the statically backed strings: only here can a scan
-    be scoped by ``section`` or ``string_type``. rex_derived_string_refs covers the
-    wider string domain — the static ones plus recognizer-synthesized strings — but
-    carries no section/type filters; pick by filter need, not by coverage.
-
-    Regular expressions run on Python's ``re`` with no timeout, so a pattern with
-    catastrophic backtracking can stall the search; prefer substring mode for untrusted input.
-
     :param pattern: Substring or regular expression to match; empty matches every string.
     :param regex: Treat pattern as a regular expression instead of a substring.
     :param ignore_case: Match case-insensitively.
     :param section: Only include strings within this section.
     :param string_type: Only include strings of this type.
-    :param limit: Maximum number of strings to return (0 to 500).
-    :param offset: Number of matching strings to skip before collecting results (>= 0).
+    :param limit: Maximum strings to return.
+    :param offset: Matching strings to skip before collecting results.
     """
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)

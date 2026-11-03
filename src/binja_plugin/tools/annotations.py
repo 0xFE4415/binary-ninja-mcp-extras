@@ -67,12 +67,7 @@ def _annotate_function_error(address: int, message: str) -> dict[str, object]:
 def _annotate_resolve(
     call: mcp.ToolCall, bv: BinaryView, item: Any
 ) -> tuple[dict[str, object], _AnnotationPlan | None]:
-    """Validate one annotation item completely, staging a plan only if it can fully apply.
-
-    The type string is parsed up front and discarded until the apply phase, so an item
-    can never half-apply: everything that can fail on the item's own content fails here,
-    before any mutation is staged.
-    """
+    """Validate one annotation item completely, staging a plan only if it can fully apply."""
     if not isinstance(item, dict):
         return _annotate_item_error(item, "each item must be a JSON object"), None
     if "addr" not in item:
@@ -149,39 +144,7 @@ def rex_annotate_many(
 ) -> dict[str, object]:
     """Apply many function annotations in one undoable transaction.
 
-    Batch counterpart of one-at-a-time renaming and commenting: up to 100 items of
-    ``{addr, name?, comment?, prototype?}`` in one call. Every item resolves
-    before anything is applied; the applying items commit inside a single
-    ``bv.undoable_transaction()`` (begin actions, commit on success, revert and re-raise
-    on failure), so the whole batch is one undo step that ``rex_undo`` reverses as a
-    unit. If a core error escapes mid-apply, the context manager has already reverted
-    every change and the response says the batch rolled back.
-
-    Per-item failures never abort the batch: an address with no analyzed function, an
-    unparsable address, or an invalid field is one ``{"ok": false}`` row while the other
-    items still apply. When every item fails, nothing is applied and no undo step is
-    created. Each row echoes the annotated function's start on success (the input may
-    have been mid-function or a symbol name) or what was looked up on failure. The
-    response summary is the one every batch tool carries — ``applied``, ``failed_count``,
-    ``total`` — plus this tool's original ``failed`` count key.
-
-    Annotations are function-level, not instruction-level: an ``addr`` anywhere inside a
-    function — mid-function addresses included — annotates that whole function, so the
-    comment, user type, and name land on the function itself. Composing with
-    per-instruction producers like rex_derived_string_refs therefore collapses their
-    output onto containing functions. Items that resolve to the same function apply in
-    item order with last write winning: a repeated field is overwritten by the later
-    item, and each item still counts as applied.
-
-    ``prototype`` sets the function's user type — its signature: Binary Ninja stores one
-    user type per function. The string is parsed per item with the parsed name discarded,
-    unlike assigning the ``type`` property, which would also rename the function.
-
-    Per item the apply order is ``comment``, then the prototype, then ``name`` last, so
-    an explicit ``name`` has the final word on naming.
-
-    :param items: 1 to 100 objects of ``{addr, name?, comment?, prototype?}``;
-        ``addr`` is an address expression (integer or string), the rest are strings.
+    :param items: 1 to 100 annotation objects; the item schema defines the fields.
     """
     bv = call.binary_view
     if not isinstance(items, list):
@@ -205,6 +168,7 @@ def rex_annotate_many(
                         plan.function.comment = plan.comment
                     if plan.parsed_type is not None:
                         plan.function.set_user_type(plan.parsed_type)
+                    # Name last, so an explicit name has the final word on naming.
                     if plan.name is not None:
                         plan.function.name = plan.name
         except Exception as error:

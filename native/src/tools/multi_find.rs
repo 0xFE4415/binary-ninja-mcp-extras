@@ -17,21 +17,16 @@ use crate::hexpattern::HexPattern;
 use crate::multi::{MAX_MULTI_PATTERNS, MultiMatcher};
 use crate::scan::RunningScan;
 
-/// Arguments of `rx_multi_find`. No `binary` field — same server-reserved
-/// argument rule as `DataFindArgs`.
+// No `binary` field — same server-reserved argument rule as `DataFindArgs`.
 #[derive(Deserialize, JsonSchema)]
 pub struct MultiFindArgs {
-    /// Hex byte patterns, e.g. ["48 8b ?? 05", "e8 ?? ?? ?? ??"]; "??" matches any single byte.
     #[schemars(length(min = 1, max = MAX_MULTI_PATTERNS))]
     pub patterns: Vec<String>,
-    /// Only search within this section.
     #[serde(default)]
     pub section: Option<String>,
-    /// Maximum number of matches per pattern to return (0 to 500).
     #[serde(default = "default_limit")]
     #[schemars(range(min = 0, max = MAX_LIMIT))]
     pub limit: u32,
-    /// Number of matches to skip per pattern before collecting results (>= 0).
     #[serde(default)]
     #[schemars(range(min = 0))]
     pub offset: u64,
@@ -47,10 +42,7 @@ impl TypedMcpTool for RxMultiFind {
     fn info(&self) -> McpToolInfo {
         McpToolInfo::new(
             "rx_multi_find",
-            "Find occurrences of many hex byte patterns in one pass over mapped memory. \
-             A single multi-pattern automaton scan replaces N sequential rex_data_find calls; \
-             each pattern gets its own rex_data_find-style match list with the same \
-             limit/offset pagination and truncated flag.",
+            "Find occurrences of many hex byte patterns in one pass over mapped memory.",
         )
         .with_annotations(McpToolAnnotations::READ_ONLY)
     }

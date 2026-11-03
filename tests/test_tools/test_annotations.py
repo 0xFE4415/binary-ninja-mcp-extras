@@ -316,9 +316,10 @@ def test_annotate_batch_leaves_one_undo_entry_that_rex_undo_reverses() -> None:
     _, undo = get_tool("rex_undo")
     # The API documents undoable_transaction as creating an Undo state containing the
     # batch's actions, so the fake models the committed entry (helpers.py). This pins the
-    # rex_undo docstring's one settled composition claim: one batch is one undo step and
-    # rex_undo reverses it whole. The tag/metadata/type-library writes the API leaves
-    # undocumented push nothing here, so the fake cannot pin those either way.
+    # undo tools' one settled composition claim (see the undo note in
+    # binja_plugin/tools/state.py): one batch is one undo step and rex_undo reverses it
+    # whole. The tag/metadata/type-library writes the API leaves undocumented push
+    # nothing here, so the fake cannot pin those either way.
     annotate(FakeParsingToolCall(view), [{"addr": "0x1100", "name": "renamed"}])
     assert view.file.undo_entries == ["rex_annotate_many batch"]
     assert undo(_call(view)) == {"undone": True, "undo_left": 0, "redo_left": 1}

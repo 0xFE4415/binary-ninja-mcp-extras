@@ -16,25 +16,19 @@ use super::{
 use crate::hexpattern::MAX_PATTERN_CHARS;
 use crate::scan::{RunningScan, scan_pattern};
 
-/// Arguments of `rx_data_find`, mirroring `rex_data_find`.
-///
-/// No `binary` field: `binary` is a server-reserved argument for BinaryView-scoped
-/// tools — `BNRegisterMcpTool` rejects a schema that declares it, and the server
-/// strips it before invoking the handler (verified live). `require_binary_view`
-/// resolves the view from the tool call itself.
+// No `binary` field: `binary` is a server-reserved argument for BinaryView-scoped
+// tools — `BNRegisterMcpTool` rejects a schema that declares it, and the server
+// strips it before invoking the handler (verified live). `require_binary_view`
+// resolves the view from the tool call itself. The fields mirror `rex_data_find`.
 #[derive(Deserialize, JsonSchema)]
 pub struct DataFindArgs {
-    /// Hex byte pattern, e.g. "48 8b ?? 05"; "??" matches any single byte.
     #[schemars(length(max = MAX_PATTERN_CHARS))]
     pub pattern: String,
-    /// Only search within this section.
     #[serde(default)]
     pub section: Option<String>,
-    /// Maximum number of matches to return (0 to 500).
     #[serde(default = "default_limit")]
     #[schemars(range(min = 0, max = MAX_LIMIT))]
     pub limit: u32,
-    /// Number of matches to skip before collecting results (>= 0).
     #[serde(default)]
     #[schemars(range(min = 0))]
     pub offset: u64,
@@ -50,9 +44,7 @@ impl TypedMcpTool for RxDataFind {
     fn info(&self) -> McpToolInfo {
         McpToolInfo::new(
             "rx_data_find",
-            "Find all occurrences of a hex byte pattern in mapped memory. \
-             The scan runs in native Rust (SIMD prefilter + wildcard verification); \
-             result shape and pagination match the Python plugin's rex_data_find.",
+            "Find all occurrences of a hex byte pattern in mapped memory.",
         )
         .with_annotations(McpToolAnnotations::READ_ONLY)
     }
