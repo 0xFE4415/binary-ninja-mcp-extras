@@ -105,6 +105,8 @@ def test_string_search_errors() -> None:
     with pytest.raises(FakeToolError) as exc:
         search(_call(view), pattern="(", regex=True)
     assert exc.value.code == "invalid_regex"
+    # The re.error text is appended, so the message stays explainable to the caller.
+    assert exc.value.message.startswith("bad regular expression: ")
     with pytest.raises(FakeToolError) as exc:
         search(_call(view), section="s" * 1000)
     assert exc.value.code == "section_not_found"

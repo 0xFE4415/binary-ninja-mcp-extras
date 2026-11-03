@@ -27,6 +27,7 @@ def test_function_define_and_undefine() -> None:
     with pytest.raises(FakeToolError) as exc:
         undefine(_call(view), 0x9999)
     assert exc.value.code == "no_function"
+    assert exc.value.message == "no function contains 0x9999"
 
 
 def test_function_define_failure(monkeypatch: pytest.MonkeyPatch) -> None:

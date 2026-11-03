@@ -35,6 +35,7 @@ def test_kv_set_get_delete_roundtrip() -> None:
             else:
                 function(_call(view), "")
         assert exc.value.code == "invalid_key"
+        assert exc.value.message == "key must not be empty"
 
 
 def test_kv_set_truncates_echo_and_rejects_oversized_value() -> None:
