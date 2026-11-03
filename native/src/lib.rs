@@ -32,14 +32,13 @@ pub(crate) fn test_rng(seed: u64) -> impl FnMut() -> u32 {
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub extern "C" fn CorePluginInit() -> bool {
-    if tools::register() {
-        true
-    } else {
+    let registered = tools::register();
+    if !registered {
         binaryninja::logger::bn_log(
             "binja_plugin_native",
             binaryninja::logger::BnLogLevel::ErrorLog,
             "failed to register rx_data_find / rx_multi_find MCP tools",
         );
-        false
     }
+    registered
 }

@@ -12,10 +12,10 @@ fn clamp_to_bounds(range: (u64, u64), bounds: Option<(u64, u64)>) -> Option<(u64
     (start < end).then_some((start, end))
 }
 
-// Walk [start, end) in windows of `chunk + overlap` bytes, advancing by `chunk`
-// unconditionally: consecutive windows overlap by `overlap` bytes, so every
-// (`overlap + 1`)-byte match start is fully visible in exactly one window, and
-// advancing past short reads (unreadable holes) recovers matches after the hole.
+/// Walk [start, end) in windows of `chunk + overlap` bytes, advancing by `chunk`
+/// unconditionally: consecutive windows overlap by `overlap` bytes, so every
+/// (`overlap + 1`)-byte match start is fully visible in exactly one window, and
+/// advancing past short reads (unreadable holes) recovers matches after the hole.
 fn for_each_window<F>(start: u64, end: u64, chunk: u64, overlap: u64, mut window: F) -> bool
 where
     F: FnMut(u64, u64) -> bool,

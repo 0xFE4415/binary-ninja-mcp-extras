@@ -23,11 +23,11 @@ struct NeedleOwner {
 /// The compiled multi-pattern matcher for one `rx_multi_find` call.
 pub struct MultiMatcher {
     automaton: AhoCorasick,
-    // Owners per automaton pattern id; several owners may share one needle
-    // when different patterns start with the same concrete run.
+    /// Owners per automaton pattern id; several owners may share one needle
+    /// when different patterns start with the same concrete run.
     owners: Vec<Vec<NeedleOwner>>,
-    // Indices of patterns with no concrete byte at all; scanned directly
-    // instead of through the automaton.
+    /// Indices of patterns with no concrete byte at all; scanned directly
+    /// instead of through the automaton.
     wildcard_only: Vec<usize>,
 }
 
@@ -67,8 +67,9 @@ impl MultiMatcher {
     }
 
     /// Scan one in-memory segment for every pattern, updating per-pattern
-    /// buckets (`base` = absolute address of `haystack[0]`). Returns `false`
-    /// when every bucket's window is exhausted.
+    /// buckets (`base` = absolute address of `haystack[0]`). `patterns` must be
+    /// the same slice the matcher was compiled from: owner entries index into
+    /// it. Returns `false` when every bucket's window is exhausted.
     pub fn scan_segment(
         &self,
         haystack: &[u8],

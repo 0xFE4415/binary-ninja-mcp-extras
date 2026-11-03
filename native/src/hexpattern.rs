@@ -44,9 +44,12 @@ impl HexPattern {
         if !chars.len().is_multiple_of(2) {
             return Err(PatternError::new("hex pattern must contain whole bytes"));
         }
-        let bytes = chars
-            .chunks(2)
-            .map(|pair| {
+        // The length check above guarantees `as_chunks` leaves no remainder.
+        let (pairs, remainder) = chars.as_chunks();
+        debug_assert!(remainder.is_empty());
+        let bytes = pairs
+            .iter()
+            .map(|&pair| {
                 if pair == ['?', '?'] {
                     return Ok(None);
                 }
@@ -88,10 +91,7 @@ impl HexPattern {
     }
 }
 
-fn parse_hex_byte(pair: &[char]) -> Option<u8> {
-    let [high, low] = pair else {
-        return None;
-    };
+fn parse_hex_byte([high, low]: [char; 2]) -> Option<u8> {
     Some((high.to_digit(16)? << 4 | low.to_digit(16)?) as u8)
 }
 
