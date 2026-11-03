@@ -575,8 +575,16 @@ class FakeBinaryView:
         self, name: str, library: FakeTypeLibrary | None = None
     ) -> FakeType | None:
         self.imported_library_types.append((library, name))
+        # Mirrors the core: an NTR comes back for every requested name. Names absent
+        # from ``library_types`` get the requested name back and register nothing; a
+        # None entry models the core returning no handle despite provision.
         resolved = self._library_types.get(name)
-        return FakeType(name=resolved) if resolved is not None else None
+        if name not in self._library_types:
+            return FakeType(name=name)
+        if resolved is None:
+            return None
+        self._types[resolved] = FakeType(name=resolved)
+        return FakeType(name=resolved)
 
     def get_type_by_name(self, name: str) -> FakeType | None:
         return self._types.get(name)
@@ -728,14 +736,21 @@ class FakeTypeLibrary:
         file_bytes: bytes = b"BNTL",
         finalize_result: bool = True,
         write_error: OSError | None = None,
+        named_types: dict[str, FakeType] | None = None,
     ) -> None:
         self.name = name
         self.arch = arch
         self.file_bytes = file_bytes
         self.finalize_result = finalize_result
         self.write_error = write_error
+        # Names the library provides, answered by get_named_type; everything else is
+        # absent from the library even though the view-level import still returns an NTR.
+        self.named_types = named_types or {}
         self.finalized = False
         self.written_paths: list[str] = []
+
+    def get_named_type(self, name: str) -> FakeType | None:
+        return self.named_types.get(name)
 
     @staticmethod
     def load_from_file(path: str) -> FakeTypeLibrary | None:

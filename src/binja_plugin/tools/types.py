@@ -175,6 +175,9 @@ def rex_type_library_import(call: mcp.ToolCall, path: str, names: list[str]) -> 
     imported: list[dict[str, str]] = []
     failed: list[dict[str, str]] = []
     for name in names:
+        if library.get_named_type(name) is None:
+            failed.append({"requested": name, "reason": "not provided by this type library"})
+            continue
         type_obj = bv.import_library_type(name, library)
         if type_obj is None:
             failed.append({"requested": name, "reason": "not provided by this type library"})

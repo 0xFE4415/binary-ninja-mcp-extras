@@ -52,11 +52,11 @@ def test_type_library_import_attaches_and_imports(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(tools, "_EXPORT_ROOT", tmp_path / "exports")
-    library = FakeTypeLibrary(name="libc")
+    library = FakeTypeLibrary(name="libc", named_types={"open": FakeType("open")})
     path = _library_on_disk(tmp_path, library)
     # "open" resolves to a deconflicted name because the view already has one; "bad" is
     # not provided by the library at all.
-    view = FakeBinaryView(library_types={"open": "open_0", "bad": None})
+    view = FakeBinaryView(library_types={"open": "open_0"})
     _, import_tool = get_tool("rex_type_library_import")
     result = import_tool(_call(view), path, ["open", "bad"])
     assert result == {
@@ -69,13 +69,56 @@ def test_type_library_import_attaches_and_imports(
     }
     # The library itself was attached to the view once, before any name was imported.
     assert view.type_libraries == [library]
-    assert view.imported_library_types == [(library, "open"), (library, "bad")]
+    assert view.imported_library_types == [(library, "open")]
+
+
+def test_type_library_import_fails_names_absent_from_the_library(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(tools, "_EXPORT_ROOT", tmp_path / "exports")
+    library = FakeTypeLibrary(name="libc", named_types={"open": FakeType("open")})
+    path = _library_on_disk(tmp_path, library)
+    view = FakeBinaryView()
+    _, import_tool = get_tool("rex_type_library_import")
+    # "bogus" is absent from the library, yet the view-level import still hands back an
+    # NTR for it: only the library-level check keeps it out of the imported list.
+    result = import_tool(_call(view), path, ["bogus"])
+    assert result == {
+        "library": "libc",
+        "imported": [],
+        "failed": [{"requested": "bogus", "reason": "not provided by this type library"}],
+        "applied": 0,
+        "failed_count": 1,
+        "total": 1,
+    }
+    assert view.imported_library_types == []
+
+
+def test_type_library_import_reports_a_failed_core_insertion(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(tools, "_EXPORT_ROOT", tmp_path / "exports")
+    # The library provides "open", but the core-side insertion returns no handle.
+    library = FakeTypeLibrary(name="libc", named_types={"open": FakeType("open")})
+    path = _library_on_disk(tmp_path, library)
+    view = FakeBinaryView(library_types={"open": None})
+    _, import_tool = get_tool("rex_type_library_import")
+    result = import_tool(_call(view), path, ["open"])
+    assert result == {
+        "library": "libc",
+        "imported": [],
+        "failed": [{"requested": "open", "reason": "not provided by this type library"}],
+        "applied": 0,
+        "failed_count": 1,
+        "total": 1,
+    }
+    assert view.imported_library_types == [(library, "open")]
 
 
 def test_type_library_import_reports_an_unnamed_library(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _library_on_disk(tmp_path, FakeTypeLibrary(name=None))
+    _library_on_disk(tmp_path, FakeTypeLibrary(name=None, named_types={"open": FakeType("open")}))
     view = FakeBinaryView(library_types={"open": "open"})
     _, import_tool = get_tool("rex_type_library_import")
     result = import_tool(_call(view), str(tmp_path / "libc.bntl"), ["open"])
