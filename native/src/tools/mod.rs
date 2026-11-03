@@ -188,4 +188,42 @@ mod tests {
         assert_eq!(error.code, "pattern_too_large");
         assert_eq!(error.message, "pattern exceeds 8192 characters");
     }
+
+    #[test]
+    fn pattern_size_cap_counts_characters_not_bytes() {
+        // Python len() on str counts characters, so the cap does too: 8192
+        // fullwidth digits are three times that in bytes yet still reach the
+        // parser, failing as tokens rather than as oversized.
+        let error = parse_checked_pattern(&"４４".repeat(MAX_PATTERN_CHARS / 2)).unwrap_err();
+        assert_eq!(error.code, "invalid_pattern");
+        assert_eq!(error.message, "invalid hex byte token '４４'");
+    }
+
+    // The response shape pins each address as a `0x`-prefixed hex string; a
+    // format change here would silently move the tool output every client sees.
+    #[test]
+    fn matches_json_formats_addresses_as_hex_strings() {
+        assert_eq!(
+            matches_json(&[0x1000, 0x2]),
+            serde_json::json!(["0x1000", "0x2"])
+        );
+        assert_eq!(matches_json(&[]), serde_json::json!([]));
+    }
+
+    // Serde defaults must stay the documented ones (limit 50, no offset, no
+    // section): the schema advertises them, and a drifted default would move
+    // every call that omits the fields.
+    #[test]
+    fn args_deserialize_with_documented_defaults() {
+        let data_find: DataFindArgs = serde_json::from_value(json!({ "pattern": "90" })).unwrap();
+        assert_eq!(data_find.limit, 50);
+        assert_eq!(data_find.offset, 0);
+        assert_eq!(data_find.section, None);
+
+        let multi_find: MultiFindArgs =
+            serde_json::from_value(json!({ "patterns": ["90"] })).unwrap();
+        assert_eq!(multi_find.limit, 50);
+        assert_eq!(multi_find.offset, 0);
+        assert_eq!(multi_find.section, None);
+    }
 }
