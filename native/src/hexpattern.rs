@@ -1,8 +1,6 @@
-//! Hex byte-pattern parsing, mirroring the Python plugin's `hexpattern.py` grammar.
-//!
-//! A pattern is whitespace-separated byte tokens: two hex digits, or `??` for a
-//! wildcard byte that matches any value. Errors carry the same messages the Python
-//! `rex_data_find` tool returns so callers see identical `invalid_pattern` text.
+//! Hex byte-pattern parsing, mirroring the Python plugin's `hexpattern.py`
+//! grammar: whitespace-separated tokens of two hex digits or `??`, with error
+//! messages identical to the Python `rex_data_find` tool's.
 
 /// Raw pattern-string cap, matching `_MAX_PATTERN_CHARS` in the Python plugin.
 pub const MAX_PATTERN_CHARS: usize = 8192;
@@ -11,10 +9,8 @@ pub const MAX_PATTERN_CHARS: usize = 8192;
 pub const TRUNCATE_CHARS: usize = 512;
 
 /// A parse failure whose message is shown to the tool caller verbatim.
-///
-/// `Debug` is the only derive: callers read `message` directly (the MCP error
-/// carries it as a string), so Display/Error/equality/cloning would be a
-/// second, never-exercised error path.
+/// `Debug` is the only derive: callers read `message` directly, so
+/// Display/Error/equality/cloning would be a second, never-exercised path.
 #[derive(Debug)]
 pub struct PatternError {
     pub message: String,
@@ -78,18 +74,13 @@ impl HexPattern {
 
     /// The first concrete (non-wildcard) byte and its index in the pattern.
     pub fn first_concrete(&self) -> Option<(usize, u8)> {
-        // The run always begins at the pattern's first concrete byte, so its
-        // first element is exactly that byte (the run is never empty when
-        // `first_concrete_run` returns Some).
+        // The run starts at the first concrete byte, so run[0] is that byte.
         self.first_concrete_run()
             .map(|(start, run)| (start, run[0]))
     }
 
-    /// The first maximal run of concrete bytes: its start index and values.
-    ///
-    /// This is the longest prefix of consecutive non-wildcard bytes starting at
-    /// the pattern's first concrete byte; used as the multi-pattern automaton's
-    /// prefilter needle.
+    /// The first maximal run of concrete bytes (start index and values): the
+    /// multi-pattern automaton's prefilter needle.
     pub fn first_concrete_run(&self) -> Option<(usize, Vec<u8>)> {
         let start = self.bytes.iter().position(Option::is_some)?;
         let run = self.bytes[start..].iter().map_while(|byte| *byte).collect();
@@ -104,8 +95,7 @@ fn parse_hex_byte(pair: &[char]) -> Option<u8> {
     Some((high.to_digit(16)? << 4 | low.to_digit(16)?) as u8)
 }
 
-/// Truncate an echoed string the way the Python plugin's `_truncate` does, so
-/// error messages match character for character.
+/// Truncate an echoed string exactly the way the Python plugin's `_truncate` does.
 pub fn truncate_echo(text: &str, limit: usize) -> String {
     let total = text.chars().count();
     if total <= limit {
@@ -115,10 +105,8 @@ pub fn truncate_echo(text: &str, limit: usize) -> String {
     format!("{kept}... [{} chars truncated]", total - limit)
 }
 
-/// True when `pattern` matches the bytes of `haystack` starting at `pos`.
-///
-/// The caller must ensure `pos + pattern.len() <= haystack.len()`; `verify_at`
-/// still bounds-checks and reports `false` instead of panicking if not.
+/// True when `pattern` matches `haystack` starting at `pos`. Bounds-checks,
+/// returning `false` instead of panicking when the window overruns the haystack.
 pub fn verify_at(haystack: &[u8], pos: usize, pattern: &[Option<u8>]) -> bool {
     pos.checked_add(pattern.len())
         .and_then(|end| haystack.get(pos..end))

@@ -1,26 +1,18 @@
-//! In-memory single-pattern scan with the Python plugin's pagination contract.
-//!
-//! `rex_data_find` counts every occurrence (including overlapping ones), stops
-//! scanning at the first match that falls outside the `[offset, offset+limit)`
-//! window, and reports `total` as the count reached before stopping. `RunningScan`
-//! reproduces that exactly; `scan_pattern` is the memchr-prefiltered scan itself.
+//! In-memory single-pattern scan with the Python plugin's pagination contract:
+//! every occurrence counts (overlapping included), scanning stops at the first
+//! match past the `[offset, offset+limit)` window, and `total` is the count
+//! reached before stopping.
 
 use crate::hexpattern::{HexPattern, verify_at};
 use memchr::memchr_iter;
 
-/// Pagination arguments shared by both tools.
 #[derive(Clone, Copy, Debug)]
 pub struct Pagination {
-    /// Number of matches to skip before collecting results.
     pub offset: u64,
-    /// Maximum number of matches to collect after skipping.
     pub limit: u64,
 }
 
-/// Accumulated state of one pattern's result while scanning segment by segment.
-///
-/// The name mirrors the Python plugin's observable contract: once a match lands
-/// past the window, `truncated` latches and scanning must stop everywhere.
+/// Accumulated result of one pattern while scanning segment by segment.
 #[derive(Debug, Default)]
 pub struct RunningScan {
     /// Matches counted before the scan stopped.
@@ -29,7 +21,7 @@ pub struct RunningScan {
     pub truncated: bool,
     /// Absolute addresses inside the `[offset, offset+limit)` window, ascending.
     pub matches: Vec<u64>,
-    /// Address of the last match `record_new` counted; `None` before the first.
+    // Address of the last match `record_new` counted; None before the first.
     last_recorded: Option<u64>,
 }
 
@@ -38,7 +30,7 @@ impl RunningScan {
         Self::default()
     }
 
-    /// Record a match at `addr`. Returns `false` when the scan window is now
+    /// Record a match at `addr`; returns `false` when the scan window is
     /// exhausted and the caller must stop scanning entirely.
     pub fn record(&mut self, pagination: &Pagination, addr: u64) -> bool {
         if self.truncated {
@@ -53,23 +45,17 @@ impl RunningScan {
             self.truncated = true;
             false
         } else {
-            // Still before the window start: keep scanning.
             true
         }
     }
 
-    /// `record`, but only for an address this bucket has not counted yet.
-    ///
-    /// The multi-pattern walk overlaps consecutive windows by
-    /// longest_pattern - 1 bytes to keep that longest pattern's seam matches
-    /// visible, so a shorter pattern's match starting within
-    /// `overlap - len + 1` bytes of a seam is fully visible in the next window
-    /// too. Windows arrive in ascending address order and each window's own
-    /// matches ascend, so an address at or below the last counted one is
-    /// exactly such a repeat; counting it would inflate `total`, shift
-    /// pagination, and latch `truncated` early. The single-pattern walk never
-    /// revisits an address (its overlap is len - 1) and keeps using `record`,
-    /// so a structural regression there cannot be masked by this dedup.
+    /// `record`, but only for an address this bucket has not counted yet: the
+    /// multi-pattern walk's overlapping windows re-serve a shorter pattern's
+    /// seam matches, and windows and matches both arrive in ascending address
+    /// order, so an address at or below the last counted one is exactly such
+    /// a repeat. The single-pattern walk never revisits an address and keeps
+    /// using `record`, so a structural regression there cannot be masked by
+    /// this dedup.
     pub fn record_new(&mut self, pagination: &Pagination, addr: u64) -> bool {
         if self.last_recorded.is_some_and(|last| addr <= last) {
             return !self.truncated;
@@ -83,15 +69,10 @@ impl RunningScan {
     }
 }
 
-/// Enumerate every position an all-wildcard pattern matches: a haystack of
-/// `haystack_len` bytes holds `(haystack_len + 1).saturating_sub(pattern_len)`
-/// candidate starts, passed to `record` in ascending order with `base` added.
-///
-/// Returns `false` — and stops the enumeration — at the first candidate
-/// `record` declines. What that stops is the caller's decision, and that is
-/// exactly where the two scans differ: the single-pattern walk stops the whole
-/// scan, while the multi-pattern walk breaks only the one bucket's
-/// enumeration and keeps scanning the rest.
+/// Enumerate every candidate start of an all-wildcard pattern in ascending
+/// order, stopping at the first `record` decline — and what that stops is the
+/// caller's call: the whole scan for the single-pattern walk, one bucket's
+/// enumeration for the multi-pattern walk.
 pub(crate) fn for_each_all_wildcard_candidate(
     haystack_len: usize,
     pattern_len: usize,
@@ -99,23 +80,13 @@ pub(crate) fn for_each_all_wildcard_candidate(
     mut record: impl FnMut(u64) -> bool,
 ) -> bool {
     let candidates = (haystack_len + 1).saturating_sub(pattern_len);
-    for candidate in 0..candidates {
-        if !record(base + candidate as u64) {
-            return false;
-        }
-    }
-    true
+    (0..candidates).all(|candidate| record(base + candidate as u64))
 }
 
-/// Scan one in-memory segment for `pattern`, recording into `running`.
-///
-/// `base` is the absolute address of `haystack[0]`. The scan prefilters with
-/// SIMD `memchr` on the pattern's first concrete byte and verifies the full
-/// pattern (wildcards included) at every candidate. Returns `false` when the
-/// window is exhausted; the caller must stop scanning further segments.
-///
-/// Occurrences are reported in ascending address order and include overlapping
-/// matches, matching the Python lookahead-regex behavior.
+/// Scan one in-memory segment for `pattern` (`base` = absolute address of
+/// `haystack[0]`), reporting occurrences in ascending order including
+/// overlapping ones. Returns `false` when the window is exhausted; the caller
+/// must stop scanning further segments.
 pub fn scan_pattern(
     haystack: &[u8],
     base: u64,
@@ -133,7 +104,6 @@ pub fn scan_pattern(
     }
     if let Some((offset, anchor)) = pattern.first_concrete() {
         for hit in memchr_iter(anchor, haystack) {
-            // The candidate match starts `offset` bytes before the anchor.
             let Some(candidate) = hit.checked_sub(offset) else {
                 continue;
             };
@@ -151,14 +121,10 @@ pub fn scan_pattern(
                 return false;
             }
         }
-    } else {
-        // Every position matches an all-wildcard pattern, and a declined
-        // candidate stops this whole scan (the single-pattern contract).
-        if !for_each_all_wildcard_candidate(haystack.len(), pattern_len, base, |addr| {
-            running.record(pagination, addr)
-        }) {
-            return false;
-        }
+    } else if !for_each_all_wildcard_candidate(haystack.len(), pattern_len, base, |addr| {
+        running.record(pagination, addr)
+    }) {
+        return false;
     }
     true
 }

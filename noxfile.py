@@ -1,15 +1,26 @@
+import fnmatch
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import nox
 
 nox.options.default_venv_backend = "uv|virtualenv"
 # mutation is slow and opt-in: run it explicitly with `nox -s mutation`.
-nox.options.sessions = ["format", "ruff", "ty", "test", "native", "check"]
+nox.options.sessions = ["format", "ruff", "size", "ty", "test", "native", "check"]
 
 # Ceilings on alive (survived + timed out) mutants; lower them as mutants get killed.
 PYTHON_MUTANT_CEILING = 30
 RUST_MUTANT_CEILING = 5
+
+# Ratchet on file size, like the mutant ceilings: it may be raised only deliberately,
+# never to quietly admit growth. Set to 1.5x the largest file in the gate's tree at
+# introduction (tests/test_tools/test_decompile.py), rounded up to the next 50.
+SIZE_LIMIT_BYTES = 51350
+
+# Entry names excluded from the size walk wherever they appear: generated or cached
+# output, not authored source.
+SIZE_SKIPPED = (".nox", "target", "mutants*", "*.egg-info", "__pycache__")
 
 
 @nox.session
@@ -22,6 +33,39 @@ def format(session: nox.Session) -> None:
 def ruff(session: nox.Session) -> None:
     session.install("ruff>=0.6")
     session.run("ruff", "check", "src", "tests")
+
+
+def _walk_authored_files(root: str) -> Iterator[Path]:
+    """Yield every file under root, pruning generated/cached directories on the way down."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if not _skipped_entry(name)]
+        yield from (Path(dirpath) / filename for filename in filenames)
+
+
+def _skipped_entry(name: str) -> bool:
+    return any(fnmatch.fnmatch(name, pattern) for pattern in SIZE_SKIPPED)
+
+
+@nox.session(python=False)
+def size(session: nox.Session) -> None:
+    """Fail if any authored file in src/, tests/, or native/src/ exceeds SIZE_LIMIT_BYTES."""
+    oversized = sorted(
+        (
+            path
+            for root in ("src", "tests", "native/src")
+            for path in _walk_authored_files(root)
+            if path.stat().st_size > SIZE_LIMIT_BYTES
+        ),
+        key=lambda path: path.stat().st_size,
+        reverse=True,
+    )
+    for path in oversized:
+        session.log(f"{path.stat().st_size}\t{path}")
+    if oversized:
+        session.error(
+            f"{len(oversized)} file(s) exceed the {SIZE_LIMIT_BYTES}-byte limit listed above; "
+            "split them instead of raising the ratchet casually"
+        )
 
 
 @nox.session
@@ -109,5 +153,6 @@ def native(session: nox.Session) -> None:
 def check(session: nox.Session) -> None:
     session.notify("format")
     session.notify("ruff")
+    session.notify("size")
     session.notify("ty")
     session.notify("test")

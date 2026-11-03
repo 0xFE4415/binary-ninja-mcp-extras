@@ -109,15 +109,30 @@ def test_tool_names_are_namespaced() -> None:
         assert not name.startswith("bn_")
 
 
-def test_every_tool_documents_its_parameters() -> None:
+def test_tool_docstrings_stay_stripped() -> None:
     for name, _, function in REGISTERED_TOOLS:
-        docstring = function.__doc__ or ""
-        lines = [line for line in docstring.splitlines() if line.strip()]
-        assert lines, f"{name} is missing a description"
+        docstring = inspect.cleandoc(function.__doc__ or "")
+        lines = docstring.splitlines()
+        # The bundled mcp layer serves the leading paragraph as the tool description and
+        # nothing else: the description stays one physical line and nothing but the
+        # :param: block may follow it.
+        assert lines and lines[0] and not lines[0].startswith(":param "), (
+            f"{name} needs a one-line description"
+        )
+        assert all(line == "" or line.startswith(":param ") for line in lines[1:]), (
+            f"{name} carries docstring prose no client is served"
+        )
         parameters = list(inspect.signature(function).parameters)
         assert parameters[0] == "call"
         for parameter in parameters[1:]:
-            assert f":param {parameter}:" in docstring, f"{name} does not document '{parameter}'"
+            matching = [line for line in lines if line.startswith(f":param {parameter}:")]
+            assert len(matching) == 1, f"{name} documents '{parameter}' not exactly once"
+            # A bare marker is not just unserved prose: the mcp layer's parser glues the
+            # following line into this parameter's description, so the fragment must be
+            # on the marker line itself.
+            assert matching[0] != f":param {parameter}:", (
+                f"{name} leaves '{parameter}' without a description fragment"
+            )
 
 
 def test_tool_options_are_supported_by_the_decorator() -> None:
