@@ -151,8 +151,9 @@ def rex_find_functions_by_pattern(
     matcher, pattern_length = _compile_pattern(pattern)
     hits: dict[int, _FunctionHits] = {}
     truncated = False
+    get_functions_containing = bv.get_functions_containing
     for address in _iter_pattern_matches(bv, matcher, pattern_length):
-        containing = bv.get_functions_containing(address)
+        containing = get_functions_containing(address)
         if not containing:
             continue
         function = containing[0]

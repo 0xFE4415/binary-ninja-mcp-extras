@@ -185,11 +185,13 @@ def _iter_pattern_matches(
             start = max(start, bounds[0])
             end = min(end, bounds[1])
         position = start
+        read = bv.read
+        finditer = matcher.finditer
         while position < end:
             read_size = min(_READ_CHUNK + pattern_length - 1, end - position)
-            chunk = bv.read(position, read_size)
+            chunk = read(position, read_size)
             if chunk:
-                for match in matcher.finditer(chunk):
+                for match in finditer(chunk):
                     yield position + match.start()
             position += _READ_CHUNK
 
@@ -213,7 +215,7 @@ def _render_function_disassembly(function: Any) -> list[tuple[int, str]]:
         for line in block.get_disassembly_text():
             # Unaddressed continuation lines cannot anchor or be reported by address.
             if line.address is not None:
-                lines.append((line.address, "".join(str(token) for token in line.tokens)))
+                lines.append((line.address, "".join(map(str, line.tokens))))
     lines.sort(key=lambda entry: entry[0])
     return lines
 
