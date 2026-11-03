@@ -45,28 +45,20 @@ def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
         error_message = str(error)
 
     stdout, stdout_truncated = _truncate_with_flag(buffer.getvalue(), _MAX_EVAL_STDOUT_CHARS)
+    # Success-shaped error field: exactly one of result and error is populated per run.
+    result, result_truncated = None, False
+    error, error_truncated = None, False
     if error_message is not None:
-        message, error_truncated = _truncate_with_flag(error_message)
-        return {
-            "stdout": stdout,
-            "stdout_truncated": stdout_truncated,
-            "result": None,
-            "result_truncated": False,
-            "error": message,
-            "error_truncated": error_truncated,
-        }
-    result, result_truncated = (
-        _truncate_with_flag(raw_result, _MAX_EVAL_RESULT_CHARS)
-        if raw_result is not None
-        else (None, False)
-    )
+        error, error_truncated = _truncate_with_flag(error_message)
+    elif raw_result is not None:
+        result, result_truncated = _truncate_with_flag(raw_result, _MAX_EVAL_RESULT_CHARS)
     return {
         "stdout": stdout,
         "stdout_truncated": stdout_truncated,
         "result": result,
         "result_truncated": result_truncated,
-        "error": None,
-        "error_truncated": False,
+        "error": error,
+        "error_truncated": error_truncated,
     }
 
 

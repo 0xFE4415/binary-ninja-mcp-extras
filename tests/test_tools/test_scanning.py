@@ -121,6 +121,8 @@ def test_data_find_section_limit_and_errors() -> None:
     with pytest.raises(FakeToolError) as exc:
         find(_call(view), pattern="zz")
     assert exc.value.code == "invalid_pattern"
+    # The message is the underlying HexPatternError's text, passed through str().
+    assert exc.value.message == "invalid hex byte token 'zz'"
 
 
 def test_data_find_pagination_beyond_the_result_set() -> None:
@@ -395,6 +397,7 @@ def test_data_find_rejects_oversized_pattern() -> None:
     with pytest.raises(FakeToolError) as exc:
         find(_call(view), pattern=oversized)
     assert exc.value.code == "pattern_too_large"
+    assert exc.value.message == f"pattern exceeds {scanning._MAX_PATTERN_CHARS} characters"
     # A pattern of exactly the cap is still accepted (it just cannot match 4 bytes).
     boundary = "90" * (scanning._MAX_PATTERN_CHARS // 2)
     assert find(_call(view), pattern=boundary)["total"] == 0
@@ -414,6 +417,8 @@ def test_search_tools_report_empty_results_on_an_empty_view() -> None:
     with pytest.raises(FakeToolError) as exc:
         containing(_call(view), 0x1000)
     assert exc.value.code == "no_function"
+    # Scan-style tools answer "no function", argument-validating tools "analyzed function".
+    assert exc.value.message == "no function contains 0x1000"
 
 
 def _find_functions_view() -> FakeBinaryView:

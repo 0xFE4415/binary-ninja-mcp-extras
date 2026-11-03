@@ -21,7 +21,7 @@ pub struct RunningScan {
     pub truncated: bool,
     /// Absolute addresses inside the `[offset, offset+limit)` window, ascending.
     pub matches: Vec<u64>,
-    // Address of the last match `record_new` counted; None before the first.
+    /// Address of the last match `record_new` counted; None before the first.
     last_recorded: Option<u64>,
 }
 
@@ -94,8 +94,13 @@ pub fn scan_pattern(
     pagination: &Pagination,
     running: &mut RunningScan,
 ) -> bool {
-    if pattern.is_empty() || running.is_done() {
-        return !running.is_done();
+    if running.is_done() {
+        return false;
+    }
+    if pattern.is_empty() {
+        // `HexPattern::parse` rejects empty patterns, so this guards direct
+        // construction only: nothing to count, nothing to stop for.
+        return true;
     }
     let bytes = pattern.bytes();
     let pattern_len = bytes.len();

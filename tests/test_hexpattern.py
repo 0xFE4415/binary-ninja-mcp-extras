@@ -5,10 +5,22 @@ import pytest
 from binja_plugin.hexpattern import HexPatternError, compile_hex_pattern, parse_hex_pattern
 
 
-@pytest.mark.parametrize("pattern", ["", "   ", "4", "48 8", "zz", "48 8z", "48 8\nz"])
-def test_parse_rejects_invalid_patterns(pattern: str) -> None:
-    with pytest.raises(HexPatternError):
+@pytest.mark.parametrize(
+    "pattern,expected_message",
+    [
+        ("", "empty hex pattern"),
+        ("   ", "empty hex pattern"),
+        ("4", "hex pattern must contain whole bytes"),
+        ("48 8", "hex pattern must contain whole bytes"),
+        ("zz", "invalid hex byte token 'zz'"),
+        ("48 8z", "invalid hex byte token '8z'"),
+        ("48 8\nz", "invalid hex byte token '8z'"),
+    ],
+)
+def test_parse_rejects_invalid_patterns(pattern: str, expected_message: str) -> None:
+    with pytest.raises(HexPatternError) as exc:
         parse_hex_pattern(pattern)
+    assert str(exc.value) == expected_message
 
 
 @pytest.mark.parametrize(

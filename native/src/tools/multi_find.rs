@@ -52,6 +52,10 @@ impl TypedMcpTool for RxMultiFind {
         call: &McpToolCall,
         args: MultiFindArgs,
     ) -> Result<McpToolResult, McpToolError> {
+        // The published schema caps the list (minItems/maxItems), but nothing
+        // on the server enforces array length before `invoke`: the typed
+        // adapter only deserializes, and an empty list would also violate
+        // `longest_pattern_overlap`'s precondition below.
         if args.patterns.is_empty() {
             return Err(McpToolError::invalid_params(
                 "at least one pattern is required",

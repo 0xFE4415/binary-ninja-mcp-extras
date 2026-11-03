@@ -18,6 +18,7 @@ from binja_plugin.tools import (
     _name_filter,
     _render_function_disassembly,
     _require_analyzed_function,
+    _resolve_address_batch,
     _truncate,
     _validate_disasm_window,
     _validate_range,
@@ -131,28 +132,7 @@ def rex_decompile_many(
     """
     bv = call.binary_view
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
-    if not isinstance(functions, list):
-        raise mcp.ToolError("invalid_params", "functions must be a list of address expressions")
-    if not 1 <= len(functions) <= _MAX_DECOMPILE_BATCH:
-        raise mcp.ToolError(
-            "invalid_params",
-            f"functions must contain between 1 and {_MAX_DECOMPILE_BATCH} address expressions",
-        )
-    # Resolve and check every entry before rendering anything, so a bad entry anywhere
-    # in the batch cannot leave a partial result behind.
-    resolved: list[Function] = []
-    for index, entry in enumerate(functions):
-        if not isinstance(entry, str):
-            raise mcp.ToolError(
-                "invalid_params", f"functions[{index}] must be a string address expression"
-            )
-        try:
-            address = call.parse_address(entry)
-        except Exception as error:
-            raise mcp.ToolError(
-                "invalid_params", f"bad address expression '{_truncate(entry)}': {error}"
-            ) from None
-        resolved.append(_require_analyzed_function(bv, address))
+    resolved = _resolve_address_batch(call, bv, functions, _MAX_DECOMPILE_BATCH)
     rendered: list[dict[str, object]] = []
     for function in resolved:
         lines, truncated = _render_hlil_lines(function.hlil, max_lines)

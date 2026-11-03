@@ -137,6 +137,37 @@ def _require_analyzed_function(bv: BinaryView, address: int) -> Function:
     return _require_containing_function(bv, address, "invalid_params", "analyzed function")
 
 
+def _resolve_address_batch(
+    call: mcp.ToolCall, bv: BinaryView, functions: object, maximum: int
+) -> list[Function]:
+    """Resolve a tool's ``functions`` list of address expressions to analyzed functions.
+
+    Every entry is resolved before anything is handed back, so a bad entry anywhere in
+    the batch cannot leave a partial result behind.
+    """
+    if not isinstance(functions, list):
+        raise mcp.ToolError("invalid_params", "functions must be a list of address expressions")
+    if not 1 <= len(functions) <= maximum:
+        raise mcp.ToolError(
+            "invalid_params",
+            f"functions must contain between 1 and {maximum} address expressions",
+        )
+    resolved: list[Function] = []
+    for index, entry in enumerate(functions):
+        if not isinstance(entry, str):
+            raise mcp.ToolError(
+                "invalid_params", f"functions[{index}] must be a string address expression"
+            )
+        try:
+            address = call.parse_address(entry)
+        except Exception as error:
+            raise mcp.ToolError(
+                "invalid_params", f"bad address expression '{_truncate(entry)}': {error}"
+            ) from None
+        resolved.append(_require_analyzed_function(bv, address))
+    return resolved
+
+
 def _iter_pattern_matches(
     bv: BinaryView,
     matcher: re.Pattern[bytes],

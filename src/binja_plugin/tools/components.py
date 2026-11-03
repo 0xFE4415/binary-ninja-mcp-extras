@@ -5,11 +5,10 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from binaryninja import mcp
-from binaryninja.function import Function
 
 from binja_plugin.tools import (
     _MAX_LIMIT,
-    _require_analyzed_function,
+    _resolve_address_batch,
     _truncate,
     _validate_range,
     _validate_text,
@@ -69,27 +68,7 @@ def rex_component_add_functions(
     """
     bv = call.binary_view
     _validate_component_path("path", path)
-    if not isinstance(functions, list):
-        raise mcp.ToolError("invalid_params", "functions must be a list of address expressions")
-    if not 1 <= len(functions) <= _MAX_COMPONENT_ADD_FUNCTIONS:
-        raise mcp.ToolError(
-            "invalid_params",
-            "functions must contain between 1 and "
-            f"{_MAX_COMPONENT_ADD_FUNCTIONS} address expressions",
-        )
-    resolved: list[Function] = []
-    for index, entry in enumerate(functions):
-        if not isinstance(entry, str):
-            raise mcp.ToolError(
-                "invalid_params", f"functions[{index}] must be a string address expression"
-            )
-        try:
-            address = call.parse_address(entry)
-        except Exception as error:
-            raise mcp.ToolError(
-                "invalid_params", f"bad address expression '{_truncate(entry)}': {error}"
-            ) from None
-        resolved.append(_require_analyzed_function(bv, address))
+    resolved = _resolve_address_batch(call, bv, functions, _MAX_COMPONENT_ADD_FUNCTIONS)
     component = _resolve_component(call, path)
     results = []
     for function in resolved:

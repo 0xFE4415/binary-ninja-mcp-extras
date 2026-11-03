@@ -44,9 +44,12 @@ impl HexPattern {
         if !chars.len().is_multiple_of(2) {
             return Err(PatternError::new("hex pattern must contain whole bytes"));
         }
-        let bytes = chars
-            .chunks(2)
-            .map(|pair| {
+        // The length check above guarantees `as_chunks` leaves no remainder.
+        let (pairs, remainder) = chars.as_chunks();
+        debug_assert!(remainder.is_empty());
+        let bytes = pairs
+            .iter()
+            .map(|&pair| {
                 if pair == ['?', '?'] {
                     return Ok(None);
                 }
@@ -88,10 +91,7 @@ impl HexPattern {
     }
 }
 
-fn parse_hex_byte(pair: &[char]) -> Option<u8> {
-    let [high, low] = pair else {
-        return None;
-    };
+fn parse_hex_byte([high, low]: [char; 2]) -> Option<u8> {
     Some((high.to_digit(16)? << 4 | low.to_digit(16)?) as u8)
 }
 
@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn finds_first_concrete_run() {
         let pattern = HexPattern::parse("?? ?? 48 8b ?? 8b 05").unwrap();
-        assert_eq!(pattern.first_concrete_run(), Some((2, vec![0x48, 0x8b])),);
+        assert_eq!(pattern.first_concrete_run(), Some((2, vec![0x48, 0x8b])));
         assert_eq!(pattern.first_concrete(), Some((2, 0x48)));
     }
 
@@ -244,5 +244,19 @@ mod tests {
             format!("{}... [{} chars truncated]", "a".repeat(512), 88)
         );
         assert_eq!(truncate_echo("short", TRUNCATE_CHARS), "short");
+    }
+
+    #[test]
+    fn truncate_echo_counts_characters_not_bytes() {
+        // Python len() on str counts characters, so a string of 512 two-byte
+        // characters fits the limit exactly and is echoed untruncated.
+        let at_cap = "è".repeat(TRUNCATE_CHARS);
+        assert_eq!(truncate_echo(&at_cap, TRUNCATE_CHARS), at_cap);
+        // One character over truncates by one character, not two bytes.
+        let text = format!("{at_cap}è");
+        assert_eq!(
+            truncate_echo(&text, TRUNCATE_CHARS),
+            format!("{at_cap}... [1 chars truncated]")
+        );
     }
 }

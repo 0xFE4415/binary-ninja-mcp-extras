@@ -106,7 +106,7 @@ def test_export_disasm_rejects_a_single_line_over_the_cap(
     with pytest.raises(FakeToolError) as exc:
         export(_call(view), 0x1104, filename="tiny.txt")
     assert exc.value.code == "export_failed"
-    assert "first entry" in exc.value.message
+    assert exc.value.message == "first entry exceeds the export byte cap"
     # The rejection happens before any filesystem work: not even the root was created.
     assert not root.exists()
 
@@ -171,6 +171,8 @@ def test_export_disasm_reports_export_failed_when_the_write_fails(
     with pytest.raises(FakeToolError) as exc:
         export(_call(view), 0x1104, filename="occupied.txt")
     assert exc.value.code == "export_failed"
+    # The OSError text is appended, so the message stays explainable to the caller.
+    assert exc.value.message.startswith("could not write export file: ")
 
 
 def test_export_symbols_reports_export_failed_when_the_root_cannot_be_created(
@@ -413,7 +415,7 @@ def test_export_symbols_rejects_a_single_row_over_the_cap(
     with pytest.raises(FakeToolError) as exc:
         export(_call(_symbol_view()), 0x1000, 0x4000, filename="tiny.csv")
     assert exc.value.code == "export_failed"
-    assert "first entry" in exc.value.message
+    assert exc.value.message == "first entry exceeds the export byte cap"
     assert not root.exists()
 
 
