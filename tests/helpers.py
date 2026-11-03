@@ -214,6 +214,54 @@ class FakeSymbol:
         self.name = name
 
 
+class FakeCoreSymbol:
+    """Mirrors the CoreSymbol surface rex_relocation_at reads."""
+
+    def __init__(self, full_name: str) -> None:
+        self.full_name = full_name
+
+
+class FakeRelocationInfo:
+    """Mirrors the RelocationInfo fields rex_relocation_at reads.
+
+    ``type`` is a namespace with ``name`` like the other fakes, mirroring the enum
+    member the real core hands back.
+    """
+
+    def __init__(
+        self,
+        *,
+        type_name: str,
+        address: int,
+        size: int = 8,
+        addend: int = 0,
+        implicit_addend: bool = False,
+        pc_relative: bool = False,
+    ) -> None:
+        self.type = types.SimpleNamespace(name=type_name)
+        self.address = address
+        self.size = size
+        self.addend = addend
+        self.implicit_addend = implicit_addend
+        self.pc_relative = pc_relative
+
+
+class FakeRelocation:
+    """Mirrors the Relocation fields rex_relocation_at reads."""
+
+    def __init__(
+        self,
+        info: FakeRelocationInfo,
+        target: int,
+        reloc: int,
+        symbol: FakeCoreSymbol | None = None,
+    ) -> None:
+        self.info = info
+        self.target = target
+        self.reloc = reloc
+        self.symbol = symbol
+
+
 class FakeAnalysisState(enum.IntEnum):
     """Mirrors binaryninja.enums.AnalysisState."""
 
@@ -366,6 +414,7 @@ class FakeBinaryView:
         defined_type_name: str | None = None,
         derived_strings: list[FakeDerivedString] | None = None,
         component_root: FakeComponent | None = None,
+        relocations: list[FakeRelocation] | None = None,
     ) -> None:
         self.strings = strings if strings is not None else []
         self.segments = segments if segments is not None else []
@@ -436,6 +485,7 @@ class FakeBinaryView:
             component_root if component_root is not None else FakeComponent("__root__", "guid-root")
         )
         self._created_components: list[FakeComponent] = []
+        self._relocations = relocations if relocations is not None else []
 
     def get_section_by_name(self, name: str) -> object:
         if name not in self._sections:
@@ -469,7 +519,9 @@ class FakeBinaryView:
             if progress_func is not None and progress_func(self.end, self.end) is False:
                 self.constant_scan_aborted = True
 
-    def read(self, address: int, length: int) -> bytes | None:
+    def read(self, address: int, length: int) -> bytes:
+        # Mirrors the real BinaryView.read: at most length bytes, silently shortened at
+        # the end of the blob holding the address, empty when nothing is mapped there.
         # A stalled chunked scan would read below every readable segment forever.
         readable_starts = [segment.start for segment in self.segments if segment.readable]
         if address < 0 or (readable_starts and address < min(readable_starts)):
@@ -478,7 +530,7 @@ class FakeBinaryView:
             offset = address - base
             if 0 <= offset < len(blob):
                 return blob[offset : offset + length]
-        return None
+        return b""
 
     def write(self, address: int, data: bytes) -> int:
         self.written.append((address, bytes(data)))
@@ -512,6 +564,16 @@ class FakeBinaryView:
             if string.start == address:
                 return string
         return None
+
+    def relocations_at(self, addr: int) -> list[FakeRelocation]:
+        # Mirrors the observed core lookup: a relocation matches any address in its
+        # [info.address, info.address + info.size) span, and the list is echoed as
+        # stored — duplicate entries included.
+        return [
+            relocation
+            for relocation in self._relocations
+            if relocation.info.address <= addr < relocation.info.address + relocation.info.size
+        ]
 
     def create_user_function(self, address: int) -> FakeFunction:
         function = FakeFunction(f"sub_{address:x}", address, address + 1)
@@ -692,7 +754,7 @@ class SpyBinaryView(FakeBinaryView):
         self.lookup_addresses: list[int] = []
 
     @override
-    def read(self, address: int, length: int) -> bytes | None:
+    def read(self, address: int, length: int) -> bytes:
         self.read_addresses.append(address)
         return super().read(address, length)
 

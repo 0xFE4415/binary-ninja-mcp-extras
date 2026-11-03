@@ -48,8 +48,8 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 ## Tool reference
 
 Every tool is pinned as read-only or destructive when it registers, and that marking
-is the only approval-policy signal an MCP client gets. The tables below cover all 37
-registered tools, split on that marking: 35 Python `rex_*` tools and 2 native `rx_*`
+is the only approval-policy signal an MCP client gets. The tables below cover all 39
+registered tools, split on that marking: 37 Python `rex_*` tools and 2 native `rx_*`
 scanners. Read the destructive table before handing an agent free rein.
 
 ### Read-only tools
@@ -58,6 +58,7 @@ scanners. Read the destructive table before handing an agent free rein.
 | --- | --- |
 | `rex_string_search` | Search detected strings by substring or regex; section and type filters. |
 | `rex_data_find` | Find every occurrence of a hex byte pattern (`??` wildcards) in mapped memory. |
+| `rex_data_read` | Read mapped bytes at an address, relocations applied; reports what it actually read. |
 | `rx_multi_find` | Many hex patterns in one pass, via a multi-pattern automaton in Rust. |
 | `rx_data_find` | `rex_data_find`'s contract with the byte scan running in native Rust. |
 | `rex_hlil_grep` | Regex search over rendered HLIL text, paged with a `next_offset` cursor. |
@@ -72,6 +73,7 @@ scanners. Read the destructive table before handing an agent free rein.
 | `rex_function_containing` | List the functions containing an address. |
 | `rex_component_get` | Look up a component by path; report functions and child components. |
 | `rex_string_read_at` | Read the detected string at an address. |
+| `rex_relocation_at` | List the relocations covering an address, symbol names included. |
 | `rex_tag_list` | List the tags set on the binary view. |
 | `rex_report_show` | Render a markdown report with `binaryninja://` links into the view. |
 | `rex_kv_get` | Read a stored scratch string from the view's database. |
@@ -124,6 +126,9 @@ scanners. Read the destructive table before handing an agent free rein.
   in `rex_kv_set`/`rex_kv_get`, `rex_report_show`'s preview, and `rex_string_read_at`'s
   value. On the listing tools, `truncated` means rows were left out, never a clipped
   string.
+- `rex_data_read` never passes a shortened core read off as the requested one: an
+  unmapped or partially mapped range comes back with `bytes_read` and a `complete`
+  flag stating exactly what was read, next to the requested `length`.
 - `rex_eval_python` is the one tool that reports failure in-band: an exception comes
   back in the response's `error` field instead of raising a tool error.
 - Batch tools (`rex_annotate_many`, `rex_component_add_functions`,

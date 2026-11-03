@@ -20,3 +20,12 @@ class AnalysisState(IntEnum):
 class DerivedStringLocationType(IntEnum):
     DataBackedStringLocation = 0
     CodeStringLocation = 1
+
+
+class RelocationType(IntEnum):
+    ELFGlobalRelocationType = 0
+    ELFCopyRelocationType = 1
+    ELFJumpSlotRelocationType = 2
+    StandardRelocationType = 3
+    IgnoredRelocation = 4
+    UnhandledRelocation = 5
