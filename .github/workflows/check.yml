@@ -51,6 +51,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # Cache the cargo registry and git checkouts so the stub-core build only
+      # recompiles what changed; keyed on native/Cargo.lock plus the workflow.
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+          cache-targets: true
       - name: Cache apt packages
         uses: actions/cache@v6
         with:
@@ -66,7 +73,31 @@ jobs:
       - name: Run native checks
         run: uvx nox -s native
 
-  mutation:
+  mutation-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.13"
+      - name: Cache apt packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/apt/archives
+          key: apt-${{ runner.os }}-mutation-python-${{ hashFiles('.github/workflows/check.yml') }}
+      - name: Install jq
+        run: |
+          mkdir -p "$HOME/.cache/apt/archives"
+          sudo apt-get update
+          sudo apt-get \
+            -o Dir::Cache::archives="$HOME/.cache/apt/archives" \
+            install -y jq
+      - name: Run Python mutation gate
+        run: uvx nox -s mutation
+
+  mutation-native:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -77,11 +108,17 @@ jobs:
           python-version: "3.13"
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      # Cache the cargo registry/git databases; cargo-mutants builds each mutant
+      # in its own scratch target dir, so only the dependency downloads are reusable.
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
       - name: Cache apt packages
         uses: actions/cache@v6
         with:
           path: ~/.cache/apt/archives
-          key: apt-${{ runner.os }}-mutation-${{ hashFiles('.github/workflows/check.yml') }}
+          key: apt-${{ runner.os }}-mutation-native-${{ hashFiles('.github/workflows/check.yml') }}
       - name: Install build prerequisites
         run: |
           mkdir -p "$HOME/.cache/apt/archives"
@@ -89,9 +126,12 @@ jobs:
           sudo apt-get \
             -o Dir::Cache::archives="$HOME/.cache/apt/archives" \
             install -y clang cmake ninja-build jq
+      # Prebuilt binary instead of `cargo install --locked`, which compiled the
+      # tool from source on every run; the version is pinned with the toolchain
+      # to keep mutant outcomes reproducible.
       - name: Install cargo-mutants
-        run: cargo install --locked cargo-mutants
-      - name: Run Python mutation gate
-        run: uvx nox -s mutation
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@27.1.0
       - name: Run native mutation gate
         run: uvx nox -s mutation_native
