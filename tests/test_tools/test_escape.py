@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 import pytest
 from helpers import FakeBinaryView, FakeToolError, _call, _view_with_functions, get_tool
 
@@ -37,6 +39,16 @@ def test_eval_python_executes_code() -> None:
     probe = evaluate(_call(view), "result = (bn is binaryninja) and (call.binary_view is bv)")
     assert probe["result"] == "True"
     assert probe["error"] is None
+
+
+def test_eval_python_docstring_lists_the_exec_namespace() -> None:
+    # The MCP layer serves only the first docstring line, so the bindings the exec
+    # namespace provides must be named there or they are undiscoverable without probing.
+    _, evaluate = get_tool("rex_eval_python")
+    probe = evaluate(_call(_view_with_functions()), "result = sorted(globals())")
+    assert probe["result"] == repr(["__builtins__", "binaryninja", "bn", "bv", "call"])
+    first_line = inspect.cleandoc(escape.rex_eval_python.__doc__ or "").splitlines()[0]
+    assert first_line == "Run Binary Ninja Python; globals: bv, bn, binaryninja, call."
 
 
 def test_eval_python_truncates_stdout_and_result() -> None:
