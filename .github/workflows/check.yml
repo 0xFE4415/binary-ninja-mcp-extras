@@ -102,6 +102,10 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.13"
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       # Cache the cargo registry/git databases; cargo-mutants builds each mutant
