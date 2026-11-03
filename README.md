@@ -48,8 +48,8 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 ## Tool reference
 
 Every tool is pinned as read-only or destructive when it registers, and that marking
-is the only approval-policy signal an MCP client gets. The tables below cover all 39
-registered tools, split on that marking: 37 Python `rex_*` tools and 2 native `rx_*`
+is the only approval-policy signal an MCP client gets. The tables below cover all 41
+registered tools, split on that marking: 39 Python `rex_*` tools and 2 native `rx_*`
 scanners. Read the destructive table before you let an agent run those tools.
 
 ### Read-only tools
@@ -65,7 +65,8 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_constant_find` | Find functions whose rendered instructions reference a constant value. |
 | `rex_find_functions_by_pattern` | Map a byte pattern to the functions containing its matches. |
 | `rex_string_refs` | Code refs to detected strings, synthesized included; filters. |
-| `rex_disasm_at` | Disassembly window anchored at an address, clipped at the function's edges. |
+| `rex_xrefs_to` | Code and data references to an address. |
+| `rex_disasm_at` | Window (max 4096 instructions per side); full function: `rex_export_disasm`. |
 | `rex_decompile_many` | HLIL render for up to 16 functions in one batch call. |
 | `rex_quick_main` | Entry point, `main`, and `main`'s HLIL in one call. |
 | `rex_analysis_wait` | Bounded wait for background analysis; snapshot at expiry. |
@@ -77,6 +78,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_tag_list` | List the tags set on the binary view. |
 | `rex_report_show` | Render a markdown report with `binaryninja://` links into the view. |
 | `rex_kv_get` | Read a stored scratch string from the view's database. |
+| `rex_help` | List the `rex_*` tools, or one tool's parameters. |
 
 ### Destructive tools
 
@@ -96,13 +98,16 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_kv_delete` | Delete a previously stored scratch value. |
 | `rex_export_disasm` | Write one function's disassembly window to a file. |
 | `rex_export_symbols` | Write an address range's symbols to a CSV or JSON file. |
-| `rex_eval_python` | Run arbitrary Binary Ninja Python; the escape hatch for everything else. |
+| `rex_eval_python` | Run arbitrary Binary Ninja Python; binds `bv`, `call`, `binaryninja`/`bn`. |
 | `rex_binary_close` | Discard unsaved changes and close the view. |
 | `rex_undo` | Undo the view's last transaction; reports post-op stack depths. |
 | `rex_redo` | Redo the last undone transaction; reports post-op stack depths. |
 
 ### Shared response contract
 
+- Stock `bn_*` listings (e.g. `bn_function_list`) return a markdown table in the `content` field
+  with no `structuredContent`. The `rex_*` listing tools are the structured
+  `total`/`truncated` contract; consumers wanting one parse path should prefer them.
 - Paged listings return `total`, `truncated`, and a `limit`/`offset` window:
   `rex_string_search`, `rex_data_find`, `rex_string_refs`, `rex_tag_list`, and
   `rex_export_symbols`. `rex_component_get` paginates the same way but names its count
