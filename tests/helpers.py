@@ -470,6 +470,10 @@ class FakeBinaryView:
                 self.constant_scan_aborted = True
 
     def read(self, address: int, length: int) -> bytes | None:
+        # A stalled chunked scan would read below every readable segment forever.
+        readable_starts = [segment.start for segment in self.segments if segment.readable]
+        if address < 0 or (readable_starts and address < min(readable_starts)):
+            raise AssertionError(f"read below the lowest readable segment: {address:#x}")
         for base, blob in self._memory.items():
             offset = address - base
             if 0 <= offset < len(blob):

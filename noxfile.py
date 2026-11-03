@@ -9,11 +9,7 @@ nox.options.default_venv_backend = "uv|virtualenv"
 # mutation is slow and opt-in: run it explicitly with `nox -s mutation`.
 nox.options.sessions = ["format", "ruff", "size", "ty", "test", "native", "check"]
 
-# Ceilings on alive (survived + timed out) mutants; lower them as mutants get killed.
-PYTHON_MUTANT_CEILING = 30
-RUST_MUTANT_CEILING = 5
-
-# Ratchet on file size, like the mutant ceilings: it may be raised only deliberately,
+# Ratchet on file size, like the mutant gate: it may be raised only deliberately,
 # never to quietly admit growth. Set to 1.5x the largest file in the gate's tree at
 # introduction (tests/test_tools/test_decompile.py), rounded up to the next 50.
 SIZE_LIMIT_BYTES = 51350
@@ -92,7 +88,7 @@ def mutation(session: nox.Session) -> None:
         "jq",
         "-e",
         ".total > 0 and (.killed + .survived + .timeout) == .total"
-        f" and (.survived + .timeout) <= {PYTHON_MUTANT_CEILING}",
+        " and (.survived + .timeout) == 0",
         stats.as_posix(),
         external=True,
     )
@@ -110,7 +106,7 @@ def mutation_native(session: nox.Session) -> None:
         "-e",
         ".total_mutants > 0"
         " and (.caught + .missed + .timeout + .unviable) == .total_mutants"
-        f" and (.missed + .timeout) <= {RUST_MUTANT_CEILING}",
+        " and (.missed + .timeout) == 0",
         outcomes.as_posix(),
         external=True,
     )
