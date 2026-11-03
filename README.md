@@ -63,7 +63,7 @@ scanners. Read the destructive table before handing an agent free rein.
 | `rex_hlil_grep` | Regex search over rendered HLIL text, paged with a `next_offset` cursor. |
 | `rex_constant_find` | Find functions whose rendered instructions reference a constant value. |
 | `rex_find_functions_by_pattern` | Map a byte pattern to the functions containing its matches. |
-| `rex_derived_string_refs` | Code refs to derived strings (static plus synthesized); no filters. |
+| `rex_string_refs` | Code refs to detected strings, synthesized included; filters. |
 | `rex_disasm_at` | Address-anchored disassembly window, clipped at the function's edges. |
 | `rex_decompile_many` | HLIL render for up to 16 functions in one batch call. |
 | `rex_quick_main` | Entry point, `main`, and `main`'s HLIL in one call. |
@@ -102,7 +102,7 @@ scanners. Read the destructive table before handing an agent free rein.
 ### Shared response contract
 
 - Paged listings return `total`, `truncated`, and a `limit`/`offset` window:
-  `rex_string_search`, `rex_data_find`, `rex_derived_string_refs`, `rex_tag_list`, and
+  `rex_string_search`, `rex_data_find`, `rex_string_refs`, `rex_tag_list`, and
   `rex_export_symbols`. `rex_component_get` paginates the same way but names its count
   `function_count`.
 - Early-stop scans (`rex_constant_find`, `rex_find_functions_by_pattern`,
@@ -147,7 +147,7 @@ On a six-figure-function database, the whole-database searches stay bounded per 
 
 ### Known limits
 
-- `rex_string_search`, `rex_derived_string_refs`, and `rex_hlil_grep` compile
+- `rex_string_search`, `rex_string_refs`, and `rex_hlil_grep` compile
   model-supplied regular expressions with Python's `re`, which has no match timeout. A
   pattern prone to catastrophic backtracking (nested quantifiers like `(a+)+$`) can
   stall the invocation indefinitely, and the server processes calls serially while it

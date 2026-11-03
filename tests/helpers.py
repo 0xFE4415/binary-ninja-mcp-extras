@@ -360,6 +360,7 @@ class FakeBinaryView:
         file: FakeFileMetadata | None = None,
         arch: FakeArchitecture | None = None,
         library_types: dict[str, str | None] | None = None,
+        code_refs: dict[int, list[FakeReferenceSource]] | None = None,
         types: dict[str, FakeType] | None = None,
         structure: FakeStructureType | None = None,
         defined_type_name: str | None = None,
@@ -413,6 +414,9 @@ class FakeBinaryView:
         # (None models the core refusing to build anything).
         self.arch = arch
         self._library_types = library_types or {}
+        # Address -> code refs pointing at it, answered by get_code_refs.
+        self._code_refs = code_refs or {}
+        self.code_ref_requests: list[tuple[int, int | None]] = []
         self._types = types or {}
         self._structure = structure
         self._defined_type_name = defined_type_name
@@ -577,8 +581,16 @@ class FakeBinaryView:
         self, name: str, library: FakeTypeLibrary | None = None
     ) -> FakeType | None:
         self.imported_library_types.append((library, name))
+        # Mirrors the core: an NTR comes back for every requested name. Names absent
+        # from ``library_types`` get the requested name back and register nothing; a
+        # None entry models the core returning no handle despite provision.
         resolved = self._library_types.get(name)
-        return FakeType(name=resolved) if resolved is not None else None
+        if name not in self._library_types:
+            return FakeType(name=name)
+        if resolved is None:
+            return None
+        self._types[resolved] = FakeType(name=resolved)
+        return FakeType(name=resolved)
 
     def get_type_by_name(self, name: str) -> FakeType | None:
         return self._types.get(name)
@@ -613,6 +625,16 @@ class FakeBinaryView:
         # for cap+1 items cannot silently return the whole unbounded list.
         self.derived_code_ref_requests.append(max_items)
         refs = list(derived_string.refs)
+        if max_items is not None:
+            refs = refs[:max_items]
+        yield from refs
+
+    def get_code_refs(
+        self, addr: int, length: int | None = None, max_items: int | None = None
+    ) -> Iterator[FakeReferenceSource]:
+        # Same bounding contract as get_derived_string_code_refs above.
+        self.code_ref_requests.append((addr, max_items))
+        refs = list(self._code_refs.get(addr, []))
         if max_items is not None:
             refs = refs[:max_items]
         yield from refs
@@ -730,14 +752,21 @@ class FakeTypeLibrary:
         file_bytes: bytes = b"BNTL",
         finalize_result: bool = True,
         write_error: OSError | None = None,
+        named_types: dict[str, FakeType] | None = None,
     ) -> None:
         self.name = name
         self.arch = arch
         self.file_bytes = file_bytes
         self.finalize_result = finalize_result
         self.write_error = write_error
+        # Names the library provides, answered by get_named_type; everything else is
+        # absent from the library even though the view-level import still returns an NTR.
+        self.named_types = named_types or {}
         self.finalized = False
         self.written_paths: list[str] = []
+
+    def get_named_type(self, name: str) -> FakeType | None:
+        return self.named_types.get(name)
 
     @staticmethod
     def load_from_file(path: str) -> FakeTypeLibrary | None:
