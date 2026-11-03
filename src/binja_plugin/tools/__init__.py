@@ -348,8 +348,8 @@ from .state import (
     rex_undo,
 )
 from .strings import (
-    rex_derived_string_refs,
     rex_string_read_at,
+    rex_string_refs,
     rex_string_search,
 )
 from .types import (

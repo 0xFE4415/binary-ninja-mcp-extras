@@ -358,6 +358,7 @@ class FakeBinaryView:
         file: FakeFileMetadata | None = None,
         arch: FakeArchitecture | None = None,
         library_types: dict[str, str | None] | None = None,
+        code_refs: dict[int, list[FakeReferenceSource]] | None = None,
         types: dict[str, FakeType] | None = None,
         structure: FakeStructureType | None = None,
         defined_type_name: str | None = None,
@@ -411,6 +412,9 @@ class FakeBinaryView:
         # (None models the core refusing to build anything).
         self.arch = arch
         self._library_types = library_types or {}
+        # Address -> code refs pointing at it, answered by get_code_refs.
+        self._code_refs = code_refs or {}
+        self.code_ref_requests: list[tuple[int, int | None]] = []
         self._types = types or {}
         self._structure = structure
         self._defined_type_name = defined_type_name
@@ -619,6 +623,16 @@ class FakeBinaryView:
         # for cap+1 items cannot silently return the whole unbounded list.
         self.derived_code_ref_requests.append(max_items)
         refs = list(derived_string.refs)
+        if max_items is not None:
+            refs = refs[:max_items]
+        yield from refs
+
+    def get_code_refs(
+        self, addr: int, length: int | None = None, max_items: int | None = None
+    ) -> Iterator[FakeReferenceSource]:
+        # Same bounding contract as get_derived_string_code_refs above.
+        self.code_ref_requests.append((addr, max_items))
+        refs = list(self._code_refs.get(addr, []))
         if max_items is not None:
             refs = refs[:max_items]
         yield from refs

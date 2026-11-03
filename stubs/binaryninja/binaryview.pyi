@@ -124,6 +124,9 @@ class BinaryView:
     def get_derived_string_code_refs(
         self, derived_string: DerivedString, max_items: int | None = None
     ) -> Iterator[ReferenceSource]: ...
+    def get_code_refs(
+        self, addr: int, length: int | None = None, max_items: int | None = None
+    ) -> Iterator[ReferenceSource]: ...
     def show_markdown_report(self, title: str, contents: str, plaintext: str = "") -> None: ...
 
 

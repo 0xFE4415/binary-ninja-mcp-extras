@@ -1,8 +1,9 @@
-"""String tools: static string search, point reads, and derived strings with code references."""
+"""String tools: static string search, point reads, and code references to strings."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from itertools import chain
 from typing import Annotated, Any, Literal
 
 from binaryninja import mcp
@@ -20,10 +21,10 @@ from binja_plugin.tools import (
 
 _MAX_STRING_READ_CHARS = 4096
 
-# rex_derived_string_refs: the per-string code-ref echo cap. The core call itself is
+# rex_string_refs: the per-string code-ref echo cap. The core calls themselves are
 # bounded by max_items = cap + 1, so truncation is detected without enumerating past
 # what the response can echo.
-_MAX_DERIVED_STRING_REFS = 20
+_MAX_STRING_REFS = 20
 
 _STRING_TYPES = Literal["AsciiString", "Utf16String", "Utf32String", "Utf8String"]
 
@@ -39,7 +40,7 @@ def _text_matcher(pattern: str, regex: bool, ignore_case: bool) -> Callable[[str
 
 
 @mcp.tool(read_only=True)
-def rex_derived_string_refs(
+def rex_string_refs(
     call: mcp.ToolCall,
     pattern: str = "",
     regex: bool = False,
@@ -47,7 +48,7 @@ def rex_derived_string_refs(
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 20,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> dict[str, object]:
-    """Code references to the view's derived strings, recognizer-synthesized ones included.
+    """Code references to the view's detected strings, recognizer-synthesized ones included.
 
     :param pattern: Substring or regular expression to match; empty matches every string.
     :param regex: Treat pattern as a regular expression instead of a substring.
@@ -60,28 +61,45 @@ def rex_derived_string_refs(
     offset = _validate_range("offset", offset, 0)
     matches_text = _text_matcher(pattern, regex, ignore_case)
 
-    def keep(derived: Any) -> bool:
+    def keep(string: Any) -> bool:
         # str() on the wrapped value is total: the API layer falls back to charmap
         # decoding when the bytes are not UTF-8.
-        return matches_text(str(derived.value))
+        return matches_text(str(string.value))
 
-    page, total, truncated = _paginate(filter(keep, bv.derived_strings), offset, limit)
+    page, total, truncated = _paginate(
+        chain(
+            ((string, False) for string in bv.strings if keep(string)),
+            ((derived, True) for derived in bv.derived_strings if keep(derived)),
+        ),
+        offset,
+        limit,
+    )
     strings = []
-    for derived in page:
-        refs = list(
-            bv.get_derived_string_code_refs(derived, max_items=_MAX_DERIVED_STRING_REFS + 1)
-        )
-        location = derived.location
-        strings.append(
-            {
-                "value": _truncate(str(derived.value)),
-                "location": None
+    for string, derived in page:
+        if derived:
+            refs = list(bv.get_derived_string_code_refs(string, max_items=_MAX_STRING_REFS + 1))
+            location = string.location
+            location_out = (
+                None
                 if location is None
                 else {
                     "type": location.location_type.name,
                     "address": hex(location.address),
                     "length": location.length,
-                },
+                }
+            )
+        else:
+            refs = list(bv.get_code_refs(string.start, max_items=_MAX_STRING_REFS + 1))
+            location_out = {
+                "type": string.type.name,
+                "address": hex(string.start),
+                "length": len(string),
+            }
+        strings.append(
+            {
+                "value": _truncate(str(string.value)),
+                "location": location_out,
+                "derived": derived,
                 "refs": [
                     {
                         "function_start": None if ref.function is None else hex(ref.function.start),
@@ -90,9 +108,9 @@ def rex_derived_string_refs(
                         else _truncate(ref.function.name),
                         "address": hex(ref.address),
                     }
-                    for ref in refs[:_MAX_DERIVED_STRING_REFS]
+                    for ref in refs[:_MAX_STRING_REFS]
                 ],
-                "refs_truncated": len(refs) > _MAX_DERIVED_STRING_REFS,
+                "refs_truncated": len(refs) > _MAX_STRING_REFS,
             }
         )
     return {"total": total, "truncated": truncated, "strings": strings}

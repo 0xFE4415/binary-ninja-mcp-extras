@@ -200,10 +200,8 @@ def test_string_read_at_rejects_out_of_range_max_chars() -> None:
     assert at_minimum["truncated"] is True
 
 
-# --- rex_derived_string_refs -----------------------------------------------------------
-
-
-def _derived_view() -> FakeBinaryView:
+# --- rex_string_refs -------------------------------------------------------------------
+def _mixed_view() -> FakeBinaryView:
     handler = FakeFunction("handler", 0x2000, 0x2100)
     main = FakeFunction("main", 0x1100, 0x1200)
     located = FakeDerivedString(
@@ -212,53 +210,79 @@ def _derived_view() -> FakeBinaryView:
         refs=[FakeReferenceSource(handler, 0x2010), FakeReferenceSource(main, 0x1150)],
     )
     bare = FakeDerivedString("stack-built {}", None, refs=[FakeReferenceSource(None, 0x3300)])
-    return FakeBinaryView(derived_strings=[located, bare])
+    return FakeBinaryView(
+        strings=[FakeStringReference("usage: tool [-v]", 0x4000)],
+        code_refs={0x4000: [FakeReferenceSource(main, 0x1150)]},
+        derived_strings=[located, bare],
+    )
 
 
-def test_derived_string_refs_lists_strings_and_code_refs() -> None:
-    view = _derived_view()
-    _, refs = get_tool("rex_derived_string_refs")
+def test_string_refs_returns_refs_to_ordinary_strings() -> None:
+    # A binary with ordinary detected strings and code refs into them: the core case
+    # the derived-strings-only predecessor never saw.
+    view = FakeBinaryView(
+        strings=[FakeStringReference("usage: tool [-v]", 0x4000)],
+        code_refs={0x4000: [FakeReferenceSource(FakeFunction("main", 0x1100, 0x1200), 0x1150)]},
+    )
+    _, refs = get_tool("rex_string_refs")
     result = refs(_call(view))
     assert result == {
-        "total": 2,
+        "total": 1,
         "truncated": False,
         "strings": [
             {
-                "value": "Enter license: ",
-                "location": {"type": "CodeStringLocation", "address": "0x7ff0", "length": 15},
+                "value": "usage: tool [-v]",
+                "location": {"type": "AsciiString", "address": "0x4000", "length": 16},
+                "derived": False,
                 "refs": [
-                    {
-                        "function_start": "0x2000",
-                        "function_name": "handler",
-                        "address": "0x2010",
-                    },
-                    {"function_start": "0x1100", "function_name": "main", "address": "0x1150"},
+                    {"function_start": "0x1100", "function_name": "main", "address": "0x1150"}
                 ],
                 "refs_truncated": False,
-            },
-            {
-                "value": "stack-built {}",
-                "location": None,
-                "refs": [{"function_start": None, "function_name": None, "address": "0x3300"}],
-                "refs_truncated": False,
-            },
+            }
         ],
     }
     # Pin: the core call is bounded by exactly the echo cap plus one, so a wider or
-    # narrower bound than _MAX_DERIVED_STRING_REFS + 1 must update this pin deliberately.
+    # narrower bound than _MAX_STRING_REFS + 1 must update this pin deliberately.
+    assert view.code_ref_requests == [(0x4000, 21)]
+
+
+def test_string_refs_lists_ordinary_then_derived_strings() -> None:
+    view = _mixed_view()
+    _, refs = get_tool("rex_string_refs")
+    result = refs(_call(view))
+    assert [entry["derived"] for entry in result["strings"]] == [False, True, True]
+    assert result["total"] == 3
+    assert result["strings"][1:] == [
+        {
+            "value": "Enter license: ",
+            "location": {"type": "CodeStringLocation", "address": "0x7ff0", "length": 15},
+            "derived": True,
+            "refs": [
+                {"function_start": "0x2000", "function_name": "handler", "address": "0x2010"},
+                {"function_start": "0x1100", "function_name": "main", "address": "0x1150"},
+            ],
+            "refs_truncated": False,
+        },
+        {
+            "value": "stack-built {}",
+            "location": None,
+            "derived": True,
+            "refs": [{"function_start": None, "function_name": None, "address": "0x3300"}],
+            "refs_truncated": False,
+        },
+    ]
     assert view.derived_code_ref_requests == [21, 21]
 
 
-def test_derived_string_refs_filters_by_substring_regex_and_case() -> None:
-    strings = [
-        FakeDerivedString(
-            "alpha one", FakeDerivedStringLocation("DataBackedStringLocation", 0x10, 9)
-        ),
-        FakeDerivedString("beta two", None),
-        FakeDerivedString("ALPHA three", None),
-    ]
-    view = FakeBinaryView(derived_strings=strings)
-    _, refs = get_tool("rex_derived_string_refs")
+def test_string_refs_filters_by_substring_regex_and_case() -> None:
+    view = FakeBinaryView(
+        strings=[FakeStringReference("alpha one", 0x10)],
+        derived_strings=[
+            FakeDerivedString("beta two", None),
+            FakeDerivedString("ALPHA three", None),
+        ],
+    )
+    _, refs = get_tool("rex_string_refs")
     assert refs(_call(view), pattern="alpha")["total"] == 1
     assert refs(_call(view), pattern="alpha", ignore_case=True)["total"] == 2
     # "alpha (one|three)" is only matchable in regex mode: substring search finds neither.
@@ -270,10 +294,10 @@ def test_derived_string_refs_filters_by_substring_regex_and_case() -> None:
     assert empty == {"total": 0, "truncated": False, "strings": []}
 
 
-def test_derived_string_refs_paginates_with_exact_total() -> None:
-    strings = [FakeDerivedString(f"s{i}", None) for i in range(3)]
-    view = FakeBinaryView(derived_strings=strings)
-    _, refs = get_tool("rex_derived_string_refs")
+def test_string_refs_paginates_with_exact_total() -> None:
+    strings = [FakeStringReference(f"s{i}", 0x100 + i * 0x10) for i in range(3)]
+    view = FakeBinaryView(strings=strings)
+    _, refs = get_tool("rex_string_refs")
     paged = refs(_call(view), limit=1, offset=1)
     assert paged["total"] == 3
     assert paged["truncated"] is True
@@ -283,16 +307,16 @@ def test_derived_string_refs_paginates_with_exact_total() -> None:
     assert [entry["value"] for entry in tail["strings"]] == ["s2"]
 
 
-def test_derived_string_refs_caps_refs_per_string() -> None:
+def test_string_refs_caps_refs_per_string() -> None:
     filler = FakeFunction("filler", 0x9000, 0x9100)
-    capped = FakeDerivedString(
-        "big", None, refs=[FakeReferenceSource(filler, 0x9000 + index) for index in range(23)]
+    view = FakeBinaryView(
+        strings=[FakeStringReference("big", 0x8000), FakeStringReference("exact", 0x8100)],
+        code_refs={
+            0x8000: [FakeReferenceSource(filler, 0x9000 + index) for index in range(23)],
+            0x8100: [FakeReferenceSource(filler, 0x9000 + index) for index in range(20)],
+        },
     )
-    exact = FakeDerivedString(
-        "exact", None, refs=[FakeReferenceSource(filler, 0x9000 + index) for index in range(20)]
-    )
-    view = FakeBinaryView(derived_strings=[capped, exact])
-    _, refs = get_tool("rex_derived_string_refs")
+    _, refs = get_tool("rex_string_refs")
     entries = refs(_call(view))["strings"]
     assert len(entries[0]["refs"]) == 20
     assert entries[0]["refs"][-1]["address"] == "0x9013"
@@ -301,10 +325,28 @@ def test_derived_string_refs_caps_refs_per_string() -> None:
     assert entries[1]["refs_truncated"] is False
 
 
-def test_derived_string_refs_defaults_to_a_bounded_page() -> None:
-    strings = [FakeDerivedString(f"s{i}", None) for i in range(25)]
-    view = FakeBinaryView(derived_strings=strings)
-    _, refs = get_tool("rex_derived_string_refs")
+def test_string_refs_caps_derived_refs_per_string() -> None:
+    filler = FakeFunction("filler", 0x9000, 0x9100)
+    capped = FakeDerivedString(
+        "big", None, refs=[FakeReferenceSource(filler, 0x9000 + index) for index in range(23)]
+    )
+    exact = FakeDerivedString(
+        "exact", None, refs=[FakeReferenceSource(filler, 0x9000 + index) for index in range(20)]
+    )
+    view = FakeBinaryView(derived_strings=[capped, exact])
+    _, refs = get_tool("rex_string_refs")
+    entries = refs(_call(view))["strings"]
+    assert len(entries[0]["refs"]) == 20
+    assert entries[0]["refs"][-1]["address"] == "0x9013"
+    assert entries[0]["refs_truncated"] is True
+    # Exactly at the cap the flag stays False: the cap is a bound, not an off-by-one hint.
+    assert entries[1]["refs_truncated"] is False
+
+
+def test_string_refs_defaults_to_a_bounded_page() -> None:
+    strings = [FakeStringReference(f"s{i}", 0x100 + i * 0x10) for i in range(25)]
+    view = FakeBinaryView(strings=strings)
+    _, refs = get_tool("rex_string_refs")
     result = refs(_call(view))
     assert len(result["strings"]) == 20
     assert result["truncated"] is True
@@ -316,16 +358,16 @@ def test_derived_string_refs_defaults_to_a_bounded_page() -> None:
     assert complete["truncated"] is False
 
 
-def test_derived_string_refs_truncates_long_values() -> None:
-    view = FakeBinaryView(derived_strings=[FakeDerivedString("x" * 600, None)])
-    _, refs = get_tool("rex_derived_string_refs")
+def test_string_refs_truncates_long_values() -> None:
+    view = FakeBinaryView(strings=[FakeStringReference("x" * 600, 0x100)])
+    _, refs = get_tool("rex_string_refs")
     value = refs(_call(view))["strings"][0]["value"]
     assert value == "x" * tools._MAX_CHARS + f"... [{600 - tools._MAX_CHARS} chars truncated]"
 
 
-def test_derived_string_refs_rejects_out_of_range_windows() -> None:
-    view = FakeBinaryView(derived_strings=[FakeDerivedString("s", None)])
-    _, refs = get_tool("rex_derived_string_refs")
+def test_string_refs_rejects_out_of_range_windows() -> None:
+    view = FakeBinaryView(strings=[FakeStringReference("s", 0x100)])
+    _, refs = get_tool("rex_string_refs")
     for kwargs, message in (
         ({"limit": -1}, "Invalid integer parameter 'limit': Must be at least 0"),
         (
