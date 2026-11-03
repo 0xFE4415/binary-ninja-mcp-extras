@@ -341,6 +341,7 @@ from .functions import (
     rex_function_define,
     rex_function_undefine,
 )
+from .help import rex_help
 from .scanning import (
     _MAX_FIND_FUNCTIONS_EXAMPLES,
     rex_constant_find,
