@@ -297,13 +297,18 @@ def _fit_to_export_cap[ExportRow](
     """Serialize a result window, dropping trailing entries until it fits the byte cap."""
     if window and len(serialize(window[:1]).encode("utf-8")) > _MAX_EXPORT_FILE_BYTES:
         raise mcp.ToolError("export_failed", "first entry exceeds the export byte cap")
-    dropped = False
-    while True:
-        text = serialize(window)
-        if len(text.encode("utf-8")) <= _MAX_EXPORT_FILE_BYTES:
-            return text, dropped
-        del window[-1]
-        dropped = True
+    text = serialize(window)
+    if len(text.encode("utf-8")) <= _MAX_EXPORT_FILE_BYTES:
+        return text, False
+    low, high = 1, len(window) - 1
+    while low < high:
+        mid = (low + high + 1) // 2
+        if len(serialize(window[:mid]).encode("utf-8")) <= _MAX_EXPORT_FILE_BYTES:
+            low = mid
+        else:
+            high = mid - 1
+    del window[low:]
+    return serialize(window), True
 
 
 # The category modules import the shared helpers defined above from this namespace, so
