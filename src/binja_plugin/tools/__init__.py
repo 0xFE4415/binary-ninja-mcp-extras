@@ -30,7 +30,7 @@ _MAX_LIMIT = 500
 
 # rex_disasm_at window sizes: bounded so one call can never request an unbounded
 # instruction render, whatever the containing function's size.
-_MAX_DISASM_CONTEXT = 256
+_MAX_DISASM_CONTEXT = 4096
 
 # rex_export_* tools: sweeps write to one fixed directory and echo only a summary, so a
 # large export can never flood the MCP response. The byte cap bounds each file; the

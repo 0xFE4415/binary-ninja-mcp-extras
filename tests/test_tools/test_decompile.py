@@ -181,23 +181,22 @@ def test_disasm_at_rejects_out_of_range_window() -> None:
 
 
 def test_disasm_at_renders_a_full_cap_window_in_one_call() -> None:
-    # The cap must cover a real function's prologue in one call: at the old 64-line
-    # window a 0x15b-byte function needed a second call to see its first instructions.
+    # Pin the inclusive 4096-instruction cap and reject the first value above it.
     lines: list[tuple[int | None, str]] = [
-        (0x1000 + index, f"insn {index}") for index in range(257)
+        (0x1000 + index, f"insn {index}") for index in range(4097)
     ]
-    main = FakeDisasmFunction("main", 0x1000, 0x1101, blocks=[FakeBasicBlock(lines)])
+    main = FakeDisasmFunction("main", 0x1000, 0x2001, blocks=[FakeBasicBlock(lines)])
     view = FakeBinaryView(functions=[main])
     _, disasm = get_tool("rex_disasm_at")
-    result = disasm(_call(view), 0x1000, before=0, after=256)
+    result = disasm(_call(view), 0x1000, before=0, after=4096)
     assert [entry["address"] for entry in result["instructions"]] == [
-        hex(0x1000 + index) for index in range(257)
+        hex(0x1000 + index) for index in range(4097)
     ]
     assert result["truncated"] is False
     with pytest.raises(FakeToolError) as exc:
-        disasm(_call(view), 0x1000, before=0, after=257)
+        disasm(_call(view), 0x1000, before=0, after=4097)
     assert exc.value.code == "invalid_params"
-    assert exc.value.message == "Invalid integer parameter 'after': Must be at most 256"
+    assert exc.value.message == "Invalid integer parameter 'after': Must be at most 4096"
 
 
 def test_disasm_at_truncates_names_and_text() -> None:
