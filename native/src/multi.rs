@@ -118,12 +118,25 @@ impl MultiMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn parse_all<S: AsRef<str>>(patterns: &[S]) -> Vec<HexPattern> {
         patterns
             .iter()
             .map(|text| HexPattern::parse(text.as_ref()).unwrap())
             .collect()
+    }
+
+    fn pattern_from_tokens(tokens: Vec<Option<u8>>) -> HexPattern {
+        let text = tokens
+            .iter()
+            .map(|token| match token {
+                Some(value) => format!("{value:02x}"),
+                None => "??".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        HexPattern::parse(&text).unwrap()
     }
 
     fn scan_all(
@@ -262,29 +275,22 @@ mod tests {
         assert_eq!(buckets[0].total, 3);
     }
 
-    // Differential test against a naive reference on pseudo-random inputs.
-    #[test]
-    fn agrees_with_naive_reference_on_random_inputs() {
-        let mut next = crate::test_rng(0x9e37_79b9_7f4a_7c15);
-        for case in 0..300u32 {
-            let hay_len = (next() % 48) as usize;
-            let haystack: Vec<u8> = (0..hay_len).map(|_| (next() % 4) as u8).collect();
-            let pattern_count = 1 + (next() % 5) as usize;
-            let mut pattern_texts = Vec::new();
-            for _ in 0..pattern_count {
-                let pat_len = 1 + (next() % 4) as usize;
-                let tokens: Vec<String> = (0..pat_len)
-                    .map(|_| {
-                        if next().is_multiple_of(3) {
-                            "??".to_string()
-                        } else {
-                            format!("{:02x}", next() % 4)
-                        }
-                    })
-                    .collect();
-                pattern_texts.push(tokens.join(" "));
-            }
-            let patterns = parse_all(&pattern_texts);
+    proptest! {
+        #[test]
+        fn agrees_with_naive_reference_on_generated_inputs(
+            haystack in prop::collection::vec(0u8..4, 0..48),
+            token_sets in prop::collection::vec(
+                prop::collection::vec(
+                    prop_oneof![Just(None::<u8>), (0u8..4).prop_map(Some)],
+                    1..5
+                ),
+                1..6
+            )
+        ) {
+            let patterns: Vec<HexPattern> = token_sets
+                .into_iter()
+                .map(pattern_from_tokens)
+                .collect();
             let naive: Vec<Vec<usize>> = patterns
                 .iter()
                 .map(|pattern| {
@@ -292,43 +298,48 @@ mod tests {
                         Vec::new()
                     } else {
                         (0..=haystack.len() - pattern.len())
-                            .filter(|pos| verify_at(&haystack, *pos, pattern.bytes()))
+                            .filter(|pos| {
+                                haystack[*pos..*pos + pattern.len()]
+                                    .iter()
+                                    .zip(pattern.bytes())
+                                    .all(|(byte, expected)| {
+                                        expected.is_none_or(|value| value == *byte)
+                                    })
+                            })
                             .collect()
                     }
                 })
                 .collect();
-            for offset in [0u64, 2] {
-                for limit in [0u64, 1, 100] {
-                    let matcher = MultiMatcher::new(&patterns);
+            let matcher = MultiMatcher::new(&patterns);
+            for offset in [0u64, 1, 2, u64::MAX] {
+                for limit in [0u64, 1, 2, 100] {
                     let mut buckets: Vec<RunningScan> =
                         (0..patterns.len()).map(|_| RunningScan::new()).collect();
                     let pagination = Pagination { offset, limit };
-                    let alive =
-                        matcher.scan_segment(&haystack, 0, &patterns, &mut buckets, &pagination);
+                    let alive = matcher.scan_segment(
+                        &haystack,
+                        0,
+                        &patterns,
+                        &mut buckets,
+                        &pagination,
+                    );
                     for (index, bucket) in buckets.iter().enumerate() {
                         let window_end = offset.saturating_add(limit);
-                        let mut expected_total = 0u64;
-                        let mut truncated = false;
-                        let mut expected = Vec::new();
-                        for pos in &naive[index] {
-                            expected_total += 1;
-                            if expected_total > offset && expected_total <= window_end {
-                                expected.push(*pos as u64);
-                            }
-                            if expected_total > window_end {
-                                truncated = true;
-                                break;
-                            }
-                        }
-                        assert_eq!(bucket.total, expected_total, "case {case} pattern {index}");
-                        assert_eq!(bucket.truncated, truncated, "case {case} pattern {index}");
-                        assert_eq!(bucket.matches, expected, "case {case} pattern {index}");
+                        let available = naive[index].len() as u64;
+                        let truncated = available > window_end;
+                        let expected_total = if truncated { window_end + 1 } else { available };
+                        let page_start = offset.min(available) as usize;
+                        let page_end = window_end.min(available) as usize;
+                        let expected: Vec<u64> = naive[index][page_start..page_end]
+                            .iter()
+                            .map(|pos| *pos as u64)
+                            .collect();
+                        prop_assert_eq!(bucket.total, expected_total, "pattern {} offset {} limit {}", index, offset, limit);
+                        prop_assert_eq!(bucket.truncated, truncated, "pattern {} offset {} limit {}", index, offset, limit);
+                        prop_assert_eq!(&bucket.matches, &expected, "pattern {} offset {} limit {}", index, offset, limit);
                     }
-                    let all_done = buckets.iter().all(|bucket| bucket.is_done());
-                    assert_eq!(
-                        !alive, all_done,
-                        "case {case} offset {offset} limit {limit}"
-                    );
+                    let all_done = buckets.iter().all(RunningScan::is_done);
+                    prop_assert_eq!(!alive, all_done, "offset {} limit {}", offset, limit);
                 }
             }
         }

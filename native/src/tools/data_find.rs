@@ -75,6 +75,33 @@ mod tests {
     use crate::hexpattern::HexPattern;
     use crate::scan::Pagination;
     use crate::tools::testing::{FakeView, scan_fake_view};
+    use proptest::prelude::*;
+
+    fn pattern_from_tokens(tokens: Vec<Option<u8>>) -> HexPattern {
+        let text = tokens
+            .iter()
+            .map(|token| match token {
+                Some(value) => format!("{value:02x}"),
+                None => "??".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        HexPattern::parse(&text).unwrap()
+    }
+
+    fn naive_matches(haystack: &[u8], pattern: &[Option<u8>]) -> Vec<usize> {
+        if haystack.len() < pattern.len() {
+            return Vec::new();
+        }
+        (0..=haystack.len() - pattern.len())
+            .filter(|pos| {
+                haystack[*pos..*pos + pattern.len()]
+                    .iter()
+                    .zip(pattern)
+                    .all(|(byte, expected)| expected.is_none_or(|value| value == *byte))
+            })
+            .collect()
+    }
 
     #[test]
     fn finds_matches_across_chunk_boundaries() {
@@ -309,6 +336,54 @@ mod tests {
                 true_total > offset.saturating_add(limit),
                 "case {case}"
             );
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn chunked_single_scan_matches_naive_results(
+            haystack in prop::collection::vec(0u8..4, 0..64),
+            tokens in prop::collection::vec(
+                prop_oneof![Just(None::<u8>), (0u8..4).prop_map(Some)],
+                1..6
+            ),
+            chunk in 1u64..16,
+            offset in prop_oneof![0u64..10, Just(u64::MAX)],
+            limit in prop_oneof![0u64..10, Just(u64::MAX)]
+        ) {
+            let pattern = pattern_from_tokens(tokens);
+            let base = 0x1000;
+            let view = FakeView {
+                segments: vec![(base, base + haystack.len() as u64)],
+                unreadable_segments: Vec::new(),
+                runs: vec![(base, haystack.clone())],
+            };
+            let overlap = (pattern.len() - 1) as u64;
+            let pagination = Pagination { offset, limit };
+            let running = scan_fake_view(
+                &view,
+                chunk,
+                None,
+                overlap,
+                &pattern,
+                &pagination,
+            );
+
+            let naive = naive_matches(&haystack, pattern.bytes());
+            let available = naive.len() as u64;
+            let window_end = offset.saturating_add(limit);
+            let truncated = available > window_end;
+            let expected_total = if truncated { window_end + 1 } else { available };
+            let page_start = offset.min(available) as usize;
+            let page_end = window_end.min(available) as usize;
+            let expected: Vec<u64> = naive[page_start..page_end]
+                .iter()
+                .map(|position| base + *position as u64)
+                .collect();
+
+            prop_assert_eq!(running.total, expected_total);
+            prop_assert_eq!(running.truncated, truncated);
+            prop_assert_eq!(running.matches, expected);
         }
     }
 }

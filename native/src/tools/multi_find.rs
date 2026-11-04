@@ -129,6 +129,33 @@ mod tests {
     use super::*;
     use crate::scan::Pagination;
     use crate::tools::testing::FakeView;
+    use proptest::prelude::*;
+
+    fn pattern_from_tokens(tokens: Vec<Option<u8>>) -> HexPattern {
+        let text = tokens
+            .iter()
+            .map(|token| match token {
+                Some(value) => format!("{value:02x}"),
+                None => "??".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        HexPattern::parse(&text).unwrap()
+    }
+
+    fn naive_matches(haystack: &[u8], pattern: &[Option<u8>]) -> Vec<usize> {
+        if haystack.len() < pattern.len() {
+            return Vec::new();
+        }
+        (0..=haystack.len() - pattern.len())
+            .filter(|pos| {
+                haystack[*pos..*pos + pattern.len()]
+                    .iter()
+                    .zip(pattern)
+                    .all(|(byte, expected)| expected.is_none_or(|value| value == *byte))
+            })
+            .collect()
+    }
 
     #[test]
     fn multi_parse_errors_name_the_pattern_index() {
@@ -208,5 +235,59 @@ mod tests {
         assert_eq!(buckets[1].matches, vec![0x1004, 0x1009]);
         assert_eq!(buckets[1].total, 2);
         assert!(!buckets[1].truncated);
+    }
+
+    proptest! {
+        #[test]
+        fn chunked_multi_scan_matches_naive_results(
+            haystack in prop::collection::vec(0u8..4, 0..64),
+            token_sets in prop::collection::vec(
+                prop::collection::vec(
+                    prop_oneof![Just(None::<u8>), (0u8..4).prop_map(Some)],
+                    1..6
+                ),
+                1..6
+            ),
+            chunk in 1u64..16,
+            offset in prop_oneof![0u64..10, Just(u64::MAX)],
+            limit in prop_oneof![0u64..10, Just(u64::MAX)]
+        ) {
+            let patterns: Vec<HexPattern> = token_sets
+                .into_iter()
+                .map(pattern_from_tokens)
+                .collect();
+            let matcher = MultiMatcher::new(&patterns);
+            let mut buckets: Vec<RunningScan> =
+                (0..patterns.len()).map(|_| RunningScan::new()).collect();
+            let base = 0x1000;
+            let view = FakeView {
+                segments: vec![(base, base + haystack.len() as u64)],
+                unreadable_segments: Vec::new(),
+                runs: vec![(base, haystack.clone())],
+            };
+            let pagination = Pagination { offset, limit };
+            let overlap = longest_pattern_overlap(&patterns);
+            let alive = for_each_segment(&view, chunk, None, overlap, |window_base, data| {
+                matcher.scan_segment(data, window_base, &patterns, &mut buckets, &pagination)
+            });
+
+            for (index, (pattern, bucket)) in patterns.iter().zip(&buckets).enumerate() {
+                let window_end = offset.saturating_add(limit);
+                let naive = naive_matches(&haystack, pattern.bytes());
+                let available = naive.len() as u64;
+                let truncated = available > window_end;
+                let expected_total = if truncated { window_end + 1 } else { available };
+                let page_start = offset.min(available) as usize;
+                let page_end = window_end.min(available) as usize;
+                let expected: Vec<u64> = naive[page_start..page_end]
+                    .iter()
+                    .map(|position| base + *position as u64)
+                    .collect();
+                prop_assert_eq!(bucket.total, expected_total, "pattern {}", index);
+                prop_assert_eq!(bucket.truncated, truncated, "pattern {}", index);
+                prop_assert_eq!(&bucket.matches, &expected, "pattern {}", index);
+            }
+            prop_assert_eq!(alive, !buckets.iter().all(RunningScan::is_done));
+        }
     }
 }

@@ -161,6 +161,7 @@ pub fn scan_pattern(
 mod tests {
     use super::*;
     use crate::hexpattern::HexPattern;
+    use proptest::prelude::*;
 
     fn pattern(text: &str) -> HexPattern {
         HexPattern::parse(text).unwrap()
@@ -172,7 +173,12 @@ mod tests {
             return Vec::new();
         }
         (0..=haystack.len() - pat.len())
-            .filter(|pos| verify_at(haystack, *pos, pat))
+            .filter(|pos| {
+                haystack[*pos..*pos + pat.len()]
+                    .iter()
+                    .zip(pat)
+                    .all(|(byte, expected)| expected.is_none_or(|value| value == *byte))
+            })
             .collect()
     }
 
@@ -361,58 +367,36 @@ mod tests {
         assert_eq!(running.total, 0);
     }
 
-    /// Differential test: the prefiltered scanner must agree with a naive
-    /// reference matcher on pseudo-random inputs (fixed LCG seed, no rand dep).
-    #[test]
-    fn agrees_with_naive_reference_on_random_inputs() {
-        let mut next = crate::test_rng(0x5145_5145);
-        for case in 0..200u32 {
-            let hay_len = (next() % 64) as usize;
-            let hay: Vec<u8> = (0..hay_len)
-                .map(|_| {
-                    // Small alphabet forces plenty of near-matches and overlaps.
-                    (next() % 4) as u8
-                })
-                .collect();
-            let pat_len = 1 + (next() % 5) as usize;
-            let tokens: Vec<Option<u8>> = (0..pat_len)
-                .map(|_| {
-                    if next().is_multiple_of(3) {
-                        None
-                    } else {
-                        Some((next() % 4) as u8)
-                    }
-                })
-                .collect();
+    proptest! {
+        #[test]
+        fn agrees_with_naive_reference_on_generated_inputs(
+            hay in prop::collection::vec(0u8..4, 0..64),
+            tokens in prop::collection::vec(
+                prop_oneof![Just(None::<u8>), (0u8..4).prop_map(Some)],
+                1..6
+            )
+        ) {
             let pat = pattern_from_tokens(tokens);
             let naive = naive_matches(&hay, pat.bytes());
-            for offset in [0u64, 1, 3] {
+            for offset in [0u64, 1, 3, u64::MAX] {
                 for limit in [0u64, 1, 5, 100] {
                     let mut running = RunningScan::new();
                     let page = Pagination { offset, limit };
                     let keep_going = scan_pattern(&hay, 0, &pat, &page, &mut running);
-                    // Reference transcription of the Python counting contract.
                     let window_end = offset.saturating_add(limit);
-                    let mut expected_total = 0u64;
-                    let mut truncated = false;
-                    let mut expected = Vec::new();
-                    for pos in &naive {
-                        expected_total += 1;
-                        if expected_total > offset && expected_total <= window_end {
-                            expected.push(*pos as u64);
-                        }
-                        if expected_total > window_end {
-                            truncated = true;
-                            break;
-                        }
-                    }
-                    assert_eq!(
-                        running.total, expected_total,
-                        "case {case} offset {offset} limit {limit}"
-                    );
-                    assert_eq!(running.truncated, truncated, "case {case}");
-                    assert_eq!(running.matches, expected, "case {case}");
-                    assert_eq!(keep_going, !truncated, "case {case}");
+                    let available = naive.len() as u64;
+                    let truncated = available > window_end;
+                    let expected_total = if truncated { window_end + 1 } else { available };
+                    let page_start = offset.min(available) as usize;
+                    let page_end = window_end.min(available) as usize;
+                    let expected: Vec<u64> = naive[page_start..page_end]
+                        .iter()
+                        .map(|pos| *pos as u64)
+                        .collect();
+                    prop_assert_eq!(running.total, expected_total, "offset {} limit {}", offset, limit);
+                    prop_assert_eq!(running.truncated, truncated, "offset {} limit {}", offset, limit);
+                    prop_assert_eq!(running.matches, expected, "offset {} limit {}", offset, limit);
+                    prop_assert_eq!(keep_going, !truncated, "offset {} limit {}", offset, limit);
                 }
             }
         }
