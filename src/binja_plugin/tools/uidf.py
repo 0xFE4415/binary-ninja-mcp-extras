@@ -104,7 +104,7 @@ def _collect_mlil_definitions(
 def _select_definition_site(
     target: Function, name: str, def_address: int | None
 ) -> tuple[Variable, MediumLevelILInstruction]:
-    """Resolve one definition site for ``name``, rejecting ambiguity like the core would."""
+    """Resolve exactly one definition site for ``name``, rejecting ambiguity."""
     matches = _collect_mlil_definitions(target, name)
     if def_address is not None:
         known = sorted({entry[1].address for entry in matches})
