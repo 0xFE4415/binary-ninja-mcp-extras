@@ -14,7 +14,7 @@ use super::{
     validate_pagination,
 };
 use crate::hexpattern::HexPattern;
-use crate::multi::{MAX_MULTI_PATTERNS, MultiMatcher};
+use crate::multi::{MAX_MULTI_PATTERNS, scan_segment};
 use crate::scan::RunningScan;
 
 // No `binary` field — same server-reserved argument rule as `DataFindArgs`.
@@ -32,8 +32,8 @@ pub struct MultiFindArgs {
     pub offset: u64,
 }
 
-/// `rx_multi_find`: many hex patterns in one pass over the bytes via a
-/// multi-pattern automaton — the capability the Python plugin cannot offer.
+/// `rx_multi_find`: many hex patterns in one pass over the bytes via
+/// per-pattern prefilter scans — the capability the Python plugin cannot offer.
 pub(super) struct RxMultiFind;
 
 impl TypedMcpTool for RxMultiFind {
@@ -42,7 +42,7 @@ impl TypedMcpTool for RxMultiFind {
     fn info(&self) -> McpToolInfo {
         McpToolInfo::new(
             "rx_multi_find",
-            "Find occurrences of many hex byte patterns in one pass over mapped memory.",
+            "Search multiple hex patterns in one Rust pass; use instead of repeated, slower `rex_data_find` calls.",
         )
         .with_annotations(McpToolAnnotations::READ_ONLY)
     }
@@ -78,12 +78,11 @@ impl TypedMcpTool for RxMultiFind {
             .collect::<Result<Vec<_>, McpToolError>>()?;
         let view = call.require_binary_view()?;
         let bounds = resolve_bounds(&view, args.section.as_deref())?;
-        let matcher = MultiMatcher::new(&patterns);
         let mut buckets: Vec<RunningScan> =
             (0..patterns.len()).map(|_| RunningScan::new()).collect();
         let overlap = longest_pattern_overlap(&patterns);
         for_each_segment(&*view, READ_CHUNK, bounds, overlap, |base, data| {
-            matcher.scan_segment(data, base, &patterns, &mut buckets, &pagination)
+            scan_segment(data, base, &patterns, &mut buckets, &pagination)
         });
         let results = args
             .patterns
@@ -128,7 +127,9 @@ fn longest_pattern_overlap(patterns: &[HexPattern]) -> u64 {
 mod tests {
     use super::*;
     use crate::scan::Pagination;
+    use crate::test_utils::{naive_matches, pattern_from_tokens};
     use crate::tools::testing::FakeView;
+    use proptest::prelude::*;
 
     #[test]
     fn multi_parse_errors_name_the_pattern_index() {
@@ -148,7 +149,6 @@ mod tests {
             HexPattern::parse("33 eb").unwrap(),
             HexPattern::parse("33 eb 00").unwrap(),
         ];
-        let matcher = MultiMatcher::new(&patterns);
         let mut buckets = vec![RunningScan::new(), RunningScan::new()];
         let view = FakeView {
             segments: vec![(0x1000, 0x1008)],
@@ -161,7 +161,7 @@ mod tests {
         };
         let overlap = longest_pattern_overlap(&patterns);
         let alive = for_each_segment(&view, 4, None, overlap, |base, data| {
-            matcher.scan_segment(data, base, &patterns, &mut buckets, &page)
+            scan_segment(data, base, &patterns, &mut buckets, &page)
         });
         assert!(alive);
         assert_eq!(buckets[0].matches, vec![0x1003]);
@@ -179,7 +179,6 @@ mod tests {
             HexPattern::parse("33 eb").unwrap(),
             HexPattern::parse("33 eb 00").unwrap(),
         ];
-        let matcher = MultiMatcher::new(&patterns);
         let mut buckets = vec![RunningScan::new(), RunningScan::new()];
         // Seam at 0x1004 (chunk 4, overlap longest-1 = 2): '33 eb' starts
         // exactly on it, so windows 0 and 1 both see it whole; 0x1009 is a
@@ -199,7 +198,7 @@ mod tests {
         };
         let overlap = longest_pattern_overlap(&patterns);
         let alive = for_each_segment(&view, 4, None, overlap, |base, data| {
-            matcher.scan_segment(data, base, &patterns, &mut buckets, &page)
+            scan_segment(data, base, &patterns, &mut buckets, &page)
         });
         assert!(alive);
         assert_eq!(buckets[0].matches, vec![0x1004, 0x1009]);
@@ -208,5 +207,58 @@ mod tests {
         assert_eq!(buckets[1].matches, vec![0x1004, 0x1009]);
         assert_eq!(buckets[1].total, 2);
         assert!(!buckets[1].truncated);
+    }
+
+    proptest! {
+        #[test]
+        fn chunked_multi_scan_matches_naive_results(
+            haystack in prop::collection::vec(0u8..4, 0..64),
+            token_sets in prop::collection::vec(
+                prop::collection::vec(
+                    prop_oneof![Just(None::<u8>), (0u8..4).prop_map(Some)],
+                    1..6
+                ),
+                1..6
+            ),
+            chunk in 1u64..16,
+            offset in prop_oneof![0u64..10, Just(u64::MAX)],
+            limit in prop_oneof![0u64..10, Just(u64::MAX)]
+        ) {
+            let patterns: Vec<HexPattern> = token_sets
+                .into_iter()
+                .map(pattern_from_tokens)
+                .collect();
+                let mut buckets: Vec<RunningScan> =
+                (0..patterns.len()).map(|_| RunningScan::new()).collect();
+            let base = 0x1000;
+            let view = FakeView {
+                segments: vec![(base, base + haystack.len() as u64)],
+                unreadable_segments: Vec::new(),
+                runs: vec![(base, haystack.clone())],
+            };
+            let pagination = Pagination { offset, limit };
+            let overlap = longest_pattern_overlap(&patterns);
+            let alive = for_each_segment(&view, chunk, None, overlap, |window_base, data| {
+                scan_segment(data, window_base, &patterns, &mut buckets, &pagination)
+            });
+
+            for (index, (pattern, bucket)) in patterns.iter().zip(&buckets).enumerate() {
+                let window_end = offset.saturating_add(limit);
+                let naive = naive_matches(&haystack, pattern);
+                let available = naive.len() as u64;
+                let truncated = available > window_end;
+                let expected_total = if truncated { window_end + 1 } else { available };
+                let page_start = offset.min(available) as usize;
+                let page_end = window_end.min(available) as usize;
+                let expected: Vec<u64> = naive[page_start..page_end]
+                    .iter()
+                    .map(|position| base + *position as u64)
+                    .collect();
+                prop_assert_eq!(bucket.total, expected_total, "pattern {}", index);
+                prop_assert_eq!(bucket.truncated, truncated, "pattern {}", index);
+                prop_assert_eq!(&bucket.matches, &expected, "pattern {}", index);
+            }
+            prop_assert_eq!(alive, !buckets.iter().all(RunningScan::is_done));
+        }
     }
 }

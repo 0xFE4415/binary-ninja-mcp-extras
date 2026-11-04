@@ -145,6 +145,20 @@ def native(session: nox.Session) -> None:
     session.run("cargo", "test", "--no-default-features", external=True, env=env)
 
 
+@nox.session(python=False)
+def bench_native(session: nox.Session) -> None:
+    """Criterion scan benchmarks in stub-core mode; opt-in, extra args go to criterion."""
+    session.chdir("native")
+    session.run(
+        "cargo",
+        "bench",
+        "--no-default-features",
+        "--",
+        *session.posargs,
+        external=True,
+    )
+
+
 @nox.session
 def check(session: nox.Session) -> None:
     session.notify("format")

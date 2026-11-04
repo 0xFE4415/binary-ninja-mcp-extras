@@ -75,15 +75,8 @@ impl HexPattern {
         &self.bytes
     }
 
-    /// The first concrete (non-wildcard) byte and its index in the pattern.
-    pub fn first_concrete(&self) -> Option<(usize, u8)> {
-        // The run starts at the first concrete byte, so run[0] is that byte.
-        self.first_concrete_run()
-            .map(|(start, run)| (start, run[0]))
-    }
-
     /// The first maximal run of concrete bytes (start index and values): the
-    /// multi-pattern automaton's prefilter needle.
+    /// prefilter needle for both scan paths.
     pub fn first_concrete_run(&self) -> Option<(usize, Vec<u8>)> {
         let start = self.bytes.iter().position(Option::is_some)?;
         let run = self.bytes[start..].iter().map_while(|byte| *byte).collect();
@@ -204,7 +197,6 @@ mod tests {
     fn finds_first_concrete_run() {
         let pattern = HexPattern::parse("?? ?? 48 8b ?? 8b 05").unwrap();
         assert_eq!(pattern.first_concrete_run(), Some((2, vec![0x48, 0x8b])));
-        assert_eq!(pattern.first_concrete(), Some((2, 0x48)));
     }
 
     #[test]
@@ -217,7 +209,6 @@ mod tests {
     fn all_wildcard_has_no_concrete_run() {
         let pattern = HexPattern::parse("?? ??").unwrap();
         assert_eq!(pattern.first_concrete_run(), None);
-        assert_eq!(pattern.first_concrete(), None);
     }
 
     #[test]

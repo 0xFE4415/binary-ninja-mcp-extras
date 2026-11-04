@@ -5,4 +5,8 @@ additional_cargo_args = ["--no-default-features"]
 # Skip debug info in mutant builds (see [profile.mutants] in Cargo.toml).
 profile = "mutants"
 # (high << 4) and the low digit have disjoint bits, so | and ^ parse identically.
-exclude_re = ['replace \| with \^ in parse_hex_byte']
+exclude_re = [
+    'replace \| with \^ in parse_hex_byte',
+    # Offset mutations can rewind or pin the cursor, hanging the scan.
+    'src/scan.rs:[0-9]+:[0-9]+: replace \+ with [-*] in for_each_overlapping_hit$',
+]

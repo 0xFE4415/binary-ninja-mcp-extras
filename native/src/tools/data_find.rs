@@ -41,7 +41,7 @@ impl TypedMcpTool for RxDataFind {
     fn info(&self) -> McpToolInfo {
         McpToolInfo::new(
             "rx_data_find",
-            "Find all occurrences of a hex byte pattern in mapped memory.",
+            "Search mapped memory for a hex pattern in Rust; use instead of slower `rex_data_find`.",
         )
         .with_annotations(McpToolAnnotations::READ_ONLY)
     }
@@ -74,7 +74,9 @@ mod tests {
     use super::*;
     use crate::hexpattern::HexPattern;
     use crate::scan::Pagination;
+    use crate::test_utils::{naive_matches, pattern_from_tokens};
     use crate::tools::testing::{FakeView, scan_fake_view};
+    use proptest::prelude::*;
 
     #[test]
     fn finds_matches_across_chunk_boundaries() {
@@ -309,6 +311,54 @@ mod tests {
                 true_total > offset.saturating_add(limit),
                 "case {case}"
             );
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn chunked_single_scan_matches_naive_results(
+            haystack in prop::collection::vec(0u8..4, 0..64),
+            tokens in prop::collection::vec(
+                prop_oneof![Just(None::<u8>), (0u8..4).prop_map(Some)],
+                1..6
+            ),
+            chunk in 1u64..16,
+            offset in prop_oneof![0u64..10, Just(u64::MAX)],
+            limit in prop_oneof![0u64..10, Just(u64::MAX)]
+        ) {
+            let pattern = pattern_from_tokens(tokens);
+            let base = 0x1000;
+            let view = FakeView {
+                segments: vec![(base, base + haystack.len() as u64)],
+                unreadable_segments: Vec::new(),
+                runs: vec![(base, haystack.clone())],
+            };
+            let overlap = (pattern.len() - 1) as u64;
+            let pagination = Pagination { offset, limit };
+            let running = scan_fake_view(
+                &view,
+                chunk,
+                None,
+                overlap,
+                &pattern,
+                &pagination,
+            );
+
+            let naive = naive_matches(&haystack, &pattern);
+            let available = naive.len() as u64;
+            let window_end = offset.saturating_add(limit);
+            let truncated = available > window_end;
+            let expected_total = if truncated { window_end + 1 } else { available };
+            let page_start = offset.min(available) as usize;
+            let page_end = window_end.min(available) as usize;
+            let expected: Vec<u64> = naive[page_start..page_end]
+                .iter()
+                .map(|position| base + *position as u64)
+                .collect();
+
+            prop_assert_eq!(running.total, expected_total);
+            prop_assert_eq!(running.truncated, truncated);
+            prop_assert_eq!(running.matches, expected);
         }
     }
 }

@@ -5,11 +5,11 @@ where native code is measurably faster than Python. Registered alongside the
 Python `rex_*` tools by the same bundled MCP server:
 
 - `rx_data_find` — hex byte-pattern search, same contract as the Python
-  `rex_data_find`, with the scan running in native Rust (SIMD `memchr`
-  prefilter + wildcard verification). Measured **7.5x** faster on the
+   `rex_data_find`, with the scan running in native Rust (first concrete-run
+   prefilter + wildcard verification). Measured **7.5x** faster on the
   promotion benchmark (`BENCH.md`).
-- `rx_multi_find` — many hex patterns in **one pass** via an `aho-corasick`
-  automaton, a capability the per-pattern Python tool structurally cannot
+- `rx_multi_find` — many hex patterns in **one pass** with per-pattern
+  memchr/memmem prefilters, a capability the per-pattern Python tool structurally cannot
   offer. Measured **12.6x** against 8 sequential Python calls.
 
 Everything else stays in Python deliberately: the other tools wrap single core
@@ -85,9 +85,11 @@ The native gates are opt-in locally and always run in CI's `native` job:
 uvx nox -s native          # fmt, clippy (-D warnings), tests — stub-core mode
 native/scripts/install.sh  # real-core release build + flat install
 cargo mutants -j 2         # parser and scanner only, in stub-core mode
+uvx nox -s bench_native    # criterion scan benches (benches/scan.rs), stub-core mode
 ```
 
 `native/BENCH.md` is the live benchmark protocol; run it after any engine
-change. The differential tests (each scanner against a naive reference matcher
+change, and `bench_native` for engine-only regressions (clippy in `native`
+also compiles the benches). The differential tests (each scanner against a naive reference matcher
 on seeded random cases: 200 single-pattern, 300 multi-pattern) run in both
 build modes.

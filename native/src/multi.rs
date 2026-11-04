@@ -1,123 +1,44 @@
-//! One-pass multi-pattern scan: hex patterns with `??` wildcards cannot enter
-//! an Aho-Corasick automaton directly, but every occurrence contains its first
-//! concrete byte run at a fixed offset — so all patterns' concrete runs go into
-//! one automaton, `find_overlapping_iter` yields every run hit (overlaps
-//! included, keeping self-overlapping patterns correct), and each hit is
-//! verified against its full pattern. The result equals the naive scan.
+//! Multi-pattern scan: each pattern whose bucket is still open is scanned
+//! over the window with the single-pattern prefilter loop (memchr / memmem on
+//! its first concrete run), so hot needles cost one tight loop each and a
+//! finished bucket costs nothing.
 
-use std::collections::HashMap;
-
-use aho_corasick::{AhoCorasick, MatchKind};
-
-use crate::hexpattern::{HexPattern, verify_at};
-use crate::scan::{Pagination, RunningScan, for_each_all_wildcard_candidate};
+use crate::hexpattern::HexPattern;
+use crate::scan::{Pagination, RunningScan, scan_window};
 
 /// Cap on the number of patterns one `rx_multi_find` call accepts.
 pub const MAX_MULTI_PATTERNS: usize = 64;
 
-struct NeedleOwner {
-    pattern_index: usize,
-    needle_offset: usize,
-}
-
-/// The compiled multi-pattern matcher for one `rx_multi_find` call.
-pub struct MultiMatcher {
-    automaton: AhoCorasick,
-    /// Owners per automaton pattern id; several owners may share one needle
-    /// when different patterns start with the same concrete run.
-    owners: Vec<Vec<NeedleOwner>>,
-    /// Indices of patterns with no concrete byte at all; scanned directly
-    /// instead of through the automaton.
-    wildcard_only: Vec<usize>,
-}
-
-impl MultiMatcher {
-    /// Compile one automaton covering every pattern that has a concrete run.
-    pub fn new(patterns: &[HexPattern]) -> Self {
-        let mut needle_ids: HashMap<Vec<u8>, usize> = HashMap::new();
-        let mut needles: Vec<Vec<u8>> = Vec::new();
-        let mut owners: Vec<Vec<NeedleOwner>> = Vec::new();
-        let mut wildcard_only = Vec::new();
-        for (pattern_index, pattern) in patterns.iter().enumerate() {
-            let Some((needle_offset, run)) = pattern.first_concrete_run() else {
-                wildcard_only.push(pattern_index);
-                continue;
-            };
-            let next_id = needles.len();
-            let id = *needle_ids.entry(run.clone()).or_insert(next_id);
-            if id == next_id {
-                needles.push(run);
-                owners.push(Vec::new());
-            }
-            owners[id].push(NeedleOwner {
-                pattern_index,
-                needle_offset,
-            });
+/// Scan one in-memory segment for every pattern, updating per-pattern
+/// buckets (`base` = absolute address of `haystack[0]`). `patterns` and
+/// `buckets` are index-aligned. Returns `false` when every bucket's window
+/// is exhausted.
+pub fn scan_segment(
+    haystack: &[u8],
+    base: u64,
+    patterns: &[HexPattern],
+    buckets: &mut [RunningScan],
+    pagination: &Pagination,
+) -> bool {
+    for (pattern, bucket) in patterns.iter().zip(buckets.iter_mut()) {
+        if bucket.is_done() {
+            continue;
         }
-        let automaton = AhoCorasick::builder()
-            // Standard semantics report every hit as seen — what find_overlapping_iter needs.
-            .match_kind(MatchKind::Standard)
-            .build(&needles)
-            .expect("aho-corasick build of concrete byte runs");
-        Self {
-            automaton,
-            owners,
-            wildcard_only,
-        }
+        // Overlapping windows re-serve a shorter pattern's seam matches;
+        // record_new counts each address once. A declined record ends only
+        // this bucket's scan.
+        scan_window(haystack, base, pattern, |addr| {
+            bucket.record_new(pagination, addr)
+        });
     }
-
-    /// Scan one in-memory segment for every pattern, updating per-pattern
-    /// buckets (`base` = absolute address of `haystack[0]`). `patterns` must be
-    /// the same slice the matcher was compiled from: owner entries index into
-    /// it. Returns `false` when every bucket's window is exhausted.
-    pub fn scan_segment(
-        &self,
-        haystack: &[u8],
-        base: u64,
-        patterns: &[HexPattern],
-        buckets: &mut [RunningScan],
-        pagination: &Pagination,
-    ) -> bool {
-        for hit in self.automaton.find_overlapping_iter(haystack) {
-            for owner in &self.owners[hit.pattern().as_usize()] {
-                let bucket = &mut buckets[owner.pattern_index];
-                if bucket.is_done() {
-                    continue;
-                }
-                let pattern = &patterns[owner.pattern_index];
-                let Some(candidate) = hit.start().checked_sub(owner.needle_offset) else {
-                    continue;
-                };
-                if !verify_at(haystack, candidate, pattern.bytes()) {
-                    continue;
-                }
-                // Shorter patterns re-see their seam matches in the next
-                // window; count each address once.
-                if !bucket.record_new(pagination, base + candidate as u64)
-                    && buckets.iter().all(RunningScan::is_done)
-                {
-                    return false;
-                }
-            }
-        }
-        // All-wildcard buckets scan directly so each bucket's address order
-        // stays ascending; a declined candidate ends only its own enumeration,
-        // so the helper's `false` is deliberately ignored here.
-        for &pattern_index in &self.wildcard_only {
-            for_each_all_wildcard_candidate(
-                haystack.len(),
-                patterns[pattern_index].len(),
-                base,
-                |addr| buckets[pattern_index].record_new(pagination, addr),
-            );
-        }
-        !buckets.iter().all(RunningScan::is_done)
-    }
+    !buckets.iter().all(RunningScan::is_done)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::{naive_matches, pattern_from_tokens};
+    use proptest::prelude::*;
 
     fn parse_all<S: AsRef<str>>(patterns: &[S]) -> Vec<HexPattern> {
         patterns
@@ -134,26 +55,11 @@ mod tests {
         limit: u64,
     ) -> Vec<RunningScan> {
         let patterns = parse_all(pattern_texts);
-        let matcher = MultiMatcher::new(&patterns);
         let mut buckets: Vec<RunningScan> =
             (0..patterns.len()).map(|_| RunningScan::new()).collect();
         let pagination = Pagination { offset, limit };
-        matcher.scan_segment(haystack, base, &patterns, &mut buckets, &pagination);
+        scan_segment(haystack, base, &patterns, &mut buckets, &pagination);
         buckets
-    }
-
-    // Known-answer test for the crate behavior this design rests on:
-    // find_overlapping_iter must report self-overlapping occurrences.
-    #[test]
-    fn aho_corasick_reports_overlapping_hits() {
-        let patterns = parse_all(&["61 61"]); // "aa"
-        let matcher = MultiMatcher::new(&patterns);
-        let hits: Vec<usize> = matcher
-            .automaton
-            .find_overlapping_iter(b"aaaa".as_slice())
-            .map(|hit| hit.start())
-            .collect();
-        assert_eq!(hits, vec![0, 1, 2]);
     }
 
     #[test]
@@ -216,7 +122,6 @@ mod tests {
     #[test]
     fn exhausted_bucket_does_not_collect_more() {
         let patterns = parse_all(&["61 62", "78 79"]);
-        let matcher = MultiMatcher::new(&patterns);
         let mut buckets: Vec<RunningScan> =
             (0..patterns.len()).map(|_| RunningScan::new()).collect();
         let pagination = Pagination {
@@ -225,7 +130,7 @@ mod tests {
         };
         // Hits arrive in haystack order ("xy" first). After "ab"'s bucket
         // truncates on its second hit, the "xy" bucket must already be filled.
-        let alive = matcher.scan_segment(b"xy ab ab", 0, &patterns, &mut buckets, &pagination);
+        let alive = scan_segment(b"xy ab ab", 0, &patterns, &mut buckets, &pagination);
         assert!(alive);
         assert_eq!(buckets[0].matches, vec![3]);
         assert!(buckets[0].truncated);
@@ -236,13 +141,12 @@ mod tests {
     #[test]
     fn all_buckets_exhausted_stops_the_scan() {
         let patterns = parse_all(&["61 62"]);
-        let matcher = MultiMatcher::new(&patterns);
         let mut buckets: Vec<RunningScan> = vec![RunningScan::new()];
         let pagination = Pagination {
             offset: 0,
             limit: 1,
         };
-        let alive = matcher.scan_segment(b"ab ab ab", 0, &patterns, &mut buckets, &pagination);
+        let alive = scan_segment(b"ab ab ab", 0, &patterns, &mut buckets, &pagination);
         assert!(!alive);
         assert!(buckets[0].truncated);
     }
@@ -250,85 +154,179 @@ mod tests {
     #[test]
     fn multi_segment_accumulation_across_calls() {
         let patterns = parse_all(&["61 62"]);
-        let matcher = MultiMatcher::new(&patterns);
         let mut buckets: Vec<RunningScan> = vec![RunningScan::new()];
         let pagination = Pagination {
             offset: 0,
             limit: 50,
         };
-        assert!(matcher.scan_segment(b"ab", 0x10, &patterns, &mut buckets, &pagination));
-        assert!(matcher.scan_segment(b"ab ab", 0x20, &patterns, &mut buckets, &pagination));
+        assert!(scan_segment(
+            b"ab",
+            0x10,
+            &patterns,
+            &mut buckets,
+            &pagination
+        ));
+        assert!(scan_segment(
+            b"ab ab",
+            0x20,
+            &patterns,
+            &mut buckets,
+            &pagination
+        ));
         assert_eq!(buckets[0].matches, vec![0x10, 0x20, 0x23]);
         assert_eq!(buckets[0].total, 3);
     }
 
-    // Differential test against a naive reference on pseudo-random inputs.
-    #[test]
-    fn agrees_with_naive_reference_on_random_inputs() {
-        let mut next = crate::test_rng(0x9e37_79b9_7f4a_7c15);
-        for case in 0..300u32 {
-            let hay_len = (next() % 48) as usize;
-            let haystack: Vec<u8> = (0..hay_len).map(|_| (next() % 4) as u8).collect();
-            let pattern_count = 1 + (next() % 5) as usize;
-            let mut pattern_texts = Vec::new();
-            for _ in 0..pattern_count {
-                let pat_len = 1 + (next() % 4) as usize;
-                let tokens: Vec<String> = (0..pat_len)
-                    .map(|_| {
-                        if next().is_multiple_of(3) {
-                            "??".to_string()
-                        } else {
-                            format!("{:02x}", next() % 4)
-                        }
-                    })
-                    .collect();
-                pattern_texts.push(tokens.join(" "));
+    // Window walk as rx_multi_find drives it: advance by `chunk`, overlap by the
+    // longest pattern minus one, stop once every bucket is exhausted.
+    fn walk_windows(
+        haystack: &[u8],
+        base: u64,
+        patterns: &[HexPattern],
+        chunk: usize,
+        pagination: &Pagination,
+    ) -> Vec<RunningScan> {
+        let overlap = patterns.iter().map(HexPattern::len).max().unwrap() - 1;
+        let mut buckets: Vec<RunningScan> =
+            (0..patterns.len()).map(|_| RunningScan::new()).collect();
+        for start in (0..haystack.len()).step_by(chunk) {
+            let end = (start + chunk + overlap).min(haystack.len());
+            let alive = scan_segment(
+                &haystack[start..end],
+                base + start as u64,
+                patterns,
+                &mut buckets,
+                pagination,
+            );
+            assert_eq!(alive, !buckets.iter().all(RunningScan::is_done));
+            if !alive {
+                break;
             }
-            let patterns = parse_all(&pattern_texts);
+        }
+        buckets
+    }
+
+    // Seeded (xorshift) differential test over multi-window walks: shared first
+    // bytes, wildcard-leading and wildcard-only patterns, patterns longer than a
+    // tail window, seam matches seen by two windows, buckets finishing mid-window.
+    #[test]
+    fn seeded_window_walks_agree_with_naive_reference() {
+        let mut state = 0x2545f4914f6cdd1du64;
+        let mut next = |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        let shapes = [
+            "00",
+            "01",
+            "00 00",
+            "00 01",
+            "00 ??",
+            "?? 00",
+            "?? ??",
+            "?? ?? ??",
+            "00 01 02",
+            "00 ?? 02",
+            "?? 01 02",
+            "01 01 01 01",
+            "00 00 00 00 00 00 00 00 ?? 01",
+        ];
+        let pages = [
+            (0, 0),
+            (0, 1),
+            (0, 3),
+            (2, 2),
+            (5, 100),
+            (0, 1000),
+            (u64::MAX, 0),
+        ];
+        for _ in 0..400 {
+            let haystack: Vec<u8> = (0..next(160)).map(|_| next(3) as u8).collect();
+            let count = 1 + next(6) as usize;
+            let texts: Vec<&str> = (0..count)
+                .map(|_| shapes[next(shapes.len() as u64) as usize])
+                .collect();
+            let patterns = parse_all(&texts);
+            let chunk = 1 + next(24) as usize;
+            let (offset, limit) = pages[next(pages.len() as u64) as usize];
+            let pagination = Pagination { offset, limit };
+            let base = 0x4000;
+            let buckets = walk_windows(&haystack, base, &patterns, chunk, &pagination);
+            for (text, (pattern, bucket)) in texts.iter().zip(patterns.iter().zip(&buckets)) {
+                let naive = naive_matches(&haystack, pattern);
+                let window_end = offset.saturating_add(limit);
+                let available = naive.len() as u64;
+                let truncated = available > window_end;
+                let page_start = offset.min(available) as usize;
+                let page_end = window_end.min(available) as usize;
+                let expected: Vec<u64> = naive[page_start..page_end]
+                    .iter()
+                    .map(|pos| base + *pos as u64)
+                    .collect();
+                let context =
+                    format!("{text:?} chunk {chunk} page ({offset}, {limit}) hay {haystack:?}");
+                assert_eq!(
+                    bucket.total,
+                    if truncated { window_end + 1 } else { available },
+                    "{context}"
+                );
+                assert_eq!(bucket.truncated, truncated, "{context}");
+                assert_eq!(bucket.matches, expected, "{context}");
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn agrees_with_naive_reference_on_generated_inputs(
+            haystack in prop::collection::vec(0u8..4, 0..48),
+            token_sets in prop::collection::vec(
+                prop::collection::vec(
+                    prop_oneof![Just(None::<u8>), (0u8..4).prop_map(Some)],
+                    1..5
+                ),
+                1..6
+            )
+        ) {
+            let patterns: Vec<HexPattern> = token_sets
+                .into_iter()
+                .map(pattern_from_tokens)
+                .collect();
             let naive: Vec<Vec<usize>> = patterns
                 .iter()
-                .map(|pattern| {
-                    if haystack.len() < pattern.len() {
-                        Vec::new()
-                    } else {
-                        (0..=haystack.len() - pattern.len())
-                            .filter(|pos| verify_at(&haystack, *pos, pattern.bytes()))
-                            .collect()
-                    }
-                })
+                .map(|pattern| naive_matches(&haystack, pattern))
                 .collect();
-            for offset in [0u64, 2] {
-                for limit in [0u64, 1, 100] {
-                    let matcher = MultiMatcher::new(&patterns);
+                for offset in [0u64, 1, 2, u64::MAX] {
+                for limit in [0u64, 1, 2, 100] {
                     let mut buckets: Vec<RunningScan> =
                         (0..patterns.len()).map(|_| RunningScan::new()).collect();
                     let pagination = Pagination { offset, limit };
-                    let alive =
-                        matcher.scan_segment(&haystack, 0, &patterns, &mut buckets, &pagination);
+                    let alive = scan_segment(
+                        &haystack,
+                        0,
+                        &patterns,
+                        &mut buckets,
+                        &pagination,
+                    );
                     for (index, bucket) in buckets.iter().enumerate() {
                         let window_end = offset.saturating_add(limit);
-                        let mut expected_total = 0u64;
-                        let mut truncated = false;
-                        let mut expected = Vec::new();
-                        for pos in &naive[index] {
-                            expected_total += 1;
-                            if expected_total > offset && expected_total <= window_end {
-                                expected.push(*pos as u64);
-                            }
-                            if expected_total > window_end {
-                                truncated = true;
-                                break;
-                            }
-                        }
-                        assert_eq!(bucket.total, expected_total, "case {case} pattern {index}");
-                        assert_eq!(bucket.truncated, truncated, "case {case} pattern {index}");
-                        assert_eq!(bucket.matches, expected, "case {case} pattern {index}");
+                        let available = naive[index].len() as u64;
+                        let truncated = available > window_end;
+                        let expected_total = if truncated { window_end + 1 } else { available };
+                        let page_start = offset.min(available) as usize;
+                        let page_end = window_end.min(available) as usize;
+                        let expected: Vec<u64> = naive[index][page_start..page_end]
+                            .iter()
+                            .map(|pos| *pos as u64)
+                            .collect();
+                        prop_assert_eq!(bucket.total, expected_total, "pattern {} offset {} limit {}", index, offset, limit);
+                        prop_assert_eq!(bucket.truncated, truncated, "pattern {} offset {} limit {}", index, offset, limit);
+                        prop_assert_eq!(&bucket.matches, &expected, "pattern {} offset {} limit {}", index, offset, limit);
                     }
-                    let all_done = buckets.iter().all(|bucket| bucket.is_done());
-                    assert_eq!(
-                        !alive, all_done,
-                        "case {case} offset {offset} limit {limit}"
-                    );
+                    let all_done = buckets.iter().all(RunningScan::is_done);
+                    prop_assert_eq!(!alive, all_done, "offset {} limit {}", offset, limit);
                 }
             }
         }

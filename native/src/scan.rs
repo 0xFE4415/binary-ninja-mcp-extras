@@ -4,7 +4,8 @@
 //! reached before stopping.
 
 use crate::hexpattern::{HexPattern, verify_at};
-use memchr::memchr_iter;
+use memchr::{memchr_iter, memmem::Finder};
+use std::ops::ControlFlow;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Pagination {
@@ -70,10 +71,8 @@ impl RunningScan {
 }
 
 /// Enumerate every candidate start of an all-wildcard pattern in ascending
-/// order, stopping at the first `record` decline — and what that stops is the
-/// caller's call: the whole scan for the single-pattern walk, one bucket's
-/// enumeration for the multi-pattern walk.
-pub(crate) fn for_each_all_wildcard_candidate(
+/// order, stopping at the first `record` decline.
+fn for_each_all_wildcard_candidate(
     haystack_len: usize,
     pattern_len: usize,
     base: u64,
@@ -83,20 +82,16 @@ pub(crate) fn for_each_all_wildcard_candidate(
     (0..candidates).all(|candidate| record(base + candidate as u64))
 }
 
-/// Scan one in-memory segment for `pattern` (`base` = absolute address of
-/// `haystack[0]`), reporting occurrences in ascending order including
-/// overlapping ones. Returns `false` when the window is exhausted; the caller
-/// must stop scanning further segments.
-pub fn scan_pattern(
+/// Report every occurrence of `pattern` in `haystack` (`base` = absolute
+/// address of `haystack[0]`) to `record` in ascending order, overlapping ones
+/// included. Returns `false` as soon as `record` declines: the caller decides
+/// whether that ends one pattern's scan or all of them.
+pub(crate) fn scan_window(
     haystack: &[u8],
     base: u64,
     pattern: &HexPattern,
-    pagination: &Pagination,
-    running: &mut RunningScan,
+    mut record: impl FnMut(u64) -> bool,
 ) -> bool {
-    if running.is_done() {
-        return false;
-    }
     if pattern.is_empty() {
         // `HexPattern::parse` rejects empty patterns, so this guards direct
         // construction only: nothing to count, nothing to stop for.
@@ -107,63 +102,75 @@ pub fn scan_pattern(
     if haystack.len() < pattern_len {
         return true;
     }
-    if let Some((offset, anchor)) = pattern.first_concrete() {
-        for hit in memchr_iter(anchor, haystack) {
-            let Some(candidate) = hit.checked_sub(offset) else {
-                continue;
-            };
-            if candidate
-                .checked_add(pattern_len)
-                .is_none_or(|end| end > haystack.len())
-            {
-                // Anchors only move right, so no later candidate can fit.
-                break;
-            }
-            if !verify_at(haystack, candidate, bytes) {
-                continue;
-            }
-            if !running.record(pagination, base + candidate as u64) {
-                return false;
-            }
+    let Some((offset, run)) = pattern.first_concrete_run() else {
+        return for_each_all_wildcard_candidate(haystack.len(), pattern_len, base, record);
+    };
+    // Break(true): no later candidate can fit; Break(false): `record` declined.
+    let mut visit = |hit: usize| -> ControlFlow<bool> {
+        let Some(candidate) = hit.checked_sub(offset) else {
+            return ControlFlow::Continue(());
+        };
+        if candidate
+            .checked_add(pattern_len)
+            .is_none_or(|end| end > haystack.len())
+        {
+            // Anchors only move right, so no later candidate can fit.
+            return ControlFlow::Break(true);
         }
-    } else if !for_each_all_wildcard_candidate(haystack.len(), pattern_len, base, |addr| {
-        running.record(pagination, addr)
-    }) {
-        return false;
+        if verify_at(haystack, candidate, bytes) && !record(base + candidate as u64) {
+            return ControlFlow::Break(false);
+        }
+        ControlFlow::Continue(())
+    };
+    let flow = if let [anchor] = run[..] {
+        // memchr_iter beats a per-hit memmem call when one byte is the needle.
+        memchr_iter(anchor, haystack).try_for_each(&mut visit)
+    } else {
+        for_each_overlapping_hit(haystack, &run, &mut visit)
+    };
+    flow != ControlFlow::Break(false)
+}
+
+fn for_each_overlapping_hit(
+    haystack: &[u8],
+    needle: &[u8],
+    mut visit: impl FnMut(usize) -> ControlFlow<bool>,
+) -> ControlFlow<bool> {
+    let finder = Finder::new(needle);
+    let mut from = 0;
+    while let Some(relative) = finder.find(&haystack[from..]) {
+        let hit = from + relative;
+        from = hit + 1;
+        visit(hit)?;
     }
-    true
+    ControlFlow::Continue(())
+}
+
+/// Scan one in-memory segment for `pattern`, reporting occurrences in
+/// ascending order including overlapping ones. Returns `false` when the window
+/// is exhausted; the caller must stop scanning further segments.
+pub fn scan_pattern(
+    haystack: &[u8],
+    base: u64,
+    pattern: &HexPattern,
+    pagination: &Pagination,
+    running: &mut RunningScan,
+) -> bool {
+    !running.is_done()
+        && scan_window(haystack, base, pattern, |addr| {
+            running.record(pagination, addr)
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::hexpattern::HexPattern;
+    use crate::test_utils::{naive_matches, pattern_from_tokens};
+    use proptest::prelude::*;
 
     fn pattern(text: &str) -> HexPattern {
         HexPattern::parse(text).unwrap()
-    }
-
-    /// Naive reference: every position where the pattern matches, ascending.
-    fn naive_matches(haystack: &[u8], pat: &[Option<u8>]) -> Vec<usize> {
-        if haystack.len() < pat.len() {
-            return Vec::new();
-        }
-        (0..=haystack.len() - pat.len())
-            .filter(|pos| verify_at(haystack, *pos, pat))
-            .collect()
-    }
-
-    /// Build a pattern through the public parser from random tokens.
-    fn pattern_from_tokens(tokens: Vec<Option<u8>>) -> HexPattern {
-        let text = tokens
-            .iter()
-            .map(|token| match token {
-                Some(value) => format!("{value:02x}"),
-                None => "??".to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        HexPattern::parse(&text).unwrap()
     }
 
     #[test]
@@ -338,58 +345,36 @@ mod tests {
         assert_eq!(running.total, 0);
     }
 
-    /// Differential test: the prefiltered scanner must agree with a naive
-    /// reference matcher on pseudo-random inputs (fixed LCG seed, no rand dep).
-    #[test]
-    fn agrees_with_naive_reference_on_random_inputs() {
-        let mut next = crate::test_rng(0x5145_5145);
-        for case in 0..200u32 {
-            let hay_len = (next() % 64) as usize;
-            let hay: Vec<u8> = (0..hay_len)
-                .map(|_| {
-                    // Small alphabet forces plenty of near-matches and overlaps.
-                    (next() % 4) as u8
-                })
-                .collect();
-            let pat_len = 1 + (next() % 5) as usize;
-            let tokens: Vec<Option<u8>> = (0..pat_len)
-                .map(|_| {
-                    if next().is_multiple_of(3) {
-                        None
-                    } else {
-                        Some((next() % 4) as u8)
-                    }
-                })
-                .collect();
+    proptest! {
+        #[test]
+        fn agrees_with_naive_reference_on_generated_inputs(
+            hay in prop::collection::vec(0u8..4, 0..64),
+            tokens in prop::collection::vec(
+                prop_oneof![Just(None::<u8>), (0u8..4).prop_map(Some)],
+                1..6
+            )
+        ) {
             let pat = pattern_from_tokens(tokens);
-            let naive = naive_matches(&hay, pat.bytes());
-            for offset in [0u64, 1, 3] {
+            let naive = naive_matches(&hay, &pat);
+            for offset in [0u64, 1, 3, u64::MAX] {
                 for limit in [0u64, 1, 5, 100] {
                     let mut running = RunningScan::new();
                     let page = Pagination { offset, limit };
                     let keep_going = scan_pattern(&hay, 0, &pat, &page, &mut running);
-                    // Reference transcription of the Python counting contract.
                     let window_end = offset.saturating_add(limit);
-                    let mut expected_total = 0u64;
-                    let mut truncated = false;
-                    let mut expected = Vec::new();
-                    for pos in &naive {
-                        expected_total += 1;
-                        if expected_total > offset && expected_total <= window_end {
-                            expected.push(*pos as u64);
-                        }
-                        if expected_total > window_end {
-                            truncated = true;
-                            break;
-                        }
-                    }
-                    assert_eq!(
-                        running.total, expected_total,
-                        "case {case} offset {offset} limit {limit}"
-                    );
-                    assert_eq!(running.truncated, truncated, "case {case}");
-                    assert_eq!(running.matches, expected, "case {case}");
-                    assert_eq!(keep_going, !truncated, "case {case}");
+                    let available = naive.len() as u64;
+                    let truncated = available > window_end;
+                    let expected_total = if truncated { window_end + 1 } else { available };
+                    let page_start = offset.min(available) as usize;
+                    let page_end = window_end.min(available) as usize;
+                    let expected: Vec<u64> = naive[page_start..page_end]
+                        .iter()
+                        .map(|pos| *pos as u64)
+                        .collect();
+                    prop_assert_eq!(running.total, expected_total, "offset {} limit {}", offset, limit);
+                    prop_assert_eq!(running.truncated, truncated, "offset {} limit {}", offset, limit);
+                    prop_assert_eq!(running.matches, expected, "offset {} limit {}", offset, limit);
+                    prop_assert_eq!(keep_going, !truncated, "offset {} limit {}", offset, limit);
                 }
             }
         }

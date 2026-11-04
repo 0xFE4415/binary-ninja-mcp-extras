@@ -4,16 +4,22 @@
 //!
 //! - `rx_data_find`: the Python plugin's `rex_data_find` contract with the
 //!   byte scan running in native Rust (SIMD memchr prefilter + verification).
-//! - `rx_multi_find`: many hex patterns in one pass via a multi-pattern
-//!   automaton, a capability the Python plugin cannot offer.
+//! - `rx_multi_find`: many hex patterns in one walk over the bytes with
+//!   per-pattern prefilters, a capability the Python plugin cannot offer.
 //!
 //! The plugin links against the core at the exact `api_REVISION.txt` commit of
 //! the Binary Ninja this targets and registers its tools from `CorePluginInit`
 //! so clients that cached the tool list before startup still see them.
 
-mod hexpattern;
-mod multi;
-mod scan;
+// Public only so benches/ can drive the engine; not a supported API.
+#[doc(hidden)]
+pub mod hexpattern;
+#[doc(hidden)]
+pub mod multi;
+#[doc(hidden)]
+pub mod scan;
+#[cfg(test)]
+mod test_utils;
 mod tools;
 
 /// Seeded LCG for the differential tests (no rand dependency): Knuth's MMIX
