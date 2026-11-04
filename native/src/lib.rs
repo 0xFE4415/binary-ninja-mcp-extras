@@ -11,9 +11,13 @@
 //! the Binary Ninja this targets and registers its tools from `CorePluginInit`
 //! so clients that cached the tool list before startup still see them.
 
-mod hexpattern;
-mod multi;
-mod scan;
+// Public only so benches/ can drive the engine; not a supported API.
+#[doc(hidden)]
+pub mod hexpattern;
+#[doc(hidden)]
+pub mod multi;
+#[doc(hidden)]
+pub mod scan;
 mod tools;
 
 /// Seeded LCG for the differential tests (no rand dependency): Knuth's MMIX

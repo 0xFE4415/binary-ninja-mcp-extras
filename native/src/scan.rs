@@ -4,7 +4,8 @@
 //! reached before stopping.
 
 use crate::hexpattern::{HexPattern, verify_at};
-use memchr::memchr_iter;
+use memchr::{memchr_iter, memmem::Finder};
+use std::ops::ControlFlow;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Pagination {
@@ -107,24 +108,46 @@ pub fn scan_pattern(
     if haystack.len() < pattern_len {
         return true;
     }
-    if let Some((offset, anchor)) = pattern.first_concrete() {
-        for hit in memchr_iter(anchor, haystack) {
+    if let Some((offset, run)) = pattern.first_concrete_run() {
+        // Break(true): no later candidate can fit; Break(false): window exhausted.
+        let mut visit = |hit: usize| -> ControlFlow<bool> {
             let Some(candidate) = hit.checked_sub(offset) else {
-                continue;
+                return ControlFlow::Continue(());
             };
             if candidate
                 .checked_add(pattern_len)
                 .is_none_or(|end| end > haystack.len())
             {
                 // Anchors only move right, so no later candidate can fit.
-                break;
+                return ControlFlow::Break(true);
             }
-            if !verify_at(haystack, candidate, bytes) {
-                continue;
+            if verify_at(haystack, candidate, bytes)
+                && !running.record(pagination, base + candidate as u64)
+            {
+                return ControlFlow::Break(false);
             }
-            if !running.record(pagination, base + candidate as u64) {
-                return false;
+            ControlFlow::Continue(())
+        };
+        let flow = if let [anchor] = run[..] {
+            // memchr_iter beats a per-hit memmem call when one byte is the needle.
+            memchr_iter(anchor, haystack).try_for_each(&mut visit)
+        } else {
+            let finder = Finder::new(&run);
+            let mut from = 0;
+            let mut flow = ControlFlow::Continue(());
+            while let Some(relative) = finder.find(&haystack[from..]) {
+                let hit = from + relative;
+                // Overlapping occurrences count, so resume one byte past the hit.
+                from = hit + 1;
+                flow = visit(hit);
+                if flow.is_break() {
+                    break;
+                }
             }
+            flow
+        };
+        if flow == ControlFlow::Break(false) {
+            return false;
         }
     } else if !for_each_all_wildcard_candidate(haystack.len(), pattern_len, base, |addr| {
         running.record(pagination, addr)
