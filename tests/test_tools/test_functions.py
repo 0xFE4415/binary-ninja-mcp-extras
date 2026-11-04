@@ -60,6 +60,71 @@ def test_function_define_wait_reports_unanalyzed_functions() -> None:
 
     analyzed = FakeBinaryView()
     assert define(_call(analyzed), 0x4000, timeout_ms=0)["analyzed"] is True
+    # wait=false reports the function's actual state, not a blanket pending verdict.
+    assert define(_call(analyzed), 0x4001, wait=False)["analyzed"] is True
+
+
+class _DefineWaitClock:
+    """Deterministic clock for the define-wait loop; sleep can land the first block."""
+
+    def __init__(self) -> None:
+        self.now_ms = 0
+        self.sleeps: list[int] = []
+        self.landing: FakeFunction | None = None
+
+    def monotonic(self) -> float:
+        return self.now_ms / 1000
+
+    def sleep(self, seconds: float) -> None:
+        slept_ms = round(seconds * 1000)
+        self.sleeps.append(slept_ms)
+        self.now_ms += slept_ms
+        if self.landing is not None:
+            self.landing.basic_blocks = [FakeBasicBlock([(self.landing.start, "push rbp")])]
+
+
+def test_function_define_wait_polls_until_the_first_block_lands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The first block landing during a wait slice ends the wait one poll later, with the
+    # real basic_blocks gate deciding analyzed.
+    clock = _DefineWaitClock()
+    monkeypatch.setattr("time.sleep", clock.sleep)
+    monkeypatch.setattr("time.monotonic", clock.monotonic)
+    stalled = FakeBinaryView(create_user_function_analyzes=False)
+
+    def create_pending(address: int) -> FakeFunction | None:
+        function = FakeFunction(f"sub_{address:x}", address, address + 1)
+        clock.landing = function
+        return function
+
+    monkeypatch.setattr(stalled, "create_user_function", create_pending)
+    _, define = get_tool("rex_function_define")
+    assert define(_call(stalled), 0x4000, timeout_ms=60000) == {
+        "start": "0x4000",
+        "name": "sub_4000",
+        "analyzed": True,
+        "waited_ms": 100,
+    }
+    assert clock.sleeps == [100]
+
+
+def test_function_define_wait_stops_at_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = _DefineWaitClock()
+    monkeypatch.setattr("time.sleep", clock.sleep)
+    monkeypatch.setattr("time.monotonic", clock.monotonic)
+    stalled = FakeBinaryView(create_user_function_analyzes=False)
+    _, define = get_tool("rex_function_define")
+    result = define(_call(stalled), 0x4000, timeout_ms=350)
+    # The hold is bounded by timeout_ms plus one slice: 350 ms of budget, four 100 ms
+    # slices because the deadline check happens between slices.
+    assert result == {
+        "start": "0x4000",
+        "name": "sub_4000",
+        "analyzed": False,
+        "waited_ms": 400,
+    }
+    assert clock.sleeps == [100, 100, 100, 100]
 
 
 def test_function_define_many_defines_and_waits() -> None:

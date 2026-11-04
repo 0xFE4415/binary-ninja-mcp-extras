@@ -172,10 +172,25 @@ def test_eval_spill_store_evicts_oldest_and_drops_oversized_spills(
     assert page(_call(view), second["result_key"])["total"] > 0
 
     # A result larger than the per-spill cap is not kept: the clipped echo is the only
-    # copy, and the key comes back None so no caller chases an unreadable spill.
+    # copy, and the key comes back None so no caller chases an unreadable spill. The
+    # dropped spill must not occupy a store slot that could evict a readable spill.
     escape._EVAL_SPILLS.clear()
     monkeypatch.setattr(escape, "_MAX_EVAL_SPILL_CHARS", 8)
     dropped = evaluate(_call(view), f"result = 'c' * {escape._MAX_EVAL_RESULT_CHARS + 10}")
     assert dropped["result_truncated"] is True
     assert dropped["result_key"] is None
     assert dropped["result_length"] == escape._MAX_EVAL_RESULT_CHARS + 12
+    assert escape._EVAL_SPILLS == {}
+
+
+def test_eval_spill_keeps_a_spill_exactly_at_the_per_spill_cap() -> None:
+    escape._EVAL_SPILLS.clear()
+    view = _view_with_functions()
+    _, evaluate = get_tool("rex_eval_python")
+    # repr() adds the two quotes, so this result is exactly the per-spill cap long.
+    result = evaluate(_call(view), f"result = 'a' * {escape._MAX_EVAL_SPILL_CHARS - 2}")
+    assert result["result_key"] is not None
+    _, page = get_tool("rex_eval_result")
+    tail = page(_call(view), result["result_key"], offset=escape._MAX_EVAL_SPILL_CHARS - 1)
+    assert tail["value"] == "'"
+    assert tail["truncated"] is False

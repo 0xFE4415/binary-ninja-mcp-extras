@@ -135,11 +135,15 @@ def rex_function_define(
     :param wait: Poll until the function has at least one basic block.
     :param timeout_ms: Bound on the analysis wait when ``wait`` is set.
     """
+    timeout_ms = _validate_range("timeout_ms", timeout_ms, 0, _MAX_DEFINE_WAIT_MS)
     function = call.binary_view.create_user_function(start)
     if function is None:
         raise mcp.ToolError("define_failed", f"could not create a function at {start:#x}")
-    timeout_ms = _validate_range("timeout_ms", timeout_ms, 0, _MAX_DEFINE_WAIT_MS)
-    pending, waited_ms = _wait_analyzed([function], timeout_ms) if wait else ([function], 0)
+    if wait:
+        pending, waited_ms = _wait_analyzed([function], timeout_ms)
+    else:
+        pending = [function] if not _is_analyzed(function) else []
+        waited_ms = 0
     return {**_function_entry(function), "analyzed": not pending, "waited_ms": waited_ms}
 
 

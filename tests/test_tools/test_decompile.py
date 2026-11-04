@@ -909,6 +909,13 @@ def test_disasm_many_clips_at_the_cross_window_budget(monkeypatch: pytest.Monkey
     assert nothing["truncated"] is True
     assert nothing["next_offset"] == 0
 
+    # A window landing exactly on the budget still fits: 6 + 2 == 8 echoes 8 lines.
+    monkeypatch.setattr(decompile_tools, "_MAX_DISASM_MANY_TOTAL_LINES", 8)
+    exact = disasm(FakeParsingToolCall(view), ["0x1100", "0x2000"])
+    assert [entry["address"] for entry in exact["windows"]] == ["0x1100", "0x2000"]
+    assert exact["truncated"] is False
+    assert exact["next_offset"] is None
+
 
 def test_disasm_many_rejects_bad_batches() -> None:
     view = _disasm_view()

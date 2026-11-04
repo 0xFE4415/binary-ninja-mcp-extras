@@ -41,13 +41,15 @@ def _spill_echo(text: str, cap: int, kind: str) -> tuple[str, bool, str | None, 
     if len(text) <= cap:
         return text, False, None, len(text)
     echo = text[:cap] + f"... [{len(text) - cap} chars truncated]"
-    key = f"{kind}-{next(_SPILL_SEQUENCE)}"
-    _EVAL_SPILLS[key] = text[:_MAX_EVAL_SPILL_CHARS]
-    _EVAL_SPILLS.move_to_end(key)
-    while len(_EVAL_SPILLS) > _MAX_EVAL_SPILLS:
-        _EVAL_SPILLS.popitem(last=False)
     spill_complete = len(text) <= _MAX_EVAL_SPILL_CHARS
-    return echo, True, key if spill_complete else None, len(text)
+    key = f"{kind}-{next(_SPILL_SEQUENCE)}" if spill_complete else None
+    if key is not None:
+        # Keys come from a process-wide counter, so every store is a fresh entry and
+        # popitem(last=False) evicts the oldest spill a caller can still page back.
+        _EVAL_SPILLS[key] = text
+        while len(_EVAL_SPILLS) > _MAX_EVAL_SPILLS:
+            _EVAL_SPILLS.popitem(last=False)
+    return echo, True, key, len(text)
 
 
 @mcp.tool(destructive=True)

@@ -30,7 +30,7 @@ _PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
     ("rex_function_containing", "addr"): ("no_function",),
     ("rex_function_define", "start"): ("define_failed",),
     ("rex_function_define_many", "addresses"): ("define_failed",),
-    ("rex_function_undefine", "start"): ("no_function",),
+    ("rex_function_undefine", "start"): ("no_function", "analysis_pending"),
     ("rex_hlil_grep", "regex"): ("invalid_regex",),
     ("rex_kv_delete", "key"): ("invalid_key",),
     ("rex_kv_get", "key"): ("invalid_key", "not_found"),
