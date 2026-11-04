@@ -61,7 +61,32 @@ def _uidf_view(
     return view, main
 
 
-def test_uidf_set_informs_a_constant_and_renders_hlil() -> None:
+class FakeClock:
+    """Deterministic clock for the settling loop: scripted monotonic ticks in order, then
+    the time the sleeps accumulated; sleep records the exact milliseconds requested."""
+
+    def __init__(self, ticks: list[float] | None = None) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+        self._ticks: list[float] = list(ticks) if ticks is not None else []
+
+    def monotonic(self) -> float:
+        if self._ticks:
+            return self._ticks.pop(0)
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds * 1000)
+        self.now += seconds
+
+
+def _patch_time(monkeypatch: pytest.MonkeyPatch, clock: FakeClock) -> None:
+    monkeypatch.setattr("time.sleep", clock.sleep)
+    monkeypatch.setattr("time.monotonic", clock.monotonic)
+
+
+def test_uidf_set_informs_a_constant_and_renders_hlil(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_time(monkeypatch, FakeClock())
     view, main = _uidf_view()
     _, uidf_set = get_tool("rex_uidf_set")
     result = uidf_set(_call(view), 0x1100, "rax_1", "0x10")
@@ -87,7 +112,8 @@ def test_uidf_set_informs_a_constant_and_renders_hlil() -> None:
     assert clipped["truncated"] is True
 
 
-def test_uidf_set_parses_ranges_and_value_sets() -> None:
+def test_uidf_set_parses_ranges_and_value_sets(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_time(monkeypatch, FakeClock())
     view, _ = _uidf_view()
     _, uidf_set = get_tool("rex_uidf_set")
     unsigned = uidf_set(_call(view), 0x1100, "rax_1", "1:10:1", state="UnsignedRangeValue")
@@ -131,8 +157,9 @@ def test_uidf_set_rejects_unknown_variables() -> None:
     with pytest.raises(FakeToolError) as exc:
         uidf_set(_call(view), 0x1100, "nope", "1")
     assert exc.value.code == "no_variable"
-    assert "no MLIL variable named 'nope'" in exc.value.message
-    assert "bn_variable_list" in exc.value.message
+    assert exc.value.message == (
+        "no MLIL variable named 'nope' in main; variable names come from bn_variable_list"
+    )
     # A variable the function knows but never defines in the MLIL is equally unusable.
     with pytest.raises(FakeToolError) as exc:
         uidf_set(_call(view), 0x1100, "argc", "1")
@@ -140,7 +167,10 @@ def test_uidf_set_rejects_unknown_variables() -> None:
     assert main.set_user_var_value_calls == []
 
 
-def test_uidf_set_requires_def_address_for_multi_site_variables() -> None:
+def test_uidf_set_requires_def_address_for_multi_site_variables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_time(monkeypatch, FakeClock())
     view, main = _uidf_view()
     _, uidf_set = get_tool("rex_uidf_set")
     with pytest.raises(FakeToolError) as exc:
@@ -217,7 +247,11 @@ def test_uidf_set_rejects_bad_function_max_lines_and_state() -> None:
     with pytest.raises(FakeToolError) as exc:
         uidf_set(_call(view), 0x1100, "rax_1", "1", state="Bogus")
     assert exc.value.code == "invalid_params"
-    assert "must be one of" in exc.value.message
+    assert exc.value.message == (
+        "Invalid state parameter 'state': must be one of "
+        "ConstantValue, ConstantPointerValue, StackFrameOffset, SignedRangeValue, "
+        "UnsignedRangeValue, InSetOfValues, NotInSetOfValues"
+    )
 
 
 def test_uidf_set_wraps_core_failures() -> None:
@@ -230,22 +264,52 @@ def test_uidf_set_wraps_core_failures() -> None:
     assert "core refused" in exc.value.message
 
 
-def test_uidf_set_reports_an_unsettled_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(uidf_tools, "_MAX_UIDF_ANALYSIS_WAIT_MS", 30)
-    monkeypatch.setattr(uidf_tools, "_UIDF_ANALYSIS_SLICE_MS", 10)
+def test_uidf_set_returns_immediately_when_analysis_is_idle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+    _patch_time(monkeypatch, clock)
+    view, _ = _uidf_view()
     _, uidf_set = get_tool("rex_uidf_set")
-    busy_view, _ = _uidf_view([FakeAnalysisProgress(FakeAnalysisState.HoldState)])
-    result = uidf_set(_call(busy_view), 0x1100, "rax_1", "1")
-    assert result["analysis_complete"] is False
-    assert result["lines"] == ["int32_t rax_1 = 1", "if (rax_1 == 1)", "    return 0", "return 1"]
-    settling_view, _ = _uidf_view(
+    result = uidf_set(_call(view), 0x1100, "rax_1", "1")
+    # An already idle view answers without a single poll of the analysis queue.
+    assert result["analysis_complete"] is True
+    assert clock.sleeps == []
+
+
+def test_uidf_set_polls_until_analysis_settles(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock([0.0, 5.0])
+    _patch_time(monkeypatch, clock)
+    view, _ = _uidf_view(
         [
             FakeAnalysisProgress(FakeAnalysisState.HoldState),
             FakeAnalysisProgress(FakeAnalysisState.IdleState),
         ]
     )
-    settled = uidf_set(_call(settling_view), 0x1100, "rax_1", "1")
-    assert settled["analysis_complete"] is True
+    _, uidf_set = get_tool("rex_uidf_set")
+    result = uidf_set(_call(view), 0x1100, "rax_1", "1")
+    # The wait is one slice long: the entry read reports HoldState, the read after the
+    # first slice reports IdleState and ends it.
+    assert result["analysis_complete"] is True
+    assert clock.sleeps == [float(uidf_tools._UIDF_ANALYSIS_SLICE_MS)]
+
+
+def test_uidf_set_stops_at_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Five Holds outlast the 10000 ms budget; the trailing Idle keeps a loop that polls
+    # past the deadline from hanging the suite.
+    view, _ = _uidf_view(
+        [FakeAnalysisProgress(FakeAnalysisState.HoldState)] * 5
+        + [FakeAnalysisProgress(FakeAnalysisState.IdleState)]
+    )
+    clock = FakeClock([0.0, 9.999, 10.0])
+    _patch_time(monkeypatch, clock)
+    _, uidf_set = get_tool("rex_uidf_set")
+    result = uidf_set(_call(view), 0x1100, "rax_1", "1")
+    # 9.999 s is still inside the _MAX_UIDF_ANALYSIS_WAIT_MS budget and polls; the 10.0 s
+    # read is not, so the give-up costs exactly one slice, and HLIL renders regardless.
+    assert result["analysis_complete"] is False
+    assert result["lines"] == ["int32_t rax_1 = 1", "if (rax_1 == 1)", "    return 0", "return 1"]
+    assert clock.sleeps == [float(uidf_tools._UIDF_ANALYSIS_SLICE_MS)]
 
 
 def test_uidf_clear_clears_one_variable_across_sites() -> None:
