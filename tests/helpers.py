@@ -533,6 +533,8 @@ class FakeFunction:
         self.set_user_var_value_error: Exception | None = None
         self.clear_user_var_value_error: Exception | None = None
         self.clear_all_user_var_values_error: Exception | None = None
+        # Empty until "analyzed": the define tools' wait gates on the first block.
+        self.basic_blocks: list[FakeBasicBlock] = []
 
     def set_user_type(self, value: object) -> None:
         if self.user_type_error is not None:
@@ -659,6 +661,8 @@ class FakeBinaryView:
         derived_strings: list[FakeDerivedString] | None = None,
         component_root: FakeComponent | None = None,
         relocations: list[FakeRelocation] | None = None,
+        pending_functions: list[FakeFunction] | None = None,
+        create_user_function_analyzes: bool = True,
     ) -> None:
         self.strings = strings if strings is not None else []
         self.segments = segments if segments is not None else []
@@ -733,6 +737,11 @@ class FakeBinaryView:
         )
         self._created_components: list[FakeComponent] = []
         self._relocations = relocations if relocations is not None else []
+        # Defined functions the analysis engine has not produced blocks for yet: found by
+        # get_function_at but invisible to get_functions_containing, mirroring the real
+        # core's treatment of freshly created user functions.
+        self._pending_functions = pending_functions if pending_functions is not None else []
+        self.create_user_function_analyzes = create_user_function_analyzes
         # UIDF surface: every parse call's (spec, state, here) plus the scheduled updates.
         self.possible_value_parses: list[tuple[str, FakeRegisterValueType, int]] = []
         self.parse_possiblevalueset_error: Exception | None = None
@@ -826,8 +835,17 @@ class FakeBinaryView:
             if relocation.info.address <= addr < relocation.info.address + relocation.info.size
         ]
 
+    def get_function_at(self, address: int) -> FakeFunction | None:
+        """Mirror BinaryView.get_function_at: exact start match, pending functions included."""
+        for function in [*self.functions, *self._pending_functions]:
+            if function.start == address:
+                return function
+        return None
+
     def create_user_function(self, address: int) -> FakeFunction:
         function = FakeFunction(f"sub_{address:x}", address, address + 1)
+        if self.create_user_function_analyzes:
+            function.basic_blocks = [FakeBasicBlock([(address, "push rbp")])]
         self.created_functions.append(function)
         self.functions.append(function)
         return function

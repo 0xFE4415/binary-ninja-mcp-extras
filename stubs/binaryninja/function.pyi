@@ -13,6 +13,7 @@ class Function:
     hlil: Any
     mlil: MediumLevelILFunction | None
     comment: str
+    basic_blocks: Any
     vars: list[Variable]
 
     def set_user_type(self, value: Any) -> None: ...

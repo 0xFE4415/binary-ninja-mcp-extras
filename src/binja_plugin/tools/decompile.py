@@ -19,6 +19,7 @@ from binja_plugin.tools import (
     _render_function_disassembly,
     _require_analyzed_function,
     _resolve_address_batch,
+    _resolve_address_pairs,
     _truncate,
     _validate_disasm_window,
     _validate_range,
@@ -30,10 +31,17 @@ _MAX_HLIL_GREP_FUNCTIONS = 5000
 # rex_hlil_grep per-match context: bounded so the three-matches-per-function cap keeps
 # the echoed lines per function a few dozen at most.
 _MAX_HLIL_GREP_CONTEXT = 8
-# rex_decompile_many caps: 16 address expressions bound one call's decompilation cost,
-# and 400 lines bound the echoed text per function.
-_MAX_DECOMPILE_BATCH = 16
+# rex_decompile_many caps: the batch size bounds one call's decompilation cost, the
+# line cap the echoed text per function.
+_MAX_DECOMPILE_BATCH = 1024
 _MAX_DECOMPILE_LINES = 400
+
+# rex_disasm_many caps: the batch size and per-window line cap bound one call's render
+# and echo, and the cross-window budget paginates so one call cannot return an
+# unbounded dump.
+_MAX_DISASM_BATCH = 64
+_MAX_DISASM_MANY_LINES = 200
+_MAX_DISASM_MANY_TOTAL_LINES = 1024
 
 # rex_quick_main's resolution chain: function symbols first, then the __libc_start_main
 # pointer argument of the entry stub, then an explicitly named entry-function fallback.
@@ -131,7 +139,7 @@ def rex_decompile_many(
 ) -> dict[str, object]:
     """Batch decompilation for triage.
 
-    :param functions: 1 to 16 address expressions, rendered in the order given.
+    :param functions: 1 to 1024 address expressions, rendered in the order given.
     :param max_lines: HLIL lines rendered per function.
     """
     bv = call.binary_view
@@ -170,6 +178,47 @@ def rex_disasm_at(
         ],
         "truncated": start > 0 or end < len(lines),
     }
+
+
+@mcp.tool(read_only=True)
+def rex_disasm_many(
+    call: mcp.ToolCall,
+    addresses: list[str],
+    max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DISASM_MANY_LINES)] = 32,
+) -> dict[str, object]:
+    """Batch address-anchored disassembly windows, e.g. one window per VM handler.
+
+    :param addresses: 1 to 64 address expressions; next_offset marks the first not returned.
+    :param max_lines: Instructions per address, anchored at the last line at or before it.
+    """
+    bv = call.binary_view
+    max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DISASM_MANY_LINES)
+    resolved = _resolve_address_pairs(call, bv, addresses, _MAX_DISASM_BATCH, "addresses")
+    windows: list[dict[str, object]] = []
+    total_lines = 0
+    truncated = False
+    next_offset: int | None = None
+    for index, (address, function) in enumerate(resolved):
+        lines = _render_function_disassembly(function)
+        start, end = _disasm_window(lines, address, 0, max_lines - 1)
+        window = lines[start:end]
+        if total_lines + len(window) > _MAX_DISASM_MANY_TOTAL_LINES:
+            truncated = True
+            next_offset = index
+            break
+        total_lines += len(window)
+        windows.append(
+            {
+                "address": hex(address),
+                "function": _function_entry(function),
+                "instructions": [
+                    {"address": hex(line_address), "text": _truncate(text)}
+                    for line_address, text in window
+                ],
+                "truncated": end < len(lines),
+            }
+        )
+    return {"windows": windows, "truncated": truncated, "next_offset": next_offset}
 
 
 @mcp.tool(read_only=True)
