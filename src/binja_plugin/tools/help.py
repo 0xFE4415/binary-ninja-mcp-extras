@@ -67,17 +67,19 @@ def rex_help(call: mcp.ToolCall, tool_name: str = "") -> dict[str, object]:
         )
     schema = tool.input_schema
     required = schema.get("required", [])
-    parameters = []
-    for parameter_name, parameter_schema in schema["properties"].items():
-        parameter: dict[str, object] = {
+    parameters = [
+        {
             "name": parameter_name,
             "type": parameter_schema["type"],
             "required": parameter_name in required,
             "description": parameter_schema["description"],
             "error_codes": list(_PARAMETER_ERROR_CODES.get((tool_name, parameter_name), ())),
+            **{
+                bound: parameter_schema[bound]
+                for bound in ("minimum", "maximum", "default", "enum", "minLength", "items")
+                if bound in parameter_schema
+            },
         }
-        for bound in ("minimum", "maximum", "default", "enum", "minLength", "items"):
-            if bound in parameter_schema:
-                parameter[bound] = parameter_schema[bound]
-        parameters.append(parameter)
+        for parameter_name, parameter_schema in schema["properties"].items()
+    ]
     return {"name": tool_name, "description": tool.description, "parameters": parameters}
