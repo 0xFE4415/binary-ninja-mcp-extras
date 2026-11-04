@@ -68,7 +68,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_string_refs` | Code refs to detected strings, synthesized included; filters. |
 | `rex_xrefs_to` | Code and data references to an address. |
 | `rex_disasm_at` | Window (max 4096 instructions per side); full function: `rex_export_disasm`. |
-| `rex_disasm_many` | Batch of up to 64 `rex_disasm_at`-style windows with a cross-window line budget and a `next_offset` continuation. |
+| `rex_disasm_many` | Up to 64 disasm windows, one shared line budget; `next_offset` continues. |
 | `rex_decompile_many` | HLIL render for up to 1024 functions in one batch call. |
 | `rex_quick_main` | Entry point, `main`, and `main`'s HLIL in one call. |
 | `rex_analysis_wait` | Bounded wait for background analysis; snapshot at expiry. |
@@ -88,8 +88,8 @@ scanners. Read the destructive table before you let an agent run those tools.
 | --- | --- |
 | `rex_annotate_many` | Rename, comment, or retype up to 100 functions in one transaction. |
 | `rex_memory_write` | Overwrite bytes in the binary view with a hex byte string. |
-| `rex_function_define` | Turn the bytes at an address into a function, optionally waiting for analysis. |
-| `rex_function_define_many` | Define up to 100 functions per call and wait for their first basic blocks. |
+| `rex_function_define` | Turn bytes at an address into a function; optional wait for analysis. |
+| `rex_function_define_many` | Define up to 100 functions per call, waiting for first blocks. |
 | `rex_function_undefine` | Remove the function covering an address. |
 | `rex_struct_from_access` | Infer a struct from recorded offset accesses and define it. |
 | `rex_type_library_import` | Attach a `.bntl` and import a bounded list of its type names. |

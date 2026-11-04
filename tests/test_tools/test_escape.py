@@ -103,6 +103,26 @@ def test_eval_python_returns_truncated_error_instead_of_raising() -> None:
     assert len(result["error"]) == 512 + len("... [488 chars truncated]")
 
 
+def test_eval_python_keeps_text_exactly_at_the_echo_cap_unclipped() -> None:
+    escape._EVAL_SPILLS.clear()
+    view = _view_with_functions()
+    _, evaluate = get_tool("rex_eval_python")
+    # repr() adds the two quotes, so this result is exactly the echo cap long: it must
+    # come back whole with no truncation flag and no spill key, not clipped by one char
+    # with a "... [0 chars truncated]" suffix.
+    result = evaluate(_call(view), f"result = 'a' * {escape._MAX_EVAL_RESULT_CHARS - 2}")
+    assert result["result"] == "'" + "a" * (escape._MAX_EVAL_RESULT_CHARS - 2) + "'"
+    assert result["result_truncated"] is False
+    assert result["result_key"] is None
+    assert result["result_length"] == escape._MAX_EVAL_RESULT_CHARS
+    # The same boundary on the stdout path: exactly cap characters echo whole, unspilled.
+    stdout = evaluate(_call(view), f"print('b' * {escape._MAX_EVAL_STDOUT_CHARS - 1})")
+    assert stdout["stdout"] == "b" * (escape._MAX_EVAL_STDOUT_CHARS - 1) + "\n"
+    assert stdout["stdout_truncated"] is False
+    assert stdout["stdout_key"] is None
+    assert stdout["stdout_length"] == escape._MAX_EVAL_STDOUT_CHARS
+
+
 def test_eval_python_spills_oversized_result_for_paging() -> None:
     escape._EVAL_SPILLS.clear()
     view = _view_with_functions()
@@ -154,6 +174,29 @@ def test_eval_python_spills_oversized_stdout() -> None:
     spilled = page(_call(view), result["stdout_key"], offset=0, limit=10)
     assert spilled["value"] == "x" * 10
     assert spilled["total"] == escape._MAX_EVAL_STDOUT_CHARS + 11
+
+
+def test_eval_spill_store_evicts_exactly_the_oldest_when_the_cap_is_exceeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    escape._EVAL_SPILLS.clear()
+    monkeypatch.setattr(escape, "_MAX_EVAL_SPILLS", 2)
+    view = _view_with_functions()
+    _, evaluate = get_tool("rex_eval_python")
+    _, page = get_tool("rex_eval_result")
+    keys = [
+        evaluate(_call(view), f"result = '{letter}' * {escape._MAX_EVAL_RESULT_CHARS + 10}")[
+            "result_key"
+        ]
+        for letter in "abc"
+    ]
+    # Three spills against a two-slot store evict exactly the oldest key; the two most
+    # recent spills stay pageable.
+    with pytest.raises(FakeToolError) as exc:
+        page(_call(view), keys[0])
+    assert exc.value.code == "not_found"
+    assert page(_call(view), keys[1])["value"].startswith("'b")
+    assert page(_call(view), keys[2])["value"].startswith("'c")
 
 
 def test_eval_spill_store_evicts_oldest_and_drops_oversized_spills(

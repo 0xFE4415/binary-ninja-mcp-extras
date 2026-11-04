@@ -45,10 +45,10 @@ def _spill_echo(text: str, cap: int, kind: str) -> tuple[str, bool, str | None, 
     key = f"{kind}-{next(_SPILL_SEQUENCE)}" if spill_complete else None
     if key is not None:
         # Keys come from a process-wide counter, so every store is a fresh entry and
-        # popitem(last=False) evicts the oldest spill a caller can still page back.
+        # dropping the first key evicts the oldest spill a caller can still page back.
         _EVAL_SPILLS[key] = text
         while len(_EVAL_SPILLS) > _MAX_EVAL_SPILLS:
-            _EVAL_SPILLS.popitem(last=False)
+            del _EVAL_SPILLS[next(iter(_EVAL_SPILLS))]
     return echo, True, key, len(text)
 
 

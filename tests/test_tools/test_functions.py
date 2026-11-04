@@ -83,6 +83,31 @@ class _DefineWaitClock:
             self.landing.basic_blocks = [FakeBasicBlock([(self.landing.start, "push rbp")])]
 
 
+class _ScriptedWaitClock:
+    """Clock whose monotonic readings follow a script; sleep keeps the raw durations.
+
+    The last reading repeats once the script runs out, so a mutant that takes one extra
+    poll still terminates against a value past the deadline. More than ``max_sleeps``
+    sleeps means the wait loop ignored the scripted deadline and the clock fails the
+    test instead of spinning.
+    """
+
+    def __init__(self, readings: list[float], max_sleeps: int = 4) -> None:
+        self.readings = list(readings)
+        self.sleeps: list[float] = []
+        self.max_sleeps = max_sleeps
+
+    def monotonic(self) -> float:
+        if len(self.readings) > 1:
+            return self.readings.pop(0)
+        return self.readings[0]
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        if len(self.sleeps) > self.max_sleeps:
+            raise AssertionError("wait loop slept past the scripted deadline")
+
+
 def test_function_define_wait_polls_until_the_first_block_lands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -125,6 +150,47 @@ def test_function_define_wait_stops_at_the_deadline(monkeypatch: pytest.MonkeyPa
         "waited_ms": 400,
     }
     assert clock.sleeps == [100, 100, 100, 100]
+
+
+def test_function_define_wait_polls_just_under_the_full_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A poll taken just under the full timeout_ms budget still runs its slice: the
+    # deadline is exactly timeout_ms milliseconds after the wait started, each slice
+    # sleeps the full 100 ms, and waited_ms is the elapsed wall time in milliseconds.
+    clock = _ScriptedWaitClock([0.0, 0.999999, 10.0])
+    monkeypatch.setattr("time.monotonic", clock.monotonic)
+    monkeypatch.setattr("time.sleep", clock.sleep)
+    stalled = FakeBinaryView(create_user_function_analyzes=False)
+    _, define = get_tool("rex_function_define")
+    result = define(_call(stalled), 0x4000, timeout_ms=1000)
+    assert clock.sleeps == [0.1]
+    assert result == {
+        "start": "0x4000",
+        "name": "sub_4000",
+        "analyzed": False,
+        "waited_ms": 10000,
+    }
+
+
+def test_function_define_wait_takes_no_slice_at_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A poll taken exactly at the deadline stops without another 100 ms slice; the next
+    # reading shows the clock running on while the loop decided to return.
+    clock = _ScriptedWaitClock([0.0, 0.0, 1.0, 1.1])
+    monkeypatch.setattr("time.monotonic", clock.monotonic)
+    monkeypatch.setattr("time.sleep", clock.sleep)
+    stalled = FakeBinaryView(create_user_function_analyzes=False)
+    _, define = get_tool("rex_function_define")
+    result = define(_call(stalled), 0x4000, timeout_ms=1000)
+    assert clock.sleeps == [0.1]
+    assert result == {
+        "start": "0x4000",
+        "name": "sub_4000",
+        "analyzed": False,
+        "waited_ms": 1100,
+    }
 
 
 def test_function_define_many_defines_and_waits() -> None:
