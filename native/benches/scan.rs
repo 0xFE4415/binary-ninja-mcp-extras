@@ -24,6 +24,42 @@ const PATTERNS: [&str; 12] = [
     "?? ??",
 ];
 
+/// Prologues, calls, thunks, padding and loads as a signature scan would carry.
+const SIGNATURES: [&str; 32] = [
+    "55 48 89 e5",
+    "48 83 ec ??",
+    "48 81 ec ?? ?? ?? ??",
+    "41 57 41 56 41 55 41 54",
+    "53 48 83 ec ??",
+    "48 89 5c 24 ?? 57",
+    "48 89 6c 24 ??",
+    "48 89 74 24 ??",
+    "e8 ?? ?? ?? ??",
+    "ff 15 ?? ?? ?? ??",
+    "ff 25 ?? ?? ?? ??",
+    "48 8b 05 ?? ?? ?? ??",
+    "48 8d 05 ?? ?? ?? ??",
+    "48 8d 3d ?? ?? ?? ??",
+    "48 8d 35 ?? ?? ?? ??",
+    "0f 1f 44 00 00",
+    "0f 1f 40 00",
+    "66 0f 1f 44 00 00",
+    "66 90",
+    "90 90 90 90",
+    "cc cc cc cc",
+    "c3",
+    "f3 0f 1e fa",
+    "48 89 e5",
+    "5d c3",
+    "48 83 c4 ?? c3",
+    "31 c0",
+    "85 c0 74 ??",
+    "48 85 c0 74 ??",
+    "48 89 c7 e8",
+    "?? ?? 48 8b 05",
+    "de ad be ef",
+];
+
 // Counts every match without recording any: offset u64::MAX is never reached.
 const FULL_SCAN: Pagination = Pagination {
     offset: u64::MAX,
@@ -93,42 +129,46 @@ fn bench_single(criterion: &mut Criterion) {
 }
 
 fn bench_multi(criterion: &mut Criterion) {
-    let patterns: Vec<HexPattern> = PATTERNS[..8]
-        .iter()
-        .map(|text| HexPattern::parse(text).unwrap())
-        .collect();
-    let matcher = MultiMatcher::new(&patterns);
-    for size in SIZES {
-        let Some((source, haystack)) = haystack_for(size) else {
-            continue;
-        };
-        let mut group = criterion.benchmark_group(format!("multi_scan_segment/{source}"));
-        group.throughput(Throughput::Bytes(size as u64));
-        group.bench_function(
-            BenchmarkId::new("8_patterns", format!("{}KiB", size >> 10)),
-            |bench| {
-                bench.iter_batched(
-                    || {
-                        patterns
-                            .iter()
-                            .map(|_| RunningScan::new())
-                            .collect::<Vec<_>>()
-                    },
-                    |mut buckets| {
-                        matcher.scan_segment(
-                            black_box(&haystack),
-                            0,
-                            &patterns,
-                            &mut buckets,
-                            &FULL_SCAN,
-                        );
-                        buckets.iter().map(|bucket| bucket.total).sum::<u64>()
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
-        group.finish();
+    let cases: [(&str, &[&str]); 2] =
+        [("8_patterns", &PATTERNS[..8]), ("32_patterns", &SIGNATURES)];
+    for (name, texts) in cases {
+        let patterns: Vec<HexPattern> = texts
+            .iter()
+            .map(|text| HexPattern::parse(text).unwrap())
+            .collect();
+        let matcher = MultiMatcher::new(&patterns);
+        for size in SIZES {
+            let Some((source, haystack)) = haystack_for(size) else {
+                continue;
+            };
+            let mut group = criterion.benchmark_group(format!("multi_scan_segment/{source}"));
+            group.throughput(Throughput::Bytes(size as u64));
+            group.bench_function(
+                BenchmarkId::new(name, format!("{}KiB", size >> 10)),
+                |bench| {
+                    bench.iter_batched(
+                        || {
+                            patterns
+                                .iter()
+                                .map(|_| RunningScan::new())
+                                .collect::<Vec<_>>()
+                        },
+                        |mut buckets| {
+                            matcher.scan_segment(
+                                black_box(&haystack),
+                                0,
+                                &patterns,
+                                &mut buckets,
+                                &FULL_SCAN,
+                            );
+                            buckets.iter().map(|bucket| bucket.total).sum::<u64>()
+                        },
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
+            group.finish();
+        }
     }
 }
 
