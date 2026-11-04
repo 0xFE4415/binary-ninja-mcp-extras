@@ -1,8 +1,11 @@
+//! Set SCAN_BENCH_FILE=<binary> to bench slices from the middle of that file instead of synthetic bytes.
+
 use binja_plugin_native::hexpattern::HexPattern;
 use binja_plugin_native::multi::MultiMatcher;
 use binja_plugin_native::scan::{Pagination, RunningScan, scan_pattern};
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
+use std::sync::OnceLock;
 
 const SIZES: [usize; 3] = [64 << 10, 4 << 20, 64 << 20];
 
@@ -45,10 +48,31 @@ fn synthetic_haystack(size: usize) -> Vec<u8> {
         .collect()
 }
 
+/// Haystack source label and bytes for `size`; None when the real file is smaller than `size`.
+fn haystack_for(size: usize) -> Option<(&'static str, Vec<u8>)> {
+    static REAL: OnceLock<Option<Vec<u8>>> = OnceLock::new();
+    let real = REAL.get_or_init(|| {
+        let path = std::env::var_os("SCAN_BENCH_FILE")?;
+        Some(std::fs::read(&path).expect("read SCAN_BENCH_FILE"))
+    });
+    match real {
+        None => Some(("synthetic", synthetic_haystack(size))),
+        Some(file) if size > file.len() => None,
+        Some(file) => {
+            // Page-aligned middle of the file, so slices are mostly code.
+            let offset = ((file.len() / 2) & !0xfff).min(file.len() - size);
+            Some(("real", file[offset..offset + size].to_vec()))
+        }
+    }
+}
+
 fn bench_single(criterion: &mut Criterion) {
     for size in SIZES {
-        let haystack = synthetic_haystack(size);
-        let mut group = criterion.benchmark_group(format!("scan_pattern/{}KiB", size >> 10));
+        let Some((source, haystack)) = haystack_for(size) else {
+            continue;
+        };
+        let mut group =
+            criterion.benchmark_group(format!("scan_pattern/{source}/{}KiB", size >> 10));
         group.throughput(Throughput::Bytes(size as u64));
         for text in PATTERNS {
             let pattern = HexPattern::parse(text).unwrap();
@@ -75,8 +99,10 @@ fn bench_multi(criterion: &mut Criterion) {
         .collect();
     let matcher = MultiMatcher::new(&patterns);
     for size in SIZES {
-        let haystack = synthetic_haystack(size);
-        let mut group = criterion.benchmark_group("multi_scan_segment");
+        let Some((source, haystack)) = haystack_for(size) else {
+            continue;
+        };
+        let mut group = criterion.benchmark_group(format!("multi_scan_segment/{source}"));
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_function(
             BenchmarkId::new("8_patterns", format!("{}KiB", size >> 10)),
