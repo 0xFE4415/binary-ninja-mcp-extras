@@ -18,6 +18,8 @@ pub mod hexpattern;
 pub mod multi;
 #[doc(hidden)]
 pub mod scan;
+#[cfg(test)]
+mod test_utils;
 mod tools;
 
 /// Seeded LCG for the differential tests (no rand dependency): Knuth's MMIX

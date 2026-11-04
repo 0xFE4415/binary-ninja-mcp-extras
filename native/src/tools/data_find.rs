@@ -74,34 +74,9 @@ mod tests {
     use super::*;
     use crate::hexpattern::HexPattern;
     use crate::scan::Pagination;
+    use crate::test_utils::{naive_matches, pattern_from_tokens};
     use crate::tools::testing::{FakeView, scan_fake_view};
     use proptest::prelude::*;
-
-    fn pattern_from_tokens(tokens: Vec<Option<u8>>) -> HexPattern {
-        let text = tokens
-            .iter()
-            .map(|token| match token {
-                Some(value) => format!("{value:02x}"),
-                None => "??".to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        HexPattern::parse(&text).unwrap()
-    }
-
-    fn naive_matches(haystack: &[u8], pattern: &[Option<u8>]) -> Vec<usize> {
-        if haystack.len() < pattern.len() {
-            return Vec::new();
-        }
-        (0..=haystack.len() - pattern.len())
-            .filter(|pos| {
-                haystack[*pos..*pos + pattern.len()]
-                    .iter()
-                    .zip(pattern)
-                    .all(|(byte, expected)| expected.is_none_or(|value| value == *byte))
-            })
-            .collect()
-    }
 
     #[test]
     fn finds_matches_across_chunk_boundaries() {
@@ -369,7 +344,7 @@ mod tests {
                 &pagination,
             );
 
-            let naive = naive_matches(&haystack, pattern.bytes());
+            let naive = naive_matches(&haystack, &pattern);
             let available = naive.len() as u64;
             let window_end = offset.saturating_add(limit);
             let truncated = available > window_end;

@@ -126,21 +126,24 @@ pub(crate) fn scan_window(
         // memchr_iter beats a per-hit memmem call when one byte is the needle.
         memchr_iter(anchor, haystack).try_for_each(&mut visit)
     } else {
-        let finder = Finder::new(&run);
-        let mut from = 0;
-        let mut flow = ControlFlow::Continue(());
-        while let Some(relative) = finder.find(&haystack[from..]) {
-            let hit = from + relative;
-            // Overlapping occurrences count, so resume one byte past the hit.
-            from = hit + 1;
-            flow = visit(hit);
-            if flow.is_break() {
-                break;
-            }
-        }
-        flow
+        for_each_overlapping_hit(haystack, &run, &mut visit)
     };
     flow != ControlFlow::Break(false)
+}
+
+fn for_each_overlapping_hit(
+    haystack: &[u8],
+    needle: &[u8],
+    mut visit: impl FnMut(usize) -> ControlFlow<bool>,
+) -> ControlFlow<bool> {
+    let finder = Finder::new(needle);
+    let mut from = 0;
+    while let Some(relative) = finder.find(&haystack[from..]) {
+        let hit = from + relative;
+        from = hit + 1;
+        visit(hit)?;
+    }
+    ControlFlow::Continue(())
 }
 
 /// Scan one in-memory segment for `pattern`, reporting occurrences in
@@ -163,38 +166,11 @@ pub fn scan_pattern(
 mod tests {
     use super::*;
     use crate::hexpattern::HexPattern;
+    use crate::test_utils::{naive_matches, pattern_from_tokens};
     use proptest::prelude::*;
 
     fn pattern(text: &str) -> HexPattern {
         HexPattern::parse(text).unwrap()
-    }
-
-    /// Naive reference: every position where the pattern matches, ascending.
-    fn naive_matches(haystack: &[u8], pat: &[Option<u8>]) -> Vec<usize> {
-        if haystack.len() < pat.len() {
-            return Vec::new();
-        }
-        (0..=haystack.len() - pat.len())
-            .filter(|pos| {
-                haystack[*pos..*pos + pat.len()]
-                    .iter()
-                    .zip(pat)
-                    .all(|(byte, expected)| expected.is_none_or(|value| value == *byte))
-            })
-            .collect()
-    }
-
-    /// Build a pattern through the public parser from random tokens.
-    fn pattern_from_tokens(tokens: Vec<Option<u8>>) -> HexPattern {
-        let text = tokens
-            .iter()
-            .map(|token| match token {
-                Some(value) => format!("{value:02x}"),
-                None => "??".to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        HexPattern::parse(&text).unwrap()
     }
 
     #[test]
@@ -379,7 +355,7 @@ mod tests {
             )
         ) {
             let pat = pattern_from_tokens(tokens);
-            let naive = naive_matches(&hay, pat.bytes());
+            let naive = naive_matches(&hay, &pat);
             for offset in [0u64, 1, 3, u64::MAX] {
                 for limit in [0u64, 1, 5, 100] {
                     let mut running = RunningScan::new();

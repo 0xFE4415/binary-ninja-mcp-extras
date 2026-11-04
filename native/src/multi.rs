@@ -37,6 +37,7 @@ pub fn scan_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::{naive_matches, pattern_from_tokens};
     use proptest::prelude::*;
 
     fn parse_all<S: AsRef<str>>(patterns: &[S]) -> Vec<HexPattern> {
@@ -44,18 +45,6 @@ mod tests {
             .iter()
             .map(|text| HexPattern::parse(text.as_ref()).unwrap())
             .collect()
-    }
-
-    fn pattern_from_tokens(tokens: Vec<Option<u8>>) -> HexPattern {
-        let text = tokens
-            .iter()
-            .map(|token| match token {
-                Some(value) => format!("{value:02x}"),
-                None => "??".to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        HexPattern::parse(&text).unwrap()
     }
 
     fn scan_all(
@@ -188,16 +177,6 @@ mod tests {
         assert_eq!(buckets[0].total, 3);
     }
 
-    fn naive_addresses(haystack: &[u8], pattern: &HexPattern) -> Vec<u64> {
-        if haystack.len() < pattern.len() {
-            return Vec::new();
-        }
-        (0..=haystack.len() - pattern.len())
-            .filter(|pos| crate::hexpattern::verify_at(haystack, *pos, pattern.bytes()))
-            .map(|pos| pos as u64)
-            .collect()
-    }
-
     // Window walk as rx_multi_find drives it: advance by `chunk`, overlap by the
     // longest pattern minus one, stop once every bucket is exhausted.
     fn walk_windows(
@@ -276,7 +255,7 @@ mod tests {
             let base = 0x4000;
             let buckets = walk_windows(&haystack, base, &patterns, chunk, &pagination);
             for (text, (pattern, bucket)) in texts.iter().zip(patterns.iter().zip(&buckets)) {
-                let naive = naive_addresses(&haystack, pattern);
+                let naive = naive_matches(&haystack, pattern);
                 let window_end = offset.saturating_add(limit);
                 let available = naive.len() as u64;
                 let truncated = available > window_end;
@@ -284,7 +263,7 @@ mod tests {
                 let page_end = window_end.min(available) as usize;
                 let expected: Vec<u64> = naive[page_start..page_end]
                     .iter()
-                    .map(|pos| base + pos)
+                    .map(|pos| base + *pos as u64)
                     .collect();
                 let context =
                     format!("{text:?} chunk {chunk} page ({offset}, {limit}) hay {haystack:?}");
@@ -317,22 +296,7 @@ mod tests {
                 .collect();
             let naive: Vec<Vec<usize>> = patterns
                 .iter()
-                .map(|pattern| {
-                    if haystack.len() < pattern.len() {
-                        Vec::new()
-                    } else {
-                        (0..=haystack.len() - pattern.len())
-                            .filter(|pos| {
-                                haystack[*pos..*pos + pattern.len()]
-                                    .iter()
-                                    .zip(pattern.bytes())
-                                    .all(|(byte, expected)| {
-                                        expected.is_none_or(|value| value == *byte)
-                                    })
-                            })
-                            .collect()
-                    }
-                })
+                .map(|pattern| naive_matches(&haystack, pattern))
                 .collect();
                 for offset in [0u64, 1, 2, u64::MAX] {
                 for limit in [0u64, 1, 2, 100] {
