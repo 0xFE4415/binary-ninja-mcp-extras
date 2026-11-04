@@ -1,14 +1,71 @@
-"""Mapped-memory data reads and relocation inspection."""
+"""Mapped-memory reads, relocation inspection, and address-keyed cross-references."""
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from binaryninja import mcp
+from binaryninja.enums import LowLevelILOperation
 
-from binja_plugin.tools import _validate_range
+from binja_plugin.tools import _MAX_LIMIT, _paginate, _truncate, _validate_range
 
 _MAX_DATA_READ_BYTES = 0x100000
+
+_CALL_OPERATIONS = (
+    LowLevelILOperation.LLIL_CALL,
+    LowLevelILOperation.LLIL_TAILCALL,
+)
+
+
+def _xref_kind(reference: Any) -> str:
+    instruction = reference.llil
+    if instruction is not None and instruction.operation in _CALL_OPERATIONS:
+        return "call"
+    return "code"
+
+
+def _code_ref_entry(reference: Any) -> dict[str, object]:
+    return {
+        "function_start": None if reference.function is None else hex(reference.function.start),
+        "function_name": None if reference.function is None else _truncate(reference.function.name),
+        "arch": None if reference.arch is None else reference.arch.name,
+        "address": hex(reference.address),
+        "kind": _xref_kind(reference),
+    }
+
+
+@mcp.tool(read_only=True)
+def rex_xrefs_to(
+    call: mcp.ToolCall,
+    addr: mcp.Address,
+    limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
+    offset: Annotated[int, mcp.Minimum(0)] = 0,
+) -> dict[str, object]:
+    """Code and data references to an address; either list may be empty.
+
+    :param addr: Referenced address.
+    :param limit: Maximum references to return.
+    :param offset: References to skip before collecting results.
+    """
+    bv = call.binary_view
+    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
+    offset = _validate_range("offset", offset, 0)
+    # The core's reference order is not guaranteed sorted; sort before slicing so the
+    # window is address-ordered, not a first-fit subset of whatever the core yielded.
+    code_refs = sorted(
+        bv.get_code_refs(addr, max_items=_MAX_LIMIT + 1), key=lambda ref: ref.address
+    )
+    data_refs = sorted(bv.get_data_refs(addr, max_items=_MAX_LIMIT + 1))
+    combined = [("code", reference) for reference in code_refs] + [
+        ("data", source) for source in data_refs
+    ]
+    page, total, truncated = _paginate(combined, offset, limit)
+    return {
+        "total": total,
+        "truncated": truncated,
+        "code_refs": [_code_ref_entry(reference) for kind, reference in page if kind == "code"],
+        "data_refs": [{"source": hex(source)} for kind, source in page if kind == "data"],
+    }
 
 
 @mcp.tool(read_only=True)
@@ -23,9 +80,6 @@ def rex_data_read(
     :param length: Byte count to read, capped at 0x100000.
     """
     length = _validate_range("length", length, 1, _MAX_DATA_READ_BYTES)
-    # bv.read hands back at most the requested length, silently shortening at the first
-    # unmapped byte and returning empty for an unmapped address, so bytes_read and
-    # complete carry what actually came back instead of the read lying by omission.
     data = call.binary_view.read(addr, length)
     return {
         "address": hex(addr),
@@ -46,8 +100,6 @@ def rex_relocation_at(call: mcp.ToolCall, addr: mcp.Address) -> dict[str, object
     for relocation in call.binary_view.relocations_at(addr):
         info = relocation.info
         symbol = relocation.symbol
-        # The core may hand the same relocation back more than once; the list is echoed
-        # as the core reports it rather than deduplicated into what it ought to be.
         relocations.append(
             {
                 "address": hex(info.address),

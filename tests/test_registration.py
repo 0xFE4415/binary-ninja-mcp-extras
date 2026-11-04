@@ -43,6 +43,7 @@ EXPECTED_NAMES = sorted(
         "rex_type_library_export",
         "rex_type_library_import",
         "rex_undo",
+        "rex_xrefs_to",
     ]
 )
 
@@ -98,6 +99,7 @@ EXPECTED_MARKINGS: dict[str, dict[str, bool]] = {
     "rex_type_library_export": {"read_only": False, "destructive": True},
     "rex_type_library_import": {"read_only": False, "destructive": True},
     "rex_undo": {"read_only": False, "destructive": True},
+    "rex_xrefs_to": {"read_only": True, "destructive": False},
 }
 
 

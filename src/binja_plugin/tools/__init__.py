@@ -322,7 +322,7 @@ from .components import (
     rex_component_create,
     rex_component_get,
 )
-from .data import rex_data_read, rex_relocation_at
+from .data import rex_data_read, rex_relocation_at, rex_xrefs_to
 from .decompile import (
     _MAX_HLIL_GREP_CONTEXT,
     _MAX_HLIL_GREP_LIMIT,

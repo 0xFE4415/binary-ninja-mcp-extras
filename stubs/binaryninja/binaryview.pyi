@@ -162,6 +162,9 @@ class BinaryView:
     def get_code_refs(
         self, addr: int, length: int | None = None, max_items: int | None = None
     ) -> Iterator[ReferenceSource]: ...
+    def get_data_refs(
+        self, addr: int, length: int | None = None, max_items: int | None = None
+    ) -> Iterator[int]: ...
     def show_markdown_report(self, title: str, contents: str, plaintext: str = "") -> None: ...
 
 
@@ -188,3 +191,4 @@ class ReferenceSource:
     function: Function | None
     arch: Any
     address: int
+    llil: Any
