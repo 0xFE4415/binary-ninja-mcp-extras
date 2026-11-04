@@ -21,9 +21,9 @@ _MAX_CALL_PATHS = 50
 _MAX_FUNCTION_ENTRIES = 50
 _MAX_DEFINE_BATCH = 100
 
-# rex_function_define's wait polls in ~100 ms slices like rex_analysis_wait; a defined
-# function counts as analyzed once the engine has produced its first basic block, which
-# is the same gate the decompile and disassembly tools go through.
+# The define tools' analysis wait polls in ~100 ms slices like rex_analysis_wait; a
+# defined function counts as analyzed once the engine has produced its first basic
+# block, which is the same gate the decompile and disassembly tools go through.
 _DEFINE_WAIT_SLICE_MS = 100
 _MAX_DEFINE_WAIT_MS = 600000
 
@@ -32,11 +32,16 @@ def _is_analyzed(function: Function) -> bool:
     return len(list(function.basic_blocks)) > 0
 
 
-def _wait_analyzed(functions: list[Function], timeout_ms: int) -> tuple[list[Function], int]:
-    """Poll until every function has a basic block or the deadline passes.
+def _settle_analysis(
+    functions: list[Function], wait: bool, timeout_ms: int
+) -> tuple[list[Function], int]:
+    """Return the functions still without a basic block and the elapsed wall time.
 
-    Returns the still-unanalyzed functions and the elapsed wall time in milliseconds.
+    With ``wait`` set, the unanalyzed functions are polled in ~100 ms slices until every
+    one has a block or the deadline passes; without it the state is sampled once.
     """
+    if not wait:
+        return [function for function in functions if not _is_analyzed(function)], 0
     started = time.monotonic()
     deadline = started + timeout_ms / 1000
     pending = [function for function in functions if not _is_analyzed(function)]
@@ -139,11 +144,7 @@ def rex_function_define(
     function = call.binary_view.create_user_function(start)
     if function is None:
         raise mcp.ToolError("define_failed", f"could not create a function at {start:#x}")
-    if wait:
-        pending, waited_ms = _wait_analyzed([function], timeout_ms)
-    else:
-        pending = [function] if not _is_analyzed(function) else []
-        waited_ms = 0
+    pending, waited_ms = _settle_analysis([function], wait, timeout_ms)
     return {**_function_entry(function), "analyzed": not pending, "waited_ms": waited_ms}
 
 
@@ -170,11 +171,7 @@ def rex_function_define_many(
             failed.append(hex(address))
         else:
             defined.append(function)
-    if wait:
-        pending, waited_ms = _wait_analyzed(defined, timeout_ms)
-    else:
-        pending = [function for function in defined if not _is_analyzed(function)]
-        waited_ms = 0
+    pending, waited_ms = _settle_analysis(defined, wait, timeout_ms)
     still_pending = {function.start for function in pending}
     return {
         "defined": [

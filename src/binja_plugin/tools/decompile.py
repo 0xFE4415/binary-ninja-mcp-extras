@@ -31,13 +31,14 @@ _MAX_HLIL_GREP_FUNCTIONS = 5000
 # rex_hlil_grep per-match context: bounded so the three-matches-per-function cap keeps
 # the echoed lines per function a few dozen at most.
 _MAX_HLIL_GREP_CONTEXT = 8
-# rex_decompile_many caps: 1024 address expressions per batch call, and 400 lines bound
-# the echoed text per function.
+# rex_decompile_many caps: the batch size bounds one call's decompilation cost, the
+# line cap the echoed text per function.
 _MAX_DECOMPILE_BATCH = 1024
 _MAX_DECOMPILE_LINES = 400
 
-# rex_disasm_many caps: 64 windows per call, 200 lines per window, and a cross-window
-# budget on the echoed lines so one call cannot return an unbounded dump.
+# rex_disasm_many caps: the batch size and per-window line cap bound one call's render
+# and echo, and the cross-window budget paginates so one call cannot return an
+# unbounded dump.
 _MAX_DISASM_BATCH = 64
 _MAX_DISASM_MANY_LINES = 200
 _MAX_DISASM_MANY_TOTAL_LINES = 1024
