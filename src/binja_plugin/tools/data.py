@@ -1,4 +1,4 @@
-"""Address-keyed cross-references: what code and data point at an address."""
+"""Mapped-memory reads, relocation inspection, and address-keyed cross-references."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ from binaryninja import mcp
 from binaryninja.enums import LowLevelILOperation
 
 from binja_plugin.tools import _MAX_LIMIT, _paginate, _truncate, _validate_range
+
+_MAX_DATA_READ_BYTES = 0x100000
 
 _CALL_OPERATIONS = (
     LowLevelILOperation.LLIL_CALL,
@@ -64,3 +66,51 @@ def rex_xrefs_to(
         "code_refs": [_code_ref_entry(reference) for kind, reference in page if kind == "code"],
         "data_refs": [{"source": hex(source)} for kind, source in page if kind == "data"],
     }
+
+
+@mcp.tool(read_only=True)
+def rex_data_read(
+    call: mcp.ToolCall,
+    addr: mcp.Address,
+    length: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DATA_READ_BYTES)],
+) -> dict[str, object]:
+    """Read mapped bytes at an address, with relocations applied.
+
+    :param addr: Address to read from.
+    :param length: Byte count to read, capped at 0x100000.
+    """
+    length = _validate_range("length", length, 1, _MAX_DATA_READ_BYTES)
+    data = call.binary_view.read(addr, length)
+    return {
+        "address": hex(addr),
+        "length": length,
+        "bytes_read": len(data),
+        "data": data.hex(),
+        "complete": len(data) == length,
+    }
+
+
+@mcp.tool(read_only=True)
+def rex_relocation_at(call: mcp.ToolCall, addr: mcp.Address) -> dict[str, object]:
+    """List the relocations covering an address; an empty list means none.
+
+    :param addr: Address of the relocation, or any address the relocation covers.
+    """
+    relocations = []
+    for relocation in call.binary_view.relocations_at(addr):
+        info = relocation.info
+        symbol = relocation.symbol
+        relocations.append(
+            {
+                "address": hex(info.address),
+                "size": info.size,
+                "type": info.type.name,
+                "addend": info.addend,
+                "implicit_addend": info.implicit_addend,
+                "pc_relative": info.pc_relative,
+                "target": hex(relocation.target),
+                "reloc": hex(relocation.reloc),
+                "symbol": None if symbol is None else symbol.full_name,
+            }
+        )
+    return {"address": hex(addr), "count": len(relocations), "relocations": relocations}

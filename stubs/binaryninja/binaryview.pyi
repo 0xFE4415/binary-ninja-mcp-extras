@@ -2,7 +2,7 @@ from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from binaryninja.component import Component
-from binaryninja.enums import AnalysisState, DerivedStringLocationType
+from binaryninja.enums import AnalysisState, DerivedStringLocationType, RelocationType
 from binaryninja.filemetadata import FileMetadata
 from binaryninja.function import Function
 from binaryninja.types import NamedTypeReferenceType, StructureType, Type
@@ -65,6 +65,40 @@ class AnalysisProgress:
     total: int
 
 
+class RelocationInfo:
+    type: RelocationType
+    pc_relative: bool
+    base_relative: bool
+    base: int
+    size: int
+    truncate_size: int
+    native_type: int
+    addend: int
+    has_sign: bool
+    implicit_addend: bool
+    external: bool
+    symbol_index: int
+    section_index: int
+    address: int
+    target: int
+    data_relocation: bool
+
+
+class CoreSymbol:
+    full_name: str
+
+
+class Relocation:
+    @property
+    def info(self) -> RelocationInfo: ...
+    @property
+    def target(self) -> int: ...
+    @property
+    def reloc(self) -> int: ...
+    @property
+    def symbol(self) -> CoreSymbol | None: ...
+
+
 class BinaryView:
     strings: list[StringReference]
     segments: list[Any]
@@ -90,6 +124,7 @@ class BinaryView:
         progress_func: Callable[[int, int], bool] | None = None,
     ) -> Iterator[tuple[int, LinearDisassemblyLine]]: ...
     def read(self, address: int, length: int) -> bytes: ...
+    def relocations_at(self, addr: int) -> list[Relocation]: ...
     def write(self, address: int, data: bytes) -> int: ...
     def get_functions_containing(self, address: int) -> list[Function]: ...
     def create_user_function(self, address: int) -> Function | None: ...
