@@ -20,7 +20,7 @@ _MAX_EVAL_RESULT_CHARS = 16384
 
 @mcp.tool(destructive=True)
 def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
-    """Run trusted Python against the Binary Ninja API with the active view exposed as bv.
+    """Run Binary Ninja Python; globals: bv, bn, binaryninja, call.
 
     :param code: Python source; assign to ``result`` to return a value.
     """

@@ -180,6 +180,25 @@ def test_disasm_at_rejects_out_of_range_window() -> None:
     assert exc.value.message == "Invalid integer parameter 'before': Must be at least 0"
 
 
+def test_disasm_at_renders_a_full_cap_window_in_one_call() -> None:
+    # Pin the inclusive 4096-instruction cap and reject the first value above it.
+    lines: list[tuple[int | None, str]] = [
+        (0x1000 + index, f"insn {index}") for index in range(4097)
+    ]
+    main = FakeDisasmFunction("main", 0x1000, 0x2001, blocks=[FakeBasicBlock(lines)])
+    view = FakeBinaryView(functions=[main])
+    _, disasm = get_tool("rex_disasm_at")
+    result = disasm(_call(view), 0x1000, before=0, after=4096)
+    assert [entry["address"] for entry in result["instructions"]] == [
+        hex(0x1000 + index) for index in range(4097)
+    ]
+    assert result["truncated"] is False
+    with pytest.raises(FakeToolError) as exc:
+        disasm(_call(view), 0x1000, before=0, after=4097)
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == "Invalid integer parameter 'after': Must be at most 4096"
+
+
 def test_disasm_at_truncates_names_and_text() -> None:
     main = FakeDisasmFunction(
         "m" * 600, 0x1100, 0x1200, blocks=[FakeBasicBlock([(0x1100, "x" * 600)])]
