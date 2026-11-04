@@ -54,8 +54,9 @@ def rex_xrefs_to(
         bv.get_code_refs(addr, max_items=_MAX_LIMIT + 1), key=lambda ref: ref.address
     )
     data_refs = sorted(bv.get_data_refs(addr, max_items=_MAX_LIMIT + 1))
-    combined: list[tuple[str, Any]] = [("code", reference) for reference in code_refs]
-    combined += [("data", source) for source in data_refs]
+    combined = [("code", reference) for reference in code_refs] + [
+        ("data", source) for source in data_refs
+    ]
     page, total, truncated = _paginate(combined, offset, limit)
     return {
         "total": total,
