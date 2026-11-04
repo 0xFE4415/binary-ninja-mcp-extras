@@ -14,7 +14,7 @@ use super::{
     validate_pagination,
 };
 use crate::hexpattern::HexPattern;
-use crate::multi::{MAX_MULTI_PATTERNS, MultiMatcher};
+use crate::multi::{MAX_MULTI_PATTERNS, scan_segment};
 use crate::scan::RunningScan;
 
 // No `binary` field — same server-reserved argument rule as `DataFindArgs`.
@@ -32,8 +32,8 @@ pub struct MultiFindArgs {
     pub offset: u64,
 }
 
-/// `rx_multi_find`: many hex patterns in one pass over the bytes via a
-/// multi-pattern automaton — the capability the Python plugin cannot offer.
+/// `rx_multi_find`: many hex patterns in one pass over the bytes via
+/// per-pattern prefilter scans — the capability the Python plugin cannot offer.
 pub(super) struct RxMultiFind;
 
 impl TypedMcpTool for RxMultiFind {
@@ -78,12 +78,11 @@ impl TypedMcpTool for RxMultiFind {
             .collect::<Result<Vec<_>, McpToolError>>()?;
         let view = call.require_binary_view()?;
         let bounds = resolve_bounds(&view, args.section.as_deref())?;
-        let matcher = MultiMatcher::new(&patterns);
         let mut buckets: Vec<RunningScan> =
             (0..patterns.len()).map(|_| RunningScan::new()).collect();
         let overlap = longest_pattern_overlap(&patterns);
         for_each_segment(&*view, READ_CHUNK, bounds, overlap, |base, data| {
-            matcher.scan_segment(data, base, &patterns, &mut buckets, &pagination)
+            scan_segment(data, base, &patterns, &mut buckets, &pagination)
         });
         let results = args
             .patterns
@@ -175,7 +174,6 @@ mod tests {
             HexPattern::parse("33 eb").unwrap(),
             HexPattern::parse("33 eb 00").unwrap(),
         ];
-        let matcher = MultiMatcher::new(&patterns);
         let mut buckets = vec![RunningScan::new(), RunningScan::new()];
         let view = FakeView {
             segments: vec![(0x1000, 0x1008)],
@@ -188,7 +186,7 @@ mod tests {
         };
         let overlap = longest_pattern_overlap(&patterns);
         let alive = for_each_segment(&view, 4, None, overlap, |base, data| {
-            matcher.scan_segment(data, base, &patterns, &mut buckets, &page)
+            scan_segment(data, base, &patterns, &mut buckets, &page)
         });
         assert!(alive);
         assert_eq!(buckets[0].matches, vec![0x1003]);
@@ -206,7 +204,6 @@ mod tests {
             HexPattern::parse("33 eb").unwrap(),
             HexPattern::parse("33 eb 00").unwrap(),
         ];
-        let matcher = MultiMatcher::new(&patterns);
         let mut buckets = vec![RunningScan::new(), RunningScan::new()];
         // Seam at 0x1004 (chunk 4, overlap longest-1 = 2): '33 eb' starts
         // exactly on it, so windows 0 and 1 both see it whole; 0x1009 is a
@@ -226,7 +223,7 @@ mod tests {
         };
         let overlap = longest_pattern_overlap(&patterns);
         let alive = for_each_segment(&view, 4, None, overlap, |base, data| {
-            matcher.scan_segment(data, base, &patterns, &mut buckets, &page)
+            scan_segment(data, base, &patterns, &mut buckets, &page)
         });
         assert!(alive);
         assert_eq!(buckets[0].matches, vec![0x1004, 0x1009]);
@@ -256,8 +253,7 @@ mod tests {
                 .into_iter()
                 .map(pattern_from_tokens)
                 .collect();
-            let matcher = MultiMatcher::new(&patterns);
-            let mut buckets: Vec<RunningScan> =
+                let mut buckets: Vec<RunningScan> =
                 (0..patterns.len()).map(|_| RunningScan::new()).collect();
             let base = 0x1000;
             let view = FakeView {
@@ -268,7 +264,7 @@ mod tests {
             let pagination = Pagination { offset, limit };
             let overlap = longest_pattern_overlap(&patterns);
             let alive = for_each_segment(&view, chunk, None, overlap, |window_base, data| {
-                matcher.scan_segment(data, window_base, &patterns, &mut buckets, &pagination)
+                scan_segment(data, window_base, &patterns, &mut buckets, &pagination)
             });
 
             for (index, (pattern, bucket)) in patterns.iter().zip(&buckets).enumerate() {

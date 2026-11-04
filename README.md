@@ -60,7 +60,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_string_search` | Search detected strings by substring or regex; section and type filters. |
 | `rex_data_find` | Find every occurrence of a hex byte pattern (`??` wildcards) in mapped memory. |
 | `rex_data_read` | Read mapped bytes with relocations applied; reports what it actually read. |
-| `rx_multi_find` | Many hex patterns in one pass, via a multi-pattern automaton in Rust. |
+| `rx_multi_find` | Many hex patterns in one pass, with per-pattern prefilters in Rust. |
 | `rx_data_find` | `rex_data_find`'s contract with the byte scan running in native Rust. |
 | `rex_hlil_grep` | Regex search over rendered HLIL text, paged with a `next_offset` cursor. |
 | `rex_constant_find` | Find functions whose rendered instructions reference a constant value. |

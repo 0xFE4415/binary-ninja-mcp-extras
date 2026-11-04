@@ -79,7 +79,6 @@ dependencies = [
 name = "binja_plugin_native"
 version = "0.1.0"
 dependencies = [
- "aho-corasick",
  "binaryninja",
  "binaryninjacore-sys",
  "criterion",

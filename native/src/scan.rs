@@ -71,10 +71,8 @@ impl RunningScan {
 }
 
 /// Enumerate every candidate start of an all-wildcard pattern in ascending
-/// order, stopping at the first `record` decline — and what that stops is the
-/// caller's call: the whole scan for the single-pattern walk, one bucket's
-/// enumeration for the multi-pattern walk.
-pub(crate) fn for_each_all_wildcard_candidate(
+/// order, stopping at the first `record` decline.
+fn for_each_all_wildcard_candidate(
     haystack_len: usize,
     pattern_len: usize,
     base: u64,
@@ -84,20 +82,16 @@ pub(crate) fn for_each_all_wildcard_candidate(
     (0..candidates).all(|candidate| record(base + candidate as u64))
 }
 
-/// Scan one in-memory segment for `pattern` (`base` = absolute address of
-/// `haystack[0]`), reporting occurrences in ascending order including
-/// overlapping ones. Returns `false` when the window is exhausted; the caller
-/// must stop scanning further segments.
-pub fn scan_pattern(
+/// Report every occurrence of `pattern` in `haystack` (`base` = absolute
+/// address of `haystack[0]`) to `record` in ascending order, overlapping ones
+/// included. Returns `false` as soon as `record` declines: the caller decides
+/// whether that ends one pattern's scan or all of them.
+pub(crate) fn scan_window(
     haystack: &[u8],
     base: u64,
     pattern: &HexPattern,
-    pagination: &Pagination,
-    running: &mut RunningScan,
+    mut record: impl FnMut(u64) -> bool,
 ) -> bool {
-    if running.is_done() {
-        return false;
-    }
     if pattern.is_empty() {
         // `HexPattern::parse` rejects empty patterns, so this guards direct
         // construction only: nothing to count, nothing to stop for.
@@ -108,53 +102,61 @@ pub fn scan_pattern(
     if haystack.len() < pattern_len {
         return true;
     }
-    if let Some((offset, run)) = pattern.first_concrete_run() {
-        // Break(true): no later candidate can fit; Break(false): window exhausted.
-        let mut visit = |hit: usize| -> ControlFlow<bool> {
-            let Some(candidate) = hit.checked_sub(offset) else {
-                return ControlFlow::Continue(());
-            };
-            if candidate
-                .checked_add(pattern_len)
-                .is_none_or(|end| end > haystack.len())
-            {
-                // Anchors only move right, so no later candidate can fit.
-                return ControlFlow::Break(true);
-            }
-            if verify_at(haystack, candidate, bytes)
-                && !running.record(pagination, base + candidate as u64)
-            {
-                return ControlFlow::Break(false);
-            }
-            ControlFlow::Continue(())
+    let Some((offset, run)) = pattern.first_concrete_run() else {
+        return for_each_all_wildcard_candidate(haystack.len(), pattern_len, base, record);
+    };
+    // Break(true): no later candidate can fit; Break(false): `record` declined.
+    let mut visit = |hit: usize| -> ControlFlow<bool> {
+        let Some(candidate) = hit.checked_sub(offset) else {
+            return ControlFlow::Continue(());
         };
-        let flow = if let [anchor] = run[..] {
-            // memchr_iter beats a per-hit memmem call when one byte is the needle.
-            memchr_iter(anchor, haystack).try_for_each(&mut visit)
-        } else {
-            let finder = Finder::new(&run);
-            let mut from = 0;
-            let mut flow = ControlFlow::Continue(());
-            while let Some(relative) = finder.find(&haystack[from..]) {
-                let hit = from + relative;
-                // Overlapping occurrences count, so resume one byte past the hit.
-                from = hit + 1;
-                flow = visit(hit);
-                if flow.is_break() {
-                    break;
-                }
-            }
-            flow
-        };
-        if flow == ControlFlow::Break(false) {
-            return false;
+        if candidate
+            .checked_add(pattern_len)
+            .is_none_or(|end| end > haystack.len())
+        {
+            // Anchors only move right, so no later candidate can fit.
+            return ControlFlow::Break(true);
         }
-    } else if !for_each_all_wildcard_candidate(haystack.len(), pattern_len, base, |addr| {
-        running.record(pagination, addr)
-    }) {
-        return false;
-    }
-    true
+        if verify_at(haystack, candidate, bytes) && !record(base + candidate as u64) {
+            return ControlFlow::Break(false);
+        }
+        ControlFlow::Continue(())
+    };
+    let flow = if let [anchor] = run[..] {
+        // memchr_iter beats a per-hit memmem call when one byte is the needle.
+        memchr_iter(anchor, haystack).try_for_each(&mut visit)
+    } else {
+        let finder = Finder::new(&run);
+        let mut from = 0;
+        let mut flow = ControlFlow::Continue(());
+        while let Some(relative) = finder.find(&haystack[from..]) {
+            let hit = from + relative;
+            // Overlapping occurrences count, so resume one byte past the hit.
+            from = hit + 1;
+            flow = visit(hit);
+            if flow.is_break() {
+                break;
+            }
+        }
+        flow
+    };
+    flow != ControlFlow::Break(false)
+}
+
+/// Scan one in-memory segment for `pattern`, reporting occurrences in
+/// ascending order including overlapping ones. Returns `false` when the window
+/// is exhausted; the caller must stop scanning further segments.
+pub fn scan_pattern(
+    haystack: &[u8],
+    base: u64,
+    pattern: &HexPattern,
+    pagination: &Pagination,
+    running: &mut RunningScan,
+) -> bool {
+    !running.is_done()
+        && scan_window(haystack, base, pattern, |addr| {
+            running.record(pagination, addr)
+        })
 }
 
 #[cfg(test)]

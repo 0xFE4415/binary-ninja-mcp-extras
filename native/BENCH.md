@@ -174,6 +174,6 @@ That is ~6.5 ms/MB on the Python side against ~0.22 ms/MB on the Rust side —
 across both segments. Why the Python chunked-read path is so much slower per
 byte on the read-only segment is unprofiled; the effect is what matters for
 reading these tables: the promotion run's 7.5x headline prices in segments a
-code-scoped scan never touches. The multi-pattern win (one call, one automaton
-pass) is the only advantage that held at every scope measured: 12.6x full
+code-scoped scan never touches. The multi-pattern win (one call, one walk over
+the bytes) is the only advantage that held at every scope measured: 12.6x full
 view, 3.9x `.text`, 28x `.rodata`.

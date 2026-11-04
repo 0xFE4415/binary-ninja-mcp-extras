@@ -1,7 +1,7 @@
 //! Set SCAN_BENCH_FILE=<binary> to bench slices from the middle of that file instead of synthetic bytes.
 
 use binja_plugin_native::hexpattern::HexPattern;
-use binja_plugin_native::multi::MultiMatcher;
+use binja_plugin_native::multi::scan_segment;
 use binja_plugin_native::scan::{Pagination, RunningScan, scan_pattern};
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
@@ -136,7 +136,6 @@ fn bench_multi(criterion: &mut Criterion) {
             .iter()
             .map(|text| HexPattern::parse(text).unwrap())
             .collect();
-        let matcher = MultiMatcher::new(&patterns);
         for size in SIZES {
             let Some((source, haystack)) = haystack_for(size) else {
                 continue;
@@ -154,7 +153,7 @@ fn bench_multi(criterion: &mut Criterion) {
                                 .collect::<Vec<_>>()
                         },
                         |mut buckets| {
-                            matcher.scan_segment(
+                            scan_segment(
                                 black_box(&haystack),
                                 0,
                                 &patterns,

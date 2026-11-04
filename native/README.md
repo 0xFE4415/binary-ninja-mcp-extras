@@ -8,8 +8,8 @@ Python `rex_*` tools by the same bundled MCP server:
    `rex_data_find`, with the scan running in native Rust (first concrete-run
    prefilter + wildcard verification). Measured **7.5x** faster on the
   promotion benchmark (`BENCH.md`).
-- `rx_multi_find` — many hex patterns in **one pass** via an `aho-corasick`
-  automaton, a capability the per-pattern Python tool structurally cannot
+- `rx_multi_find` — many hex patterns in **one pass** with per-pattern
+  memchr/memmem prefilters, a capability the per-pattern Python tool structurally cannot
   offer. Measured **12.6x** against 8 sequential Python calls.
 
 Everything else stays in Python deliberately: the other tools wrap single core
