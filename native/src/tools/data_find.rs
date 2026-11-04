@@ -41,7 +41,7 @@ impl TypedMcpTool for RxDataFind {
     fn info(&self) -> McpToolInfo {
         McpToolInfo::new(
             "rx_data_find",
-            "Find all occurrences of a hex byte pattern in mapped memory.",
+            "Search mapped memory for a hex pattern in Rust; use instead of slower `rex_data_find`.",
         )
         .with_annotations(McpToolAnnotations::READ_ONLY)
     }

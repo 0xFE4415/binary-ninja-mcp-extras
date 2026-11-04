@@ -42,7 +42,7 @@ impl TypedMcpTool for RxMultiFind {
     fn info(&self) -> McpToolInfo {
         McpToolInfo::new(
             "rx_multi_find",
-            "Find occurrences of many hex byte patterns in one pass over mapped memory.",
+            "Search multiple hex patterns in one Rust pass; use instead of repeated, slower `rex_data_find` calls.",
         )
         .with_annotations(McpToolAnnotations::READ_ONLY)
     }
