@@ -57,7 +57,7 @@ ValueState = Literal[
 ]
 
 
-def _analysis_settled(bv: BinaryView) -> bool:
+def _wait_analysis_settled(bv: BinaryView) -> bool:
     """Wait, bounded, for the view's analysis queue to drain; False when the deadline passes."""
     deadline = time.monotonic() + _MAX_UIDF_ANALYSIS_WAIT_MS / 1000
     state = bv.analysis_progress.state
@@ -107,8 +107,8 @@ def _select_definition_site(
     """Resolve exactly one definition site for ``name``, rejecting ambiguity."""
     matches = _collect_mlil_definitions(target, name)
     if def_address is not None:
-        known = sorted({entry[1].address for entry in matches})
-        matches = [entry for entry in matches if entry[1].address == def_address]
+        known = sorted({site.address for _, site in matches})
+        matches = [(variable, site) for variable, site in matches if site.address == def_address]
         if not matches:
             raise mcp.ToolError(
                 "definition_not_found",
@@ -116,7 +116,7 @@ def _select_definition_site(
                 f"definitions: {', '.join(f'{site:#x}' for site in known)}",
             )
     if len(matches) > 1:
-        sites = sorted({entry[1].address for entry in matches})
+        sites = sorted({site.address for _, site in matches})
         suffix = "; pass def_address to choose one" if def_address is None else ""
         raise mcp.ToolError(
             "ambiguous_definition",
@@ -161,7 +161,7 @@ def rex_uidf_set(
             "set_failed", f"could not inform '{_truncate(variable)}': {error}"
         ) from None
     bv.update_analysis()
-    analysis_complete = _analysis_settled(bv)
+    analysis_complete = _wait_analysis_settled(bv)
     lines, truncated = _render_hlil_lines(target.hlil, max_lines)
     return {
         "function": _function_entry(target),
