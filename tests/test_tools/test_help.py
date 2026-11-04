@@ -25,11 +25,13 @@ from binja_plugin.tools.help import _PARAMETER_ERROR_CODES
 _TOOL_LEVEL_CODES = frozenset(
     {
         "annotate_failed",
+        "clear_failed",
         "close_failed",
         "create_failed",
         "finalize_failed",
         "no_arch",
         "redo_failed",
+        "set_failed",
         "undo_failed",
         "unknown_tool",
     }

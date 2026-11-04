@@ -47,6 +47,9 @@ _PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
     ("rex_type_library_export", "filename"): ("path_escape", "export_failed"),
     ("rex_type_library_export", "library_name"): ("library_name_too_large",),
     ("rex_type_library_import", "path"): ("library_not_found",),
+    ("rex_uidf_clear", "variable"): ("no_mlil", "no_variable"),
+    ("rex_uidf_set", "def_address"): ("definition_not_found",),
+    ("rex_uidf_set", "variable"): ("no_mlil", "no_variable", "ambiguous_definition"),
 }
 
 

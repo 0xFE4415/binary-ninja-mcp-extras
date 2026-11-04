@@ -2,10 +2,16 @@ from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from binaryninja.component import Component
-from binaryninja.enums import AnalysisState, DerivedStringLocationType, RelocationType
+from binaryninja.enums import (
+    AnalysisState,
+    DerivedStringLocationType,
+    RegisterValueType,
+    RelocationType,
+)
 from binaryninja.filemetadata import FileMetadata
 from binaryninja.function import Function
 from binaryninja.types import NamedTypeReferenceType, StructureType, Type
+from binaryninja.variable import PossibleValueSet
 
 
 class LinearDisassemblyLine:
@@ -140,6 +146,10 @@ class BinaryView:
     def parse_type_string(
         self, text: str, import_dependencies: bool = True
     ) -> tuple[Any, Any]: ...
+    def parse_possiblevalueset(
+        self, value: str, state: RegisterValueType, here: int = 0
+    ) -> PossibleValueSet: ...
+    def update_analysis(self) -> None: ...
     def undo(self) -> None: ...
     def redo(self) -> None: ...
     def undoable_transaction(self) -> Any: ...

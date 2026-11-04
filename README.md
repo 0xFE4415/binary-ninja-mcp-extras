@@ -49,8 +49,8 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 ## Tool reference
 
 Every tool is pinned as read-only or destructive when it registers, and that marking
-is the only approval-policy signal an MCP client gets. The tables below cover all 41
-registered tools, split on that marking: 39 Python `rex_*` tools and 2 native `rx_*`
+is the only approval-policy signal an MCP client gets. The tables below cover all 44
+registered tools, split on that marking: 42 Python `rex_*` tools and 2 native `rx_*`
 scanners. Read the destructive table before you let an agent run those tools.
 
 ### Read-only tools
@@ -72,6 +72,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_decompile_many` | HLIL render for up to 1024 functions in one batch call. |
 | `rex_quick_main` | Entry point, `main`, and `main`'s HLIL in one call. |
 | `rex_analysis_wait` | Bounded wait for background analysis; snapshot at expiry. |
+| `rex_uidf_list` | List informed user variable values for one function or the whole view. |
 | `rex_call_paths` | Bounded breadth-first search for call paths between two functions. |
 | `rex_function_containing` | List the functions containing an address. |
 | `rex_component_get` | Look up a component by path; report functions and child components. |
@@ -91,6 +92,8 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_function_define` | Turn bytes at an address into a function; optional wait for analysis. |
 | `rex_function_define_many` | Define up to 100 functions per call, waiting for first blocks. |
 | `rex_function_undefine` | Remove the function covering an address. |
+| `rex_uidf_set` | Inform an MLIL variable's value at a definition site; returns the settled HLIL. |
+| `rex_uidf_clear` | Clear one MLIL variable's informed values, or all of a function's. |
 | `rex_struct_from_access` | Infer a struct from recorded offset accesses and define it. |
 | `rex_type_library_import` | Attach a `.bntl` and import a bounded list of its type names. |
 | `rex_type_library_export` | Export view types or objects into a new `.bntl` in the export root. |
@@ -115,8 +118,8 @@ scanners. Read the destructive table before you let an agent run those tools.
   parse.
 - Paged listings return `total`, `truncated`, and a `limit`/`offset` window:
   `rex_string_search`, `rex_data_find`, `rex_string_refs`, `rex_xrefs_to`,
-  `rex_tag_list`, and `rex_export_symbols`. `rex_component_get` paginates the same way
-  but names its count `function_count`.
+  `rex_tag_list`, `rex_uidf_list`, and `rex_export_symbols`. `rex_component_get`
+  paginates the same way but names its count `function_count`.
 - Early-stop scans (`rex_constant_find`, `rex_find_functions_by_pattern`,
   `rex_hlil_grep`) accept `limit`/`offset` too but never return a `total`: they stop
   scanning once the requested window is filled. `rex_hlil_grep` reports where it
