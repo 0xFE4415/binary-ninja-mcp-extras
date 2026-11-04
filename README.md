@@ -48,8 +48,8 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 ## Tool reference
 
 Every tool is pinned as read-only or destructive when it registers, and that marking
-is the only approval-policy signal an MCP client gets. The tables below cover all 37
-registered tools, split on that marking: 35 Python `rex_*` tools and 2 native `rx_*`
+is the only approval-policy signal an MCP client gets. The tables below cover all 39
+registered tools, split on that marking: 37 Python `rex_*` tools and 2 native `rx_*`
 scanners. Read the destructive table before you let an agent run those tools.
 
 ### Read-only tools
@@ -58,6 +58,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | --- | --- |
 | `rex_string_search` | Search detected strings by substring or regex; section and type filters. |
 | `rex_data_find` | Find every occurrence of a hex byte pattern (`??` wildcards) in mapped memory. |
+| `rex_data_read` | Read mapped bytes with relocations applied; reports what it actually read. |
 | `rx_multi_find` | Many hex patterns in one pass, via a multi-pattern automaton in Rust. |
 | `rx_data_find` | `rex_data_find`'s contract with the byte scan running in native Rust. |
 | `rex_hlil_grep` | Regex search over rendered HLIL text, paged with a `next_offset` cursor. |
@@ -72,6 +73,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_function_containing` | List the functions containing an address. |
 | `rex_component_get` | Look up a component by path; report functions and child components. |
 | `rex_string_read_at` | Read the detected string at an address. |
+| `rex_relocation_at` | List the relocations covering an address, symbol names included. |
 | `rex_tag_list` | List the tags set on the binary view. |
 | `rex_report_show` | Render a markdown report with `binaryninja://` links into the view. |
 | `rex_kv_get` | Read a stored scratch string from the view's database. |
@@ -109,19 +111,24 @@ scanners. Read the destructive table before you let an agent run those tools.
   `rex_hlil_grep`) accept `limit`/`offset` too but never return a `total`. They stop
   scanning as soon as the requested window is known to be complete, and
   `rex_hlil_grep` pages through its `next_offset` cursor instead.
-- Size parameters (`limit`, `offset`, `max_depth`, `max_paths`, `max_functions`,
-  `max_chars`) are range-checked, never clamped. A value out of range fails with the
-  MCP layer's `invalid_params`. A string argument over its cap fails with a
-  per-parameter code instead, e.g. `pattern_too_large`, `key_too_large`,
-  `value_too_large`, `data_too_large`, or `name_too_large`. Path and list-entry
+- Size parameters (`limit`, `length`, `offset`, `max_depth`, `max_paths`,
+  `max_functions`, `max_chars`) are range-checked, not clamped. A value out of range
+  fails with the MCP layer's `invalid_params`. A string argument over its cap fails
+  with a per-parameter code instead (`pattern_too_large`, `key_too_large`,
+  `value_too_large`, `data_too_large`, `tag_type_too_large`, `title_too_large`,
+  `content_too_large`, `name_too_large`, `library_name_too_large`). Path and list-entry
   parameters (component paths, `rex_type_library_*` names, export filenames) keep
   `invalid_params`.
 - Echoed strings clip at 512 characters with a `... [N chars truncated]` suffix. The
   suffix alone marks most echoes. The rest carry a companion flag, e.g.
   `rex_eval_python`'s `stdout_truncated`/`result_truncated`/`error_truncated`,
   `data_truncated` in `rex_tag_list` and `rex_tag_set`, or `truncated` on the stored
-  value in `rex_kv_set`/`rex_kv_get`. On the listing tools, `truncated` means rows
-  were left out, never a clipped string.
+  value in `rex_kv_set`/`rex_kv_get`, `rex_report_show`'s preview, and
+  `rex_string_read_at`'s value. On the listing tools, `truncated` means rows were left
+  out, never a clipped string.
+- `rex_data_read` returns `bytes_read` (what was actually read) and `complete` (whether
+  that equals the requested `length`). A range extending past mapped memory comes back
+  short instead of failing.
 - `rex_eval_python` is the one tool that reports failure in-band. An exception comes
   back in the response's `error` field instead of raising a tool error.
 - Batch tools (`rex_annotate_many`, `rex_component_add_functions`,
