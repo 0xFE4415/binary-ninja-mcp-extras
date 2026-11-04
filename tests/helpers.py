@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import builtins
 import contextlib
 import enum
 import inspect
 import re
 import sys
 import types
+import typing
 from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 from typing import Any, override
@@ -50,6 +52,140 @@ def _fake_tool(name: str | None = None, **options: object):
         return function
 
     return decorate
+
+
+class FakeSchema:
+    """Mirrors binaryninja.mcp.Schema; the fake decorator does not apply rejection."""
+
+    def __init__(self, schema: dict[str, object]) -> None:
+        self.schema = schema
+
+
+def _fake_optional_inner(annotation: object) -> object | None:
+    """Mirrors binaryninja.mcp._optional_inner: T for Optional[T] or T | None, else None."""
+    origin = typing.get_origin(annotation)
+    if origin is typing.Union or origin is types.UnionType:
+        arguments = typing.get_args(annotation)
+        inner = [argument for argument in arguments if argument is not type(None)]  # noqa: E711
+        if len(inner) == 1 and len(arguments) == 2:
+            return inner[0]
+    return None
+
+
+def _fake_describe_plain(annotation: object) -> dict[str, object] | None:
+    """Mirrors binaryninja.mcp._describe's leaf annotations, or None when structural."""
+    if annotation is FakeAddress:
+        return {"type": "string"}
+    if annotation is FakeIntegerExpression:
+        return {"type": ["integer", "string"], "minimum": 0}
+    if annotation is str:
+        return {"type": "string"}
+    if annotation is bool:
+        return {"type": "boolean"}
+    if annotation is int:
+        return {"type": "integer"}
+    if annotation is float:
+        return {"type": "number"}
+    return None
+
+
+def _fake_describe_annotated(metadata: list[object], base: object) -> dict[str, object]:
+    """Mirrors binaryninja.mcp._describe's Annotated handling for the metadata in use."""
+    schemas = [item.schema for item in metadata if isinstance(item, FakeSchema)]
+    if schemas:
+        return dict(schemas[0])
+    limits = [item for item in metadata if isinstance(item, (FakeMinimum, FakeMaximum))]
+    if limits:
+        schema: dict[str, object] = {"type": "integer"}
+        for limit in limits:
+            if isinstance(limit, FakeMinimum):
+                schema["minimum"] = limit.value
+            else:
+                schema["maximum"] = limit.value
+        return schema
+    if any(isinstance(item, FakeNonEmpty) for item in metadata):
+        return {"type": "string", "minLength": 1}
+    return _fake_describe(base)
+
+
+def _fake_describe(annotation: object) -> dict[str, object]:
+    """Mirrors binaryninja.mcp._describe for the annotations the plugin's tools use.
+
+    The real mcp layer builds each tool's input schema at registration; rex_help serves
+    that schema from the registry, so the fake has to produce the same JSON for the
+    annotations that appear on registered parameters. An annotation outside this set
+    raises instead of describing loosely, so a new tool parameter fails loudly here
+    rather than serving rex_help a schema the real registry would not.
+    """
+    plain = _fake_describe_plain(annotation)
+    if plain is not None:
+        return plain
+    origin = typing.get_origin(annotation)
+    arguments = typing.get_args(annotation)
+    if origin is typing.Literal:
+        return {"type": "string", "enum": list(arguments)}
+    if origin is list:
+        return {"type": "array", "items": _fake_describe(arguments[0])}
+    if origin is typing.Annotated:
+        base, *metadata = arguments
+        return _fake_describe_annotated(metadata, base)
+    raise TypeError(f"unsupported annotation {annotation!r}")
+
+
+def _fake_input_schema(function: Any) -> dict[str, Any]:
+    """Mirrors the input schema binaryninja.mcp.tool registers for ``function``."""
+    signature = inspect.signature(function)
+    hints = typing.get_type_hints(function, include_extras=True)
+    text = inspect.cleandoc(function.__doc__ or "")
+    descriptions = {
+        match.group(1): " ".join(part.strip() for part in match.group(2).splitlines())
+        for match in re.finditer(r"^:param\s+(\w+):\s*(.*(?:\n[ \t]+\S.*)*)", text, re.MULTILINE)
+    }
+    properties: dict[str, object] = {}
+    required: list[str] = []
+    for parameter in list(signature.parameters.values())[1:]:
+        annotation = hints[parameter.name]
+        inner = _fake_optional_inner(annotation)
+        schema = _fake_describe(inner if inner is not None else annotation)
+        schema["description"] = descriptions[parameter.name]
+        has_default = parameter.default is not inspect.Parameter.empty
+        if has_default and parameter.default is not None:
+            schema["default"] = parameter.default
+        if inner is None and not has_default:
+            required.append(parameter.name)
+        properties[parameter.name] = schema
+    input_schema: dict[str, object] = {"type": "object", "properties": properties}
+    if required:
+        input_schema["required"] = required
+    input_schema["additionalProperties"] = False
+    return input_schema
+
+
+class FakeTool:
+    """Mirrors binaryninja.mcp.Tool: the registry queries rex_help serves from."""
+
+    def __init__(self, name: str, options: dict[str, object], function: Any) -> None:
+        self._name = name
+        self._options = options
+        self._function = function
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        text = inspect.cleandoc(self._function.__doc__ or "")
+        summary = re.split(r"\n\s*\n|\n(?=:)", text, maxsplit=1)[0]
+        return " ".join(line.strip() for line in summary.splitlines())
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return _fake_input_schema(self._function)
+
+    @staticmethod
+    def list() -> builtins.list[FakeTool]:
+        return [FakeTool(name, options, function) for name, options, function in REGISTERED_TOOLS]
 
 
 class FakeAddress(int):
@@ -98,6 +234,8 @@ def install_fake_binaryninja() -> None:
     setattr(mcp_module, "Minimum", FakeMinimum)
     setattr(mcp_module, "Maximum", FakeMaximum)
     setattr(mcp_module, "NonEmpty", FakeNonEmpty)
+    setattr(mcp_module, "Schema", FakeSchema)
+    setattr(mcp_module, "Tool", FakeTool)
     setattr(
         mcp_module,
         "McpToolScope",
