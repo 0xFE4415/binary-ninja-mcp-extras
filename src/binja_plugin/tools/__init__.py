@@ -324,8 +324,10 @@ from .components import (
 )
 from .data import rex_data_read, rex_relocation_at, rex_xrefs_to
 from .decompile import (
+    _MAX_DECOMPILE_LINES,
     _MAX_HLIL_GREP_CONTEXT,
     _MAX_HLIL_GREP_LIMIT,
+    _render_hlil_lines,
     rex_decompile_many,
     rex_disasm_at,
     rex_hlil_grep,
@@ -368,3 +370,4 @@ from .types import (
     rex_type_library_export,
     rex_type_library_import,
 )
+from .uidf import rex_uidf_clear, rex_uidf_list, rex_uidf_set

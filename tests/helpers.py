@@ -16,6 +16,16 @@ from typing import Any, override
 
 import pytest
 
+# The UIDF fakes live in a leaf module: it holds only self-contained value fakes so this
+# module's top-level import of it cannot cycle.
+from helpers_uidf import (
+    FakeMediumLevelIL,
+    FakePossibleValueSet,
+    FakeRegisterValueType,
+    FakeVariable,
+    parse_possible_value_set,
+)
+
 REGISTERED_TOOLS: list[tuple[str, dict[str, object], Any]] = []
 
 
@@ -266,6 +276,7 @@ def install_fake_binaryninja() -> None:
 
     enums_module = types.ModuleType("binaryninja.enums")
     setattr(enums_module, "AnalysisState", FakeAnalysisState)
+    setattr(enums_module, "RegisterValueType", FakeRegisterValueType)
     setattr(
         enums_module,
         "LowLevelILOperation",
@@ -275,11 +286,27 @@ def install_fake_binaryninja() -> None:
         ),
     )
 
+    variable_module = types.ModuleType("binaryninja.variable")
+
+    class FakeVariableBase:
+        pass
+
+    setattr(variable_module, "Variable", FakeVariableBase)
+
+    mlil_module = types.ModuleType("binaryninja.mediumlevelil")
+
+    class FakeMediumLevelILInstructionBase:
+        pass
+
+    setattr(mlil_module, "MediumLevelILInstruction", FakeMediumLevelILInstructionBase)
+
     package = types.ModuleType("binaryninja")
     setattr(package, "mcp", mcp_module)
     setattr(package, "binaryview", bv_module)
     setattr(package, "function", fn_module)
     setattr(package, "enums", enums_module)
+    setattr(package, "variable", variable_module)
+    setattr(package, "mediumlevelil", mlil_module)
     setattr(package, "Type", FakeType)
     setattr(package, "TypeLibrary", FakeTypeLibrary)
 
@@ -289,6 +316,8 @@ def install_fake_binaryninja() -> None:
         ("binaryninja.binaryview", bv_module),
         ("binaryninja.function", fn_module),
         ("binaryninja.enums", enums_module),
+        ("binaryninja.variable", variable_module),
+        ("binaryninja.mediumlevelil", mlil_module),
     ):
         sys.modules[name] = module
     REGISTERED_TOOLS.clear()
@@ -461,6 +490,14 @@ class FakeAnalysisInfo:
         self.active_info = active_info
 
 
+class FakeArchAndAddr:
+    """Mirrors binaryninja.variable.ArchAndAddr: the definition site's arch and address."""
+
+    def __init__(self, arch_name: str, addr: int) -> None:
+        self.arch = FakeArchitecture(arch_name)
+        self.addr = addr
+
+
 class FakeFunction:
     def __init__(
         self,
@@ -471,6 +508,8 @@ class FakeFunction:
         hlil: object = None,
         callers: list[FakeFunction] | None = None,
         callees: list[FakeFunction] | None = None,
+        vars: list[FakeVariable] | None = None,
+        mlil: FakeMediumLevelIL | None = None,
     ) -> None:
         self.name = name
         self.start = start
@@ -481,11 +520,69 @@ class FakeFunction:
         self.comment = ""
         self.user_type: object | None = None
         self.user_type_error: Exception | None = None
+        self.vars = vars if vars is not None else []
+        self.mlil = mlil
+        # UIDF state: informed values keyed (variable, def-site address), the calls the
+        # tools made, and per-operation error injection.
+        self.user_var_values: dict[FakeVariable, dict[int, FakePossibleValueSet]] = {}
+        self.set_user_var_value_calls: list[
+            tuple[FakeVariable, int, FakePossibleValueSet, bool]
+        ] = []
+        self.cleared_user_var_values: list[tuple[FakeVariable, int]] = []
+        self.cleared_all_user_var_values = 0
+        self.set_user_var_value_error: Exception | None = None
+        self.clear_user_var_value_error: Exception | None = None
+        self.clear_all_user_var_values_error: Exception | None = None
 
     def set_user_type(self, value: object) -> None:
         if self.user_type_error is not None:
             raise self.user_type_error
         self.user_type = value
+
+    def _definition_addresses(self, variable: FakeVariable) -> list[int]:
+        if self.mlil is None:
+            return []
+        return [definition.address for definition in self.mlil.get_var_definitions(variable)]
+
+    def set_user_var_value(
+        self, variable: FakeVariable, def_addr: int, value: FakePossibleValueSet, after: bool = True
+    ) -> None:
+        if self.set_user_var_value_error is not None:
+            raise self.set_user_var_value_error
+        if def_addr not in self._definition_addresses(variable):
+            raise Exception("No definition for Variable found at given address")
+        self.set_user_var_value_calls.append((variable, def_addr, value, after))
+        self.user_var_values.setdefault(variable, {})[def_addr] = value
+
+    def get_all_user_var_values(
+        self,
+    ) -> dict[FakeVariable, dict[FakeArchAndAddr, FakePossibleValueSet]]:
+        return {
+            variable: {
+                FakeArchAndAddr("x86_64", address): value for address, value in sites.items()
+            }
+            for variable, sites in self.user_var_values.items()
+        }
+
+    def clear_user_var_value(
+        self, variable: FakeVariable, def_addr: int, after: bool = True
+    ) -> None:
+        if self.clear_user_var_value_error is not None:
+            raise self.clear_user_var_value_error
+        if def_addr not in self._definition_addresses(variable):
+            raise Exception("No definition for Variable found at given address")
+        self.cleared_user_var_values.append((variable, def_addr))
+        sites = self.user_var_values.get(variable)
+        if sites is not None:
+            sites.pop(def_addr, None)
+            if not sites:
+                del self.user_var_values[variable]
+
+    def clear_all_user_var_values(self) -> None:
+        if self.clear_all_user_var_values_error is not None:
+            raise self.clear_all_user_var_values_error
+        self.cleared_all_user_var_values += 1
+        self.user_var_values.clear()
 
 
 class FakeFileMetadata:
@@ -636,6 +733,10 @@ class FakeBinaryView:
         )
         self._created_components: list[FakeComponent] = []
         self._relocations = relocations if relocations is not None else []
+        # UIDF surface: every parse call's (spec, state, here) plus the scheduled updates.
+        self.possible_value_parses: list[tuple[str, FakeRegisterValueType, int]] = []
+        self.parse_possiblevalueset_error: Exception | None = None
+        self.update_analysis_calls = 0
 
     def get_section_by_name(self, name: str) -> object:
         if name not in self._sections:
@@ -745,6 +846,17 @@ class FakeBinaryView:
         if self.parse_type_error is not None:
             raise self.parse_type_error
         return text, text
+
+    def parse_possiblevalueset(
+        self, value: str, state: FakeRegisterValueType, here: int = 0
+    ) -> FakePossibleValueSet:
+        self.possible_value_parses.append((value, state, here))
+        if self.parse_possiblevalueset_error is not None:
+            raise self.parse_possiblevalueset_error
+        return parse_possible_value_set(value, state, here)
+
+    def update_analysis(self) -> None:
+        self.update_analysis_calls += 1
 
     @contextlib.contextmanager
     def undoable_transaction(self) -> Generator[None]:

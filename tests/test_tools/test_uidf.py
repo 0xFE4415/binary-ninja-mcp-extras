@@ -1,0 +1,421 @@
+from __future__ import annotations
+
+import pytest
+from helpers import (
+    FakeAnalysisProgress,
+    FakeAnalysisState,
+    FakeBinaryView,
+    FakeFunction,
+    FakeToolError,
+    RenderableText,
+    _call,
+    get_tool,
+)
+from helpers_uidf import (
+    FakeMediumLevelIL,
+    FakePossibleValueSet,
+    FakeRegisterValueType,
+    FakeVariable,
+)
+
+from binja_plugin import tools
+from binja_plugin.tools import uidf as uidf_tools
+
+
+def _variable(function: FakeFunction, name: str) -> FakeVariable:
+    return next(item for item in function.vars if item.name == name)
+
+
+def _inform(function: FakeFunction, name: str, address: int, rendered: str) -> None:
+    function.set_user_var_value(
+        _variable(function, name),
+        address,
+        FakePossibleValueSet(FakeRegisterValueType.ConstantValue, rendered),
+        after=True,
+    )
+
+
+def _uidf_view(
+    progress: list[FakeAnalysisProgress] | None = None,
+) -> tuple[FakeBinaryView, FakeFunction]:
+    rax_1 = FakeVariable("rax_1")
+    var_10 = FakeVariable("var_10")
+    main = FakeFunction(
+        "main",
+        0x1100,
+        0x1200,
+        hlil=RenderableText("int32_t rax_1 = 1\nif (rax_1 == 1)\n    return 0\nreturn 1"),
+        vars=[rax_1, var_10, FakeVariable("argc")],
+        mlil=FakeMediumLevelIL({rax_1: [0x1104], var_10: [0x1190, 0x1196, 0x119C]}),
+    )
+    handler_rax = FakeVariable("rax_1")
+    handler = FakeFunction(
+        "handler",
+        0x2000,
+        0x2100,
+        hlil=RenderableText("return 0"),
+        vars=[handler_rax],
+        mlil=FakeMediumLevelIL({handler_rax: [0x2004]}),
+    )
+    view = FakeBinaryView(functions=[main, handler], analysis_progress_sequence=progress)
+    return view, main
+
+
+def test_uidf_set_informs_a_constant_and_renders_hlil() -> None:
+    view, main = _uidf_view()
+    _, uidf_set = get_tool("rex_uidf_set")
+    result = uidf_set(_call(view), 0x1100, "rax_1", "0x10")
+    assert result == {
+        "function": {"start": "0x1100", "name": "main"},
+        "variable": "rax_1",
+        "definition_site": "0x1104",
+        "value": {"state": "ConstantValue", "rendered": "<const 0x10>"},
+        "analysis_complete": True,
+        "lines": ["int32_t rax_1 = 1", "if (rax_1 == 1)", "    return 0", "return 1"],
+        "truncated": False,
+    }
+    assert view.update_analysis_calls == 1
+    # The spec is parsed at the definition site, so "$here" resolves there.
+    assert view.possible_value_parses == [("0x10", FakeRegisterValueType.ConstantValue, 0x1104)]
+    variable = _variable(main, "rax_1")
+    assert main.set_user_var_value_calls == [
+        (variable, 0x1104, main.user_var_values[variable][0x1104], True)
+    ]
+    assert str(main.user_var_values[variable][0x1104]) == "<const 0x10>"
+    clipped = uidf_set(_call(view), 0x1100, "rax_1", "0x10", max_lines=2)
+    assert clipped["lines"] == ["int32_t rax_1 = 1", "if (rax_1 == 1)"]
+    assert clipped["truncated"] is True
+
+
+def test_uidf_set_parses_ranges_and_value_sets() -> None:
+    view, _ = _uidf_view()
+    _, uidf_set = get_tool("rex_uidf_set")
+    unsigned = uidf_set(_call(view), 0x1100, "rax_1", "1:10:1", state="UnsignedRangeValue")
+    assert unsigned["value"] == {
+        "state": "UnsignedRangeValue",
+        "rendered": "<unsigned ranges: [<range: 0x1 to 0x10>]>",
+    }
+    signed = uidf_set(_call(view), 0x1100, "rax_1", "-5:5:1", state="SignedRangeValue")
+    assert signed["value"]["rendered"] == "<signed ranges: [<range: -0x5 to 0x5>]>"
+    in_set = uidf_set(_call(view), 0x1100, "rax_1", "1,2,3", state="InSetOfValues")
+    assert in_set["value"]["rendered"] == "<in set([0x1, 0x2, 0x3])>"
+    not_in_set = uidf_set(_call(view), 0x1100, "rax_1", "0x10", state="NotInSetOfValues")
+    assert not_in_set["value"]["rendered"] == "<not in set([0x10])>"
+    pointer = uidf_set(_call(view), 0x1100, "rax_1", "0x400000", state="ConstantPointerValue")
+    assert pointer["value"]["state"] == "ConstantPointerValue"
+    # The state name reaches the parser as the matching enum member.
+    assert [state for _, state, _ in view.possible_value_parses] == [
+        FakeRegisterValueType.UnsignedRangeValue,
+        FakeRegisterValueType.SignedRangeValue,
+        FakeRegisterValueType.InSetOfValues,
+        FakeRegisterValueType.NotInSetOfValues,
+        FakeRegisterValueType.ConstantPointerValue,
+    ]
+
+
+def test_uidf_set_rejects_unparsable_values() -> None:
+    view, main = _uidf_view()
+    _, uidf_set = get_tool("rex_uidf_set")
+    specs = (("garbage!!", "ConstantValue"), ("0x10", "UnsignedRangeValue"), ("", "ConstantValue"))
+    for value, state in specs:
+        with pytest.raises(FakeToolError) as exc:
+            uidf_set(_call(view), 0x1100, "rax_1", value, state=state)
+        assert exc.value.code == "invalid_params"
+        assert "Invalid value parameter 'value'" in exc.value.message
+    assert main.set_user_var_value_calls == []
+
+
+def test_uidf_set_rejects_unknown_variables() -> None:
+    view, main = _uidf_view()
+    _, uidf_set = get_tool("rex_uidf_set")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x1100, "nope", "1")
+    assert exc.value.code == "no_variable"
+    assert "no MLIL variable named 'nope'" in exc.value.message
+    assert "bn_variable_list" in exc.value.message
+    # A variable the function knows but never defines in the MLIL is equally unusable.
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x1100, "argc", "1")
+    assert exc.value.code == "no_variable"
+    assert main.set_user_var_value_calls == []
+
+
+def test_uidf_set_requires_def_address_for_multi_site_variables() -> None:
+    view, main = _uidf_view()
+    _, uidf_set = get_tool("rex_uidf_set")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x1100, "var_10", "1")
+    assert exc.value.code == "ambiguous_definition"
+    assert exc.value.message == (
+        "variable 'var_10' matches 3 definitions at 0x1190, 0x1196, 0x119c; "
+        "pass def_address to choose one"
+    )
+    picked = uidf_set(_call(view), 0x1100, "var_10", "1", def_address=0x1196)
+    assert picked["definition_site"] == "0x1196"
+    assert _variable(main, "var_10") in main.user_var_values
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x1100, "var_10", "1", def_address=0x1400)
+    assert exc.value.code == "definition_not_found"
+    assert exc.value.message == (
+        "variable 'var_10' has no definition at 0x1400; definitions: 0x1190, 0x1196, 0x119c"
+    )
+
+
+def test_uidf_set_rejects_same_named_variables_at_one_site() -> None:
+    first, second = FakeVariable("rax_1"), FakeVariable("rax_1")
+    main = FakeFunction(
+        "main",
+        0x1100,
+        0x1200,
+        vars=[first, second],
+        mlil=FakeMediumLevelIL({first: [0x1104], second: [0x1104]}),
+    )
+    view = FakeBinaryView(functions=[main])
+    _, uidf_set = get_tool("rex_uidf_set")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x1100, "rax_1", "1")
+    assert exc.value.code == "ambiguous_definition"
+    assert exc.value.message == (
+        "variable 'rax_1' matches 2 definitions at 0x1104; pass def_address to choose one"
+    )
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x1100, "rax_1", "1", def_address=0x1104)
+    assert exc.value.code == "ambiguous_definition"
+    assert exc.value.message == "variable 'rax_1' matches 2 definitions at 0x1104"
+
+
+def test_uidf_set_rejects_functions_without_mlil() -> None:
+    leaf = FakeFunction("leaf", 0x2000, 0x2100, vars=[FakeVariable("x")])
+    view = FakeBinaryView(functions=[leaf])
+    _, uidf_set = get_tool("rex_uidf_set")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x2000, "x", "1")
+    assert exc.value.code == "no_mlil"
+    assert "has no MediumLevelIL yet" in exc.value.message
+
+
+def test_uidf_set_rejects_bad_function_max_lines_and_state() -> None:
+    view, _ = _uidf_view()
+    _, uidf_set = get_tool("rex_uidf_set")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x1800, "rax_1", "1")
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == "no analyzed function contains 0x1800"
+    for kwargs, message in (
+        ({"max_lines": 0}, "Invalid integer parameter 'max_lines': Must be at least 1"),
+        (
+            {"max_lines": uidf_tools._MAX_DECOMPILE_LINES + 1},
+            "Invalid integer parameter 'max_lines': "
+            f"Must be at most {uidf_tools._MAX_DECOMPILE_LINES}",
+        ),
+    ):
+        with pytest.raises(FakeToolError) as exc:
+            uidf_set(_call(view), 0x1100, "rax_1", "1", **kwargs)
+        assert exc.value.code == "invalid_params"
+        assert exc.value.message == message
+    # A state outside the schema's Literal can only arrive through a direct handler call.
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x1100, "rax_1", "1", state="Bogus")
+    assert exc.value.code == "invalid_params"
+    assert "must be one of" in exc.value.message
+
+
+def test_uidf_set_wraps_core_failures() -> None:
+    view, main = _uidf_view()
+    main.set_user_var_value_error = Exception("core refused")
+    _, uidf_set = get_tool("rex_uidf_set")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x1100, "rax_1", "1")
+    assert exc.value.code == "set_failed"
+    assert "core refused" in exc.value.message
+
+
+def test_uidf_set_reports_an_unsettled_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(uidf_tools, "_MAX_UIDF_ANALYSIS_WAIT_MS", 30)
+    monkeypatch.setattr(uidf_tools, "_UIDF_ANALYSIS_SLICE_MS", 10)
+    _, uidf_set = get_tool("rex_uidf_set")
+    busy_view, _ = _uidf_view([FakeAnalysisProgress(FakeAnalysisState.HoldState)])
+    result = uidf_set(_call(busy_view), 0x1100, "rax_1", "1")
+    assert result["analysis_complete"] is False
+    assert result["lines"] == ["int32_t rax_1 = 1", "if (rax_1 == 1)", "    return 0", "return 1"]
+    settling_view, _ = _uidf_view(
+        [
+            FakeAnalysisProgress(FakeAnalysisState.HoldState),
+            FakeAnalysisProgress(FakeAnalysisState.IdleState),
+        ]
+    )
+    settled = uidf_set(_call(settling_view), 0x1100, "rax_1", "1")
+    assert settled["analysis_complete"] is True
+
+
+def test_uidf_clear_clears_one_variable_across_sites() -> None:
+    view, main = _uidf_view()
+    _inform(main, "var_10", 0x1190, "<const 0x1>")
+    _inform(main, "var_10", 0x1196, "<const 0x2>")
+    _inform(main, "rax_1", 0x1104, "<const 0x3>")
+    _, uidf_clear = get_tool("rex_uidf_clear")
+    result = uidf_clear(_call(view), 0x1100, "var_10")
+    assert result == {
+        "function": {"start": "0x1100", "name": "main"},
+        "variable": "var_10",
+        "cleared": 2,
+        "definition_sites": 3,
+    }
+    assert view.update_analysis_calls == 1
+    variable = _variable(main, "var_10")
+    assert main.cleared_user_var_values == [
+        (variable, 0x1190),
+        (variable, 0x1196),
+        (variable, 0x119C),
+    ]
+    assert list(main.user_var_values) == [_variable(main, "rax_1")]
+
+
+def test_uidf_clear_all_for_a_function() -> None:
+    view, main = _uidf_view()
+    _inform(main, "var_10", 0x1190, "<const 0x1>")
+    _inform(main, "rax_1", 0x1104, "<const 0x3>")
+    _, uidf_clear = get_tool("rex_uidf_clear")
+    assert uidf_clear(_call(view), 0x1100) == {
+        "function": {"start": "0x1100", "name": "main"},
+        "variable": None,
+        "cleared": 2,
+    }
+    assert main.cleared_all_user_var_values == 1
+    assert main.user_var_values == {}
+
+
+def test_uidf_clear_rejects_unknown_variables_and_wraps_core_errors() -> None:
+    view, main = _uidf_view()
+    _, uidf_clear = get_tool("rex_uidf_clear")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_clear(_call(view), 0x1100, "nope")
+    assert exc.value.code == "no_variable"
+    main.clear_user_var_value_error = Exception("core refused")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_clear(_call(view), 0x1100, "rax_1")
+    assert exc.value.code == "clear_failed"
+    assert "core refused" in exc.value.message
+    main.clear_user_var_value_error = None
+    main.clear_all_user_var_values_error = Exception("core refused all")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_clear(_call(view), 0x1100)
+    assert exc.value.code == "clear_failed"
+    assert "core refused all" in exc.value.message
+
+
+def test_uidf_clear_needs_mlil_only_for_named_variables() -> None:
+    leaf = FakeFunction("leaf", 0x2000, 0x2100, vars=[FakeVariable("x")])
+    view = FakeBinaryView(functions=[leaf])
+    _, uidf_clear = get_tool("rex_uidf_clear")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_clear(_call(view), 0x2000, "x")
+    assert exc.value.code == "no_mlil"
+    assert uidf_clear(_call(view), 0x2000) == {
+        "function": {"start": "0x2000", "name": "leaf"},
+        "variable": None,
+        "cleared": 0,
+    }
+
+
+def test_uidf_list_reports_each_informed_site() -> None:
+    view, main = _uidf_view()
+    handler = view.functions[1]
+    _inform(main, "rax_1", 0x1104, "<const 0x9>")
+    _inform(main, "var_10", 0x1196, "<const 0x1>")
+    _inform(main, "var_10", 0x1190, "<const 0x2>")
+    _inform(handler, "rax_1", 0x2004, "<const 0x3>")
+    _, uidf_list = get_tool("rex_uidf_list")
+    assert uidf_list(_call(view)) == {
+        "total": 4,
+        "truncated": False,
+        "values": [
+            {
+                "function": {"start": "0x1100", "name": "main"},
+                "variable": "rax_1",
+                "definition_site": "0x1104",
+                "architecture": "x86_64",
+                "state": "ConstantValue",
+                "value": "<const 0x9>",
+            },
+            {
+                "function": {"start": "0x1100", "name": "main"},
+                "variable": "var_10",
+                "definition_site": "0x1190",
+                "architecture": "x86_64",
+                "state": "ConstantValue",
+                "value": "<const 0x2>",
+            },
+            {
+                "function": {"start": "0x1100", "name": "main"},
+                "variable": "var_10",
+                "definition_site": "0x1196",
+                "architecture": "x86_64",
+                "state": "ConstantValue",
+                "value": "<const 0x1>",
+            },
+            {
+                "function": {"start": "0x2000", "name": "handler"},
+                "variable": "rax_1",
+                "definition_site": "0x2004",
+                "architecture": "x86_64",
+                "state": "ConstantValue",
+                "value": "<const 0x3>",
+            },
+        ],
+    }
+    scoped = uidf_list(_call(view), 0x2000)
+    assert scoped["total"] == 1
+    assert scoped["values"][0]["function"] == {"start": "0x2000", "name": "handler"}
+    assert uidf_list(_call(view), 0x1100)["total"] == 3
+
+
+def test_uidf_list_paginates_and_rejects_bad_arguments() -> None:
+    view, main = _uidf_view()
+    _inform(main, "rax_1", 0x1104, "<const 0x9>")
+    _inform(main, "var_10", 0x1190, "<const 0x1>")
+    _inform(main, "var_10", 0x1196, "<const 0x2>")
+    _, uidf_list = get_tool("rex_uidf_list")
+    paged = uidf_list(_call(view), limit=2, offset=1)
+    assert paged["total"] == 3
+    assert paged["truncated"] is False
+    assert [entry["definition_site"] for entry in paged["values"]] == ["0x1190", "0x1196"]
+    head = uidf_list(_call(view), limit=2)
+    assert head["total"] == 3
+    assert head["truncated"] is True
+    assert [entry["definition_site"] for entry in head["values"]] == ["0x1104", "0x1190"]
+    tail = uidf_list(_call(view), limit=2, offset=2)
+    assert tail["truncated"] is False
+    assert [entry["variable"] for entry in tail["values"]] == ["var_10"]
+    beyond = uidf_list(_call(view), offset=10)
+    assert beyond == {"total": 3, "truncated": False, "values": []}
+    empty_page = uidf_list(_call(view), limit=0)
+    assert empty_page["values"] == []
+    assert empty_page["truncated"] is True
+    assert uidf_list(_call(FakeBinaryView())) == {"total": 0, "truncated": False, "values": []}
+    for kwargs, message in (
+        ({"limit": -1}, "Invalid integer parameter 'limit': Must be at least 0"),
+        (
+            {"limit": tools._MAX_LIMIT + 1},
+            f"Invalid integer parameter 'limit': Must be at most {tools._MAX_LIMIT}",
+        ),
+        ({"offset": -1}, "Invalid integer parameter 'offset': Must be at least 0"),
+    ):
+        with pytest.raises(FakeToolError) as exc:
+            uidf_list(_call(view), **kwargs)
+        assert exc.value.code == "invalid_params"
+        assert exc.value.message == message
+    with pytest.raises(FakeToolError) as exc:
+        uidf_list(_call(view), 0x1800)
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == "no analyzed function contains 0x1800"
+
+
+def test_uidf_list_truncates_long_value_renders() -> None:
+    view, main = _uidf_view()
+    main.user_var_values[_variable(main, "rax_1")] = {
+        0x1104: FakePossibleValueSet(FakeRegisterValueType.ConstantValue, "x" * 600)
+    }
+    _, uidf_list = get_tool("rex_uidf_list")
+    result = uidf_list(_call(view))
+    assert result["values"][0]["value"].endswith("chars truncated]")
