@@ -88,7 +88,12 @@ def test_relocation_at_reports_each_field_of_a_symbol_relocation() -> None:
     view = FakeBinaryView(
         relocations=[
             FakeRelocation(
-                FakeRelocationInfo(type_name="ELFGlobalRelocationType", address=0x40EFC0),
+                FakeRelocationInfo(
+                    type_name="ELFGlobalRelocationType",
+                    address=0x40EFC0,
+                    size=4,
+                    pc_relative=True,
+                ),
                 target=0x412800,
                 reloc=0x40EFC0,
                 symbol=FakeCoreSymbol("__libc_start_main"),
@@ -96,17 +101,17 @@ def test_relocation_at_reports_each_field_of_a_symbol_relocation() -> None:
         ]
     )
     _, relocation_at = get_tool("rex_relocation_at")
-    assert relocation_at(_call(view), 0x40EFC0) == {
-        "address": "0x40efc0",
+    assert relocation_at(_call(view), 0x40EFC2) == {
+        "address": "0x40efc2",
         "count": 1,
         "relocations": [
             {
                 "address": "0x40efc0",
-                "size": 8,
+                "size": 4,
                 "type": "ELFGlobalRelocationType",
                 "addend": 0,
                 "implicit_addend": False,
-                "pc_relative": False,
+                "pc_relative": True,
                 "target": "0x412800",
                 "reloc": "0x40efc0",
                 "symbol": "__libc_start_main",
@@ -122,6 +127,7 @@ def test_relocation_at_reports_a_symbolless_relocation() -> None:
                 FakeRelocationInfo(
                     type_name="StandardRelocationType",
                     address=0x40EDC0,
+                    size=2,
                     addend=33440,
                     implicit_addend=True,
                 ),
@@ -131,13 +137,13 @@ def test_relocation_at_reports_a_symbolless_relocation() -> None:
         ]
     )
     _, relocation_at = get_tool("rex_relocation_at")
-    assert relocation_at(_call(view), 0x40EDC0) == {
-        "address": "0x40edc0",
+    assert relocation_at(_call(view), 0x40EDC1) == {
+        "address": "0x40edc1",
         "count": 1,
         "relocations": [
             {
                 "address": "0x40edc0",
-                "size": 8,
+                "size": 2,
                 "type": "StandardRelocationType",
                 "addend": 33440,
                 "implicit_addend": True,

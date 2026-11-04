@@ -111,7 +111,7 @@ scanners. Read the destructive table before handing an agent free rein.
   `rex_hlil_grep`) accept `limit`/`offset` too but never return a `total`: they stop
   scanning as soon as the requested window is known to be complete.
   `rex_hlil_grep` pages through its `next_offset` cursor instead.
-- Size parameters (`limit`, `offset`, `max_depth`, `max_paths`, `max_functions`,
+- Size parameters (`limit`, `length`, `offset`, `max_depth`, `max_paths`, `max_functions`,
   `max_chars`) are range-checked, not clamped. Out of range fails with the MCP layer's
   `invalid_params`; an over-cap string argument fails with a per-parameter
   `*_too_large` code instead (`pattern_too_large`, `key_too_large`, `value_too_large`,
