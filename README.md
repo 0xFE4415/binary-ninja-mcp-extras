@@ -1,10 +1,11 @@
 # binja-plugin
 
 Extra MCP tools for Binary Ninja's built-in MCP server. The stock server exposes its
-`bn_*` tools, and this plugin registers more alongside them, for the moves an agent
-session mostly consists of: search, code and data transitions, triage annotations, and
-scratch state. The Python half registers the `rex_*` tools. The Rust half (`native/`)
-adds two `rx_*` byte scanners, where native speed is measurably worth it.
+`bn_*` tools, and this plugin registers more alongside them, covering the moves an
+agent session mostly consists of: search, code and data transitions, triage
+annotations, and scratch state. The Python half registers the `rex_*` tools. The Rust
+half (`native/`) adds two `rx_*` byte scanners for the scans where native speed
+measurably wins.
 
 ## Install
 
@@ -48,8 +49,8 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 ## Tool reference
 
 Every tool is pinned as read-only or destructive when it registers, and that marking
-is the only approval-policy signal an MCP client gets. The tables below cover all 39
-registered tools, split on that marking: 37 Python `rex_*` tools and 2 native `rx_*`
+is the only approval-policy signal an MCP client gets. The tables below cover all 41
+registered tools, split on that marking: 39 Python `rex_*` tools and 2 native `rx_*`
 scanners. Read the destructive table before you let an agent run those tools.
 
 ### Read-only tools
@@ -65,7 +66,8 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_constant_find` | Find functions whose rendered instructions reference a constant value. |
 | `rex_find_functions_by_pattern` | Map a byte pattern to the functions containing its matches. |
 | `rex_string_refs` | Code refs to detected strings, synthesized included; filters. |
-| `rex_disasm_at` | Disassembly window anchored at an address, clipped at the function's edges. |
+| `rex_xrefs_to` | Code and data references to an address. |
+| `rex_disasm_at` | Window (max 4096 instructions per side); full function: `rex_export_disasm`. |
 | `rex_decompile_many` | HLIL render for up to 16 functions in one batch call. |
 | `rex_quick_main` | Entry point, `main`, and `main`'s HLIL in one call. |
 | `rex_analysis_wait` | Bounded wait for background analysis; snapshot at expiry. |
@@ -77,6 +79,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_tag_list` | List the tags set on the binary view. |
 | `rex_report_show` | Render a markdown report with `binaryninja://` links into the view. |
 | `rex_kv_get` | Read a stored scratch string from the view's database. |
+| `rex_help` | List the `rex_*` tools, or one tool's parameters. |
 
 ### Destructive tools
 
@@ -96,44 +99,47 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_kv_delete` | Delete a previously stored scratch value. |
 | `rex_export_disasm` | Write one function's disassembly window to a file. |
 | `rex_export_symbols` | Write an address range's symbols to a CSV or JSON file. |
-| `rex_eval_python` | Run arbitrary Binary Ninja Python; the escape hatch for everything else. |
+| `rex_eval_python` | Run arbitrary Binary Ninja Python; binds `bv`, `call`, `binaryninja`/`bn`. |
 | `rex_binary_close` | Discard unsaved changes and close the view. |
 | `rex_undo` | Undo the view's last transaction; reports post-op stack depths. |
 | `rex_redo` | Redo the last undone transaction; reports post-op stack depths. |
 
 ### Shared response contract
 
+- Stock `bn_*` listings (e.g. `bn_function_list`) return a markdown table in the
+  `content` field and no `structuredContent`. The `rex_*` listing tools return
+  structured `total`/`truncated` data instead; prefer them when you want one shape to
+  parse.
 - Paged listings return `total`, `truncated`, and a `limit`/`offset` window:
-  `rex_string_search`, `rex_data_find`, `rex_string_refs`, `rex_tag_list`, and
-  `rex_export_symbols`. `rex_component_get` paginates the same way but names its count
-  `function_count`.
+  `rex_string_search`, `rex_data_find`, `rex_string_refs`, `rex_xrefs_to`,
+  `rex_tag_list`, and `rex_export_symbols`. `rex_component_get` paginates the same way
+  but names its count `function_count`.
 - Early-stop scans (`rex_constant_find`, `rex_find_functions_by_pattern`,
-  `rex_hlil_grep`) accept `limit`/`offset` too but never return a `total`. They stop
-  scanning as soon as the requested window is known to be complete, and
-  `rex_hlil_grep` pages through its `next_offset` cursor instead.
-- Size parameters (`limit`, `length`, `offset`, `max_depth`, `max_paths`,
-  `max_functions`, `max_chars`) are range-checked, not clamped. A value out of range
-  fails with the MCP layer's `invalid_params`. A string argument over its cap fails
-  with a per-parameter code instead (`pattern_too_large`, `key_too_large`,
-  `value_too_large`, `data_too_large`, `tag_type_too_large`, `title_too_large`,
-  `content_too_large`, `name_too_large`, `library_name_too_large`). Path and list-entry
-  parameters (component paths, `rex_type_library_*` names, export filenames) keep
-  `invalid_params`.
-- Echoed strings clip at 512 characters with a `... [N chars truncated]` suffix. The
-  suffix alone marks most echoes. The rest carry a companion flag, e.g.
+  `rex_hlil_grep`) accept `limit`/`offset` too but never return a `total`: they stop
+  scanning once the requested window is filled. `rex_hlil_grep` reports where it
+  stopped with a `next_offset` cursor; pass it back as `offset` to get the next page.
+- Size parameters (`limit`, `length`, `offset`, `max_depth`, `max_paths`, `max_functions`,
+  `max_chars`) are range-checked, never clamped. A value out of range fails with the
+  MCP layer's `invalid_params`. A string argument over its cap fails with a
+  per-parameter code instead, e.g. `pattern_too_large`, `key_too_large`,
+  `value_too_large`, `data_too_large`, or `name_too_large`. Path and list-entry
+  parameters (component paths, `rex_type_library_*` names, export filenames) fail
+  with `invalid_params` even when over their cap.
+- Echoed strings clip at 512 characters with a `... [N chars truncated]` suffix. Most
+  echoes signal truncation with the suffix alone; these also return a boolean flag:
   `rex_eval_python`'s `stdout_truncated`/`result_truncated`/`error_truncated`,
   `data_truncated` in `rex_tag_list` and `rex_tag_set`, or `truncated` on the stored
   value in `rex_kv_set`/`rex_kv_get`, `rex_report_show`'s preview, and
-  `rex_string_read_at`'s value. On the listing tools, `truncated` means rows were left
-  out, never a clipped string.
+  `rex_string_read_at`'s value. On the listing tools, `truncated` means rows were
+  left out, never a clipped string.
 - `rex_data_read` returns `bytes_read` (what was actually read) and `complete` (whether
   that equals the requested `length`). A range extending past mapped memory comes back
   short instead of failing.
 - `rex_eval_python` is the one tool that reports failure in-band. An exception comes
   back in the response's `error` field instead of raising a tool error.
 - Batch tools (`rex_annotate_many`, `rex_component_add_functions`,
-  `rex_type_library_export`, `rex_type_library_import`) answer a uniform
-  `applied`/`failed_count`/`total` summary next to their per-tool fields.
+  `rex_type_library_export`, `rex_type_library_import`) return a uniform
+  `applied`/`failed_count`/`total` summary alongside their per-tool fields.
 
 ### Bounds on database-wide scans
 
@@ -141,15 +147,15 @@ On a database with hundreds of thousands of functions, the whole-database search
 stay bounded per call:
 
 - `rex_constant_find` reuses the core's linear-view constant search (the engine behind
-  Search > For Constant) instead of generating IL for every function. Only a value
-  that never occurs in the view pays for a full sweep, and that sweep is a bounded,
-  core-side pass.
+  Search > For Constant) instead of generating IL for every function. The search is a
+  bounded, core-side pass that stops once the requested window is filled; a value that
+  occurs rarely or never requires scanning the whole view.
 - `rex_hlil_grep` renders at most `max_functions` functions per call. The first
-  render of a function's HLIL costs tens of milliseconds, so on a big database you
+  render of a function's HLIL costs tens of milliseconds, so on a large database,
   page through the `next_offset` cursor.
-- `rex_find_functions_by_pattern` reads memory in chunks and stops at the first
-  matching function past the requested window. Functions inside the window still
-  report a true match count.
+- `rex_find_functions_by_pattern` reads memory in chunks and stops as soon as it finds
+  a matching function past the requested window. Functions inside the window still
+  report their full match count.
 
 ### Known limits
 
@@ -161,10 +167,10 @@ stay bounded per call:
   simple.
 - `rx_data_find`'s speed advantage depends on scan scope, per the project's own
   benchmark ([native/BENCH.md](native/BENCH.md)): about 7.5x on a whole-database scan
-  with a short pattern, and parity (0.99x) section-scoped. The multi-pattern win held
-  at every scope measured (12.6x full view, against 8 sequential Python calls).
-  Nothing gates between the Python and native twins. Both appear in the tool list
-  when both halves are installed, so pick per scan.
+  with a short pattern, and parity (0.99x) when the scan covers one section. The
+  multi-pattern scanner won at every scope measured (12.6x on the full view, against
+  8 sequential Python calls). Both tools register whenever both halves are installed;
+  there is no switch between them, so pick per scan.
 
 ## Development and testing
 
