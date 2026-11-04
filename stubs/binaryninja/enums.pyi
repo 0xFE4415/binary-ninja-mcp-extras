@@ -23,6 +23,28 @@ class AnalysisState(IntEnum):
     ExtendedAnalyzeState = 6
 
 
+class RegisterValueType(IntEnum):
+    UndeterminedValue = 0
+    EntryValue = 1
+    ConstantValue = 2
+    ConstantPointerValue = 3
+    ExternalPointerValue = 4
+    StackFrameOffset = 5
+    ReturnAddressValue = 6
+    ImportedAddressValue = 7
+    ResultPointerValue = 8
+    ParameterPointerValue = 9
+    SignedRangeValue = 10
+    UnsignedRangeValue = 11
+    LookupTableValue = 12
+    InSetOfValues = 13
+    NotInSetOfValues = 14
+    ConstantDataValue = 32768
+    ConstantDataZeroExtendValue = 32769
+    ConstantDataSignExtendValue = 32770
+    ConstantDataAggregateValue = 32771
+
+
 class DerivedStringLocationType(IntEnum):
     DataBackedStringLocation = 0
     CodeStringLocation = 1
