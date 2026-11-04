@@ -101,3 +101,81 @@ def test_eval_python_returns_truncated_error_instead_of_raising() -> None:
     assert result["error"].startswith("zzz")
     assert result["error_truncated"] is True
     assert len(result["error"]) == 512 + len("... [488 chars truncated]")
+
+
+def test_eval_python_spills_oversized_result_for_paging() -> None:
+    escape._EVAL_SPILLS.clear()
+    view = _view_with_functions()
+    _, evaluate = get_tool("rex_eval_python")
+    result = evaluate(_call(view), f"result = 'y' * {escape._MAX_EVAL_RESULT_CHARS + 10}")
+    assert result["result_truncated"] is True
+    # repr() wraps the string in quotes, so the spilled text is two chars longer than the
+    # expression produced.
+    assert result["result_length"] == escape._MAX_EVAL_RESULT_CHARS + 12
+    key = result["result_key"]
+    assert key is not None
+
+    _, page = get_tool("rex_eval_result")
+    head = page(_call(view), key, offset=0, limit=100)
+    assert head["key"] == key
+    assert head["total"] == result["result_length"]
+    assert head["truncated"] is True
+    assert head["next_offset"] == 100
+    tail = page(_call(view), key, offset=escape._MAX_EVAL_RESULT_CHARS)
+    assert tail["truncated"] is False
+    assert tail["next_offset"] is None
+    # Paging the spill reassembles the full text exactly.
+    assembled: list[str] = []
+    offset = 0
+    while True:
+        chunk = page(_call(view), key, offset=offset, limit=4096)
+        assembled.append(chunk["value"])
+        if not chunk["truncated"]:
+            break
+        offset = chunk["next_offset"]  # type: ignore[assignment]
+    raw = "".join(assembled)
+    assert raw == repr("y" * (escape._MAX_EVAL_RESULT_CHARS + 10))
+    # An offset at or past the end answers an empty page, not an error.
+    assert page(_call(view), key, offset=result["result_length"])["value"] == ""
+    with pytest.raises(FakeToolError) as exc:
+        page(_call(view), "result-404")
+    assert exc.value.code == "not_found"
+
+
+def test_eval_python_spills_oversized_stdout() -> None:
+    escape._EVAL_SPILLS.clear()
+    view = _view_with_functions()
+    _, evaluate = get_tool("rex_eval_python")
+    result = evaluate(_call(view), f"print('x' * {escape._MAX_EVAL_STDOUT_CHARS + 10})")
+    assert result["stdout_truncated"] is True
+    assert result["stdout_key"] is not None
+    assert result["stdout_length"] == escape._MAX_EVAL_STDOUT_CHARS + 11
+    _, page = get_tool("rex_eval_result")
+    spilled = page(_call(view), result["stdout_key"], offset=0, limit=10)
+    assert spilled["value"] == "x" * 10
+    assert spilled["total"] == escape._MAX_EVAL_STDOUT_CHARS + 11
+
+
+def test_eval_spill_store_evicts_oldest_and_drops_oversized_spills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    escape._EVAL_SPILLS.clear()
+    monkeypatch.setattr(escape, "_MAX_EVAL_SPILLS", 1)
+    view = _view_with_functions()
+    _, evaluate = get_tool("rex_eval_python")
+    first = evaluate(_call(view), f"result = 'a' * {escape._MAX_EVAL_RESULT_CHARS + 10}")
+    second = evaluate(_call(view), f"result = 'b' * {escape._MAX_EVAL_RESULT_CHARS + 10}")
+    _, page = get_tool("rex_eval_result")
+    with pytest.raises(FakeToolError) as exc:
+        page(_call(view), first["result_key"])
+    assert exc.value.code == "not_found"
+    assert page(_call(view), second["result_key"])["total"] > 0
+
+    # A result larger than the per-spill cap is not kept: the clipped echo is the only
+    # copy, and the key comes back None so no caller chases an unreadable spill.
+    escape._EVAL_SPILLS.clear()
+    monkeypatch.setattr(escape, "_MAX_EVAL_SPILL_CHARS", 8)
+    dropped = evaluate(_call(view), f"result = 'c' * {escape._MAX_EVAL_RESULT_CHARS + 10}")
+    assert dropped["result_truncated"] is True
+    assert dropped["result_key"] is None
+    assert dropped["result_length"] == escape._MAX_EVAL_RESULT_CHARS + 12

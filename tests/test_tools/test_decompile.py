@@ -846,3 +846,111 @@ def test_quick_main_errors_when_no_function_contains_the_entry_point() -> None:
         quick(FakeParsingToolCall(view))
     assert exc.value.code == "no_function"
     assert exc.value.message == "no analyzed function contains the entry point 0x1000"
+
+
+def test_disasm_many_renders_one_window_per_address() -> None:
+    view = _disasm_view()
+    _, disasm = get_tool("rex_disasm_many")
+    result = disasm(FakeParsingToolCall(view), ["0x1104", "0x2000"], max_lines=3)
+    assert result == {
+        "windows": [
+            {
+                "address": "0x1104",
+                "function": {"start": "0x1100", "name": "main"},
+                "instructions": [
+                    {"address": "0x1104", "text": "sub rsp, 0x20"},
+                    {"address": "0x1108", "text": "mov eax, 1"},
+                    {"address": "0x110d", "text": "leave"},
+                ],
+                "truncated": True,
+            },
+            {
+                "address": "0x2000",
+                "function": {"start": "0x2000", "name": "handler"},
+                "instructions": [
+                    {"address": "0x2000", "text": "push rbp"},
+                    {"address": "0x2001", "text": "ret"},
+                ],
+                "truncated": False,
+            },
+        ],
+        "truncated": False,
+        "next_offset": None,
+    }
+
+
+def test_disasm_many_anchors_inside_an_instruction() -> None:
+    view = _disasm_view()
+    _, disasm = get_tool("rex_disasm_many")
+    # 0x1105 falls inside "sub rsp, 0x20" (0x1104): the window starts at its start line.
+    inside = disasm(FakeParsingToolCall(view), ["0x1105"], max_lines=1)
+    assert inside["windows"][0]["instructions"] == [{"address": "0x1104", "text": "sub rsp, 0x20"}]
+
+
+def test_disasm_many_clips_at_the_cross_window_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    # main renders 6 lines, handler 2: a budget of 7 takes main's window whole and
+    # leaves handler for the continuation.
+    monkeypatch.setattr(decompile_tools, "_MAX_DISASM_MANY_TOTAL_LINES", 7)
+    view = _disasm_view()
+    _, disasm = get_tool("rex_disasm_many")
+    clipped = disasm(FakeParsingToolCall(view), ["0x1100", "0x2000"])
+    assert [entry["address"] for entry in clipped["windows"]] == ["0x1100"]
+    assert clipped["truncated"] is True
+    assert clipped["next_offset"] == 1
+    continuation = disasm(FakeParsingToolCall(view), ["0x2000"])
+    assert [entry["address"] for entry in continuation["windows"]] == ["0x2000"]
+    assert continuation["truncated"] is False
+
+    # A budget smaller than the first window renders nothing and points the caller back
+    # at the first address.
+    monkeypatch.setattr(decompile_tools, "_MAX_DISASM_MANY_TOTAL_LINES", 3)
+    nothing = disasm(FakeParsingToolCall(view), ["0x1100", "0x2000"])
+    assert nothing["windows"] == []
+    assert nothing["truncated"] is True
+    assert nothing["next_offset"] == 0
+
+
+def test_disasm_many_rejects_bad_batches() -> None:
+    view = _disasm_view()
+    _, disasm = get_tool("rex_disasm_many")
+    with pytest.raises(FakeToolError) as exc:
+        disasm(FakeParsingToolCall(view), ["0x1100", "0x9999"])
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == "no analyzed function contains 0x9999"
+    with pytest.raises(FakeToolError) as exc:
+        disasm(FakeParsingToolCall(view), [])
+    assert exc.value.message == "addresses must contain between 1 and 64 address expressions"
+    with pytest.raises(FakeToolError) as exc:
+        disasm(FakeParsingToolCall(view), [f"0x{address:x}" for address in range(65)])
+    assert exc.value.message == "addresses must contain between 1 and 64 address expressions"
+    with pytest.raises(FakeToolError) as exc:
+        disasm(FakeParsingToolCall(view), ["0x1100"], max_lines=201)
+    assert exc.value.message == "Invalid integer parameter 'max_lines': Must be at most 200"
+
+
+def test_disasm_many_reports_pending_analysis() -> None:
+    # A defined-but-unanalyzed function is invisible to containment; the tools answer
+    # analysis_pending with the recovery path instead of a bare "no function".
+    pending = FakeFunction("sub_4000", 0x4000, 0x4010)
+    view = FakeBinaryView(pending_functions=[pending])
+    _, disasm = get_tool("rex_disasm_many")
+    with pytest.raises(FakeToolError) as exc:
+        disasm(FakeParsingToolCall(view), ["0x4000"])
+    assert exc.value.code == "analysis_pending"
+    assert exc.value.message == (
+        "function at 0x4000 exists but has not been analyzed yet; wait for analysis "
+        "(rex_function_define with wait=true) or run bn_analysis_update"
+    )
+    # Same diagnostic through the single-window tool and the batch decompiler.
+    _, at = get_tool("rex_disasm_at")
+    with pytest.raises(FakeToolError) as exc:
+        at(_call(view), 0x4000)
+    assert exc.value.code == "analysis_pending"
+    _, decompile = get_tool("rex_decompile_many")
+    with pytest.raises(FakeToolError) as exc:
+        decompile(FakeParsingToolCall(view), ["0x4000"])
+    assert exc.value.code == "analysis_pending"
+    # An address with no function at all keeps the caller's own miss code.
+    with pytest.raises(FakeToolError) as exc:
+        at(_call(view), 0x9999)
+    assert exc.value.code == "invalid_params"

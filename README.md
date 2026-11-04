@@ -68,7 +68,8 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_string_refs` | Code refs to detected strings, synthesized included; filters. |
 | `rex_xrefs_to` | Code and data references to an address. |
 | `rex_disasm_at` | Window (max 4096 instructions per side); full function: `rex_export_disasm`. |
-| `rex_decompile_many` | HLIL render for up to 16 functions in one batch call. |
+| `rex_disasm_many` | Batch of up to 64 `rex_disasm_at`-style windows with a cross-window line budget and a `next_offset` continuation. |
+| `rex_decompile_many` | HLIL render for up to 1024 functions in one batch call. |
 | `rex_quick_main` | Entry point, `main`, and `main`'s HLIL in one call. |
 | `rex_analysis_wait` | Bounded wait for background analysis; snapshot at expiry. |
 | `rex_call_paths` | Bounded breadth-first search for call paths between two functions. |
@@ -87,7 +88,8 @@ scanners. Read the destructive table before you let an agent run those tools.
 | --- | --- |
 | `rex_annotate_many` | Rename, comment, or retype up to 100 functions in one transaction. |
 | `rex_memory_write` | Overwrite bytes in the binary view with a hex byte string. |
-| `rex_function_define` | Turn the bytes at an address into a function. |
+| `rex_function_define` | Turn the bytes at an address into a function, optionally waiting for analysis. |
+| `rex_function_define_many` | Define up to 100 functions per call and wait for their first basic blocks. |
 | `rex_function_undefine` | Remove the function covering an address. |
 | `rex_struct_from_access` | Infer a struct from recorded offset accesses and define it. |
 | `rex_type_library_import` | Attach a `.bntl` and import a bounded list of its type names. |
@@ -100,6 +102,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_export_disasm` | Write one function's disassembly window to a file. |
 | `rex_export_symbols` | Write an address range's symbols to a CSV or JSON file. |
 | `rex_eval_python` | Run arbitrary Binary Ninja Python; binds `bv`, `call`, `binaryninja`/`bn`. |
+| `rex_eval_result` | Page back a spilled oversized `rex_eval_python` stdout or result. |
 | `rex_binary_close` | Discard unsaved changes and close the view. |
 | `rex_undo` | Undo the view's last transaction; reports post-op stack depths. |
 | `rex_redo` | Redo the last undone transaction; reports post-op stack depths. |
@@ -137,6 +140,11 @@ scanners. Read the destructive table before you let an agent run those tools.
   short instead of failing.
 - `rex_eval_python` is the one tool that reports failure in-band. An exception comes
   back in the response's `error` field instead of raising a tool error.
+- `rex_eval_python`'s oversized stdout and result are spilled: the echo stays clipped,
+  and `stdout_key`/`result_key` (with `stdout_length`/`result_length`) let
+  `rex_eval_result` page back the full text. Spills live in server memory for the most
+  recent few calls only; a spill larger than the per-spill cap is dropped and its key is
+  null.
 - Batch tools (`rex_annotate_many`, `rex_component_add_functions`,
   `rex_type_library_export`, `rex_type_library_import`) return a uniform
   `applied`/`failed_count`/`total` summary alongside their per-tool fields.

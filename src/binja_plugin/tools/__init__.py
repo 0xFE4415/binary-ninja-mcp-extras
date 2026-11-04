@@ -125,10 +125,19 @@ def _require_containing_function(
     """Return the function containing ``address``, or reject with the caller's convention.
 
     ``code`` is deliberate: scan-style tools answer ``no_function`` for a containment
-    miss, argument-validating tools treat the same miss as ``invalid_params``.
+    miss, argument-validating tools treat the same miss as ``invalid_params``. A defined
+    function the engine has not analyzed yet is invisible to containment lookups, so that
+    case gets its own diagnostic instead of a misleading "no function" answer.
     """
     functions = bv.get_functions_containing(address)
     if not functions:
+        pending = bv.get_function_at(address)
+        if pending is not None:
+            raise mcp.ToolError(
+                "analysis_pending",
+                f"function at {address:#x} exists but has not been analyzed yet; wait for "
+                "analysis (rex_function_define with wait=true) or run bn_analysis_update",
+            )
         raise mcp.ToolError(code, f"no {described} contains {address:#x}")
     return functions[0]
 
@@ -137,35 +146,50 @@ def _require_analyzed_function(bv: BinaryView, address: int) -> Function:
     return _require_containing_function(bv, address, "invalid_params", "analyzed function")
 
 
-def _resolve_address_batch(
-    call: mcp.ToolCall, bv: BinaryView, functions: object, maximum: int
-) -> list[Function]:
-    """Resolve a tool's ``functions`` list of address expressions to analyzed functions.
+def _parse_address_batch(call: mcp.ToolCall, entries: object, maximum: int, noun: str) -> list[int]:
+    """Parse a tool's list of address expressions to integers.
 
-    Every entry is resolved before anything is handed back, so a bad entry anywhere in
-    the batch cannot leave a partial result behind.
+    Every entry is parsed before anything is handed back, so a bad entry anywhere in the
+    batch cannot leave a partial result behind.
     """
-    if not isinstance(functions, list):
-        raise mcp.ToolError("invalid_params", "functions must be a list of address expressions")
-    if not 1 <= len(functions) <= maximum:
+    if not isinstance(entries, list):
+        raise mcp.ToolError("invalid_params", f"{noun} must be a list of address expressions")
+    if not 1 <= len(entries) <= maximum:
         raise mcp.ToolError(
             "invalid_params",
-            f"functions must contain between 1 and {maximum} address expressions",
+            f"{noun} must contain between 1 and {maximum} address expressions",
         )
-    resolved: list[Function] = []
-    for index, entry in enumerate(functions):
+    parsed: list[int] = []
+    for index, entry in enumerate(entries):
         if not isinstance(entry, str):
             raise mcp.ToolError(
-                "invalid_params", f"functions[{index}] must be a string address expression"
+                "invalid_params", f"{noun}[{index}] must be a string address expression"
             )
         try:
-            address = call.parse_address(entry)
+            parsed.append(call.parse_address(entry))
         except Exception as error:
             raise mcp.ToolError(
                 "invalid_params", f"bad address expression '{_truncate(entry)}': {error}"
             ) from None
-        resolved.append(_require_analyzed_function(bv, address))
-    return resolved
+    return parsed
+
+
+def _resolve_address_pairs(
+    call: mcp.ToolCall, bv: BinaryView, addresses: object, maximum: int, noun: str
+) -> list[tuple[int, Function]]:
+    """Resolve a tool's list of address expressions to (address, analyzed function) pairs."""
+    return [
+        (address, _require_analyzed_function(bv, address))
+        for address in _parse_address_batch(call, addresses, maximum, noun)
+    ]
+
+
+def _resolve_address_batch(
+    call: mcp.ToolCall, bv: BinaryView, functions: object, maximum: int
+) -> list[Function]:
+    """Resolve a tool's ``functions`` list of address expressions to analyzed functions."""
+    pairs = _resolve_address_pairs(call, bv, functions, maximum, "functions")
+    return [function for _, function in pairs]
 
 
 def _iter_pattern_matches(
@@ -328,10 +352,11 @@ from .decompile import (
     _MAX_HLIL_GREP_LIMIT,
     rex_decompile_many,
     rex_disasm_at,
+    rex_disasm_many,
     rex_hlil_grep,
     rex_quick_main,
 )
-from .escape import rex_eval_python, rex_memory_write
+from .escape import rex_eval_python, rex_eval_result, rex_memory_write
 from .exports import _MAX_EXPORT_SYMBOLS, rex_export_disasm, rex_export_symbols
 from .functions import (
     _MAX_CALL_PATH_DEPTH,
@@ -339,6 +364,7 @@ from .functions import (
     rex_call_paths,
     rex_function_containing,
     rex_function_define,
+    rex_function_define_many,
     rex_function_undefine,
 )
 from .help import rex_help

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import pytest
 from helpers import (
+    FakeBasicBlock,
     FakeBinaryView,
     FakeFunction,
+    FakeParsingToolCall,
     FakeToolError,
     _call,
     _view_with_functions,
@@ -17,7 +19,12 @@ from binja_plugin.tools import functions
 def test_function_define_and_undefine() -> None:
     view = FakeBinaryView()
     _, define = get_tool("rex_function_define")
-    assert define(_call(view), 0x4000) == {"start": "0x4000", "name": "sub_4000"}
+    assert define(_call(view), 0x4000) == {
+        "start": "0x4000",
+        "name": "sub_4000",
+        "analyzed": True,
+        "waited_ms": 0,
+    }
     assert len(view.created_functions) == 1
 
     _, undefine = get_tool("rex_function_undefine")
@@ -37,6 +44,80 @@ def test_function_define_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(FakeToolError) as exc:
         define(_call(view), 0x4000)
     assert exc.value.code == "define_failed"
+
+
+def test_function_define_wait_reports_unanalyzed_functions() -> None:
+    # A view whose created functions never get blocks: the wait returns them as pending
+    # instead of hanging, and wait=false skips the wait entirely.
+    stalled = FakeBinaryView(create_user_function_analyzes=False)
+    _, define = get_tool("rex_function_define")
+    result = define(_call(stalled), 0x4000, timeout_ms=0)
+    assert result["analyzed"] is False
+    assert result["start"] == "0x4000"
+    result = define(_call(stalled), 0x4001, wait=False)
+    assert result["analyzed"] is False
+    assert result["waited_ms"] == 0
+
+    analyzed = FakeBinaryView()
+    assert define(_call(analyzed), 0x4000, timeout_ms=0)["analyzed"] is True
+
+
+def test_function_define_many_defines_and_waits() -> None:
+    view = FakeBinaryView()
+    _, define_many = get_tool("rex_function_define_many")
+    result = define_many(FakeParsingToolCall(view), ["0x4000", "0x4100"])
+    assert result["defined"] == [
+        {"start": "0x4000", "name": "sub_4000", "analyzed": True},
+        {"start": "0x4100", "name": "sub_4100", "analyzed": True},
+    ]
+    assert result["failed"] == []
+    assert result["pending"] == []
+    assert result["waited_ms"] == 0
+    assert len(view.created_functions) == 2
+
+
+def test_function_define_many_is_all_or_nothing_on_parse_errors() -> None:
+    view = FakeBinaryView()
+    _, define_many = get_tool("rex_function_define_many")
+    for addresses, message in (
+        (["0x4000", "zzz"], "bad address expression 'zzz': unparsable address expression 'zzz'"),
+        (["0x4000", 7], "addresses[1] must be a string address expression"),
+    ):
+        with pytest.raises(FakeToolError) as exc:
+            define_many(FakeParsingToolCall(view), addresses)
+        assert exc.value.code == "invalid_params"
+        assert exc.value.message == message
+        assert view.created_functions == []
+    with pytest.raises(FakeToolError) as exc:
+        define_many(FakeParsingToolCall(view), [])
+    assert exc.value.message == "addresses must contain between 1 and 100 address expressions"
+    with pytest.raises(FakeToolError) as exc:
+        define_many(FakeParsingToolCall(view), [f"0x{address:x}" for address in range(101)])
+    assert exc.value.message == "addresses must contain between 1 and 100 address expressions"
+
+
+def test_function_define_many_reports_pending_and_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    stalled = FakeBinaryView(create_user_function_analyzes=False)
+    _, define_many = get_tool("rex_function_define_many")
+    result = define_many(FakeParsingToolCall(stalled), ["0x4000", "0x4100"], timeout_ms=0)
+    assert [entry["start"] for entry in result["defined"]] == ["0x4000", "0x4100"]
+    assert all(entry["analyzed"] is False for entry in result["defined"])
+    assert result["pending"] == ["0x4000", "0x4100"]
+
+    failing = FakeBinaryView()
+
+    def refuse(address: int) -> FakeFunction | None:
+        if address == 0x4100:
+            return None
+        function = FakeFunction(f"sub_{address:x}", address, address + 1)
+        function.basic_blocks = [FakeBasicBlock([(address, "push rbp")])]
+        return function
+
+    monkeypatch.setattr(failing, "create_user_function", refuse)
+    result = define_many(FakeParsingToolCall(failing), ["0x4000", "0x4100"], wait=False)
+    assert [entry["start"] for entry in result["defined"]] == ["0x4000"]
+    assert result["failed"] == ["0x4100"]
+    assert result["pending"] == []
 
 
 def test_function_containing_caps_entries_and_truncates_names() -> None:
