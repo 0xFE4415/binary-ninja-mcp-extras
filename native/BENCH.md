@@ -30,7 +30,7 @@ python3 native/bench_mcp.py --check-only   # from the repository root
 Expected output on success:
 
 ```text
-handshake ok; 90 tools registered; rx_* and rex_* both present
+handshake ok; <count> tools registered; rx_* and rex_* both present
 ```
 
 If it reports `rx_data_find, rx_multi_find missing`, the .so did not load:
@@ -59,18 +59,15 @@ script's built-in default is only a last resort. What it measures, on the same
 database, interleaved `--repeat` times:
 
 1. **Single pattern, head-to-head.** `rex_data_find("48 8b 05")` vs
-   `rx_data_find("48 8b 05")`, all mapped segments, `limit=50`, `offset=0`.
+    `rx_data_find("48 8b 05")`, readable mapped segments, `limit=50`, `offset=0`.
    Reports min/median/max ms and the min-based speedup.
 2. **Multi-pattern headliner.** `rx_multi_find` with 8 code patterns in one
    call vs 8 sequential `rex_data_find` calls (summed), same pagination.
    Reports both timings and the speedup.
-3. **Correctness verification (always runs).** Every `rx_*` payload is compared
-   field-for-field against the corresponding `rex_data_find` payload
-   (`total`, `truncated`, `matches`). Both tools must return **identical**
-   results on the same database — the Rust tool mirrors the Python contract
-   exactly, including overlapping-match counting and the early-stop
-   `total`/`truncated` semantics. The final line prints
-   `RESULT: all verifications passed` or `VERIFICATION MISMATCH`.
+3. **Correctness verification (always runs).** `rx_data_find` is compared
+    field-for-field with `rex_data_find`; each `rx_multi_find` result is compared
+    per pattern on `total`, `truncated`, and `matches`. The final line reports
+    pass or mismatch.
 
 Useful variations:
 
@@ -94,10 +91,10 @@ python3 native/bench_mcp.py --binary <handle> --patterns "48 8b 05" "e8 ?? ?? ??
 - Every call is bounded client-side at 30 s (`CALL_TIMEOUT` in
   `bench_mcp.py`); a hung call raises instead of stalling forever.
 
-## Measured results (2026-11-01, promotion benchmark)
+## Historical results (2026-11-01, promotion benchmark)
 
 Database: libclang-cpp.so.22.1 (62 MB bndb, ~111k functions, fresh full
-reanalysis), all mapped segments (~61.2 MB), `--repeat 5`.
+reanalysis), readable mapped segments (~61.2 MB), `--repeat 5`.
 
 | Measurement | min | median | max |
 | --- | --- | --- | --- |
@@ -111,22 +108,15 @@ reanalysis), all mapped segments (~61.2 MB), `--repeat 5`.
 Verification: all 9 payload comparisons identical (`RESULT: all verifications
 passed`), including the all-wildcard and `cc cc cc cc` patterns.
 
-Honest margins: these are short patterns — the fast members of any set. The
-advantage shrinks as patterns lengthen, since Python's regex engine also
-prefilters on the literal prefix and both sides then approach the cost of
-reading the bytes. The multi-pattern gap grows with pattern count: the Python
-cost is per-pattern while the Rust cost is one automaton pass.
+These are short-pattern results; the variations below cover longer patterns
+and section-scoped scans.
 
 ## Variations (2026-11-01)
 
-Measured the same day, database, and protocol as the promotion benchmark above
-(`--repeat 5`, payload verification on): the two variations the protocol
-promises that had never actually been measured. One annotation correction
-first — "all mapped segments (~17 MB)" above matches only the first mapped
-segment; the readable segments on this database total ~61 MB (~17 MB
-read-only + ~42 MB executable + ~2 MB read-write).
+Measured on the same day, database, and protocol (`--repeat 5`, payload
+verification on).
 
-### Long pattern (20 bytes, wildcards, all mapped segments)
+### Long pattern (20 bytes, wildcards, readable mapped segments)
 
 ```sh
 # from the repository root
@@ -140,12 +130,9 @@ python3 native/bench_mcp.py --binary <handle> --repeat 5 \
 | `rx_data_find`, 20-byte pattern | 34.7 ms | 43.2 ms | 44.3 ms |
 | **single-pattern speedup (min)** | **11.9x** | | |
 
-Verification: identical payloads, `RESULT: all verifications passed`. The
-default-pattern scenarios re-ran in the same invocation and reproduced the
-promotion table (multi-pattern 12.6x). This reverses the shrinkage guess in
-the margins above: with the same literal prefix, the Python side slowed ~4x
-against the 20-byte pattern while the Rust side slowed ~2.4x, so a longer
-pattern widened the gap instead of closing it.
+Verification passed; the default scenarios reproduced the 12.6x multi-pattern
+result. With the same literal prefix, the 20-byte pattern widened the gap:
+Python slowed ~4x, Rust ~2.4x.
 
 ### Section-scoped (`.text`)
 

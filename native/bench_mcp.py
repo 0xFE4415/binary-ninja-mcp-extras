@@ -176,8 +176,11 @@ def bench_single(client: McpClient, repetitions: int, args: argparse.Namespace) 
     arguments = {"binary": args.binary, "pattern": args.pattern, "limit": 50, "offset": 0}
     if args.section:
         arguments["section"] = args.section
-    print(f"\n== single pattern {args.pattern!r} "
-          f"(binary={args.binary}, section={args.section or 'all mapped segments'}, limit=50) ==")
+    section = args.section or "all readable mapped segments"
+    print(
+        f"\n== single pattern {args.pattern!r} "
+        f"(binary={args.binary}, section={section}, limit=50) =="
+    )
     rex_samples, rx_samples = [], []
     rex_payload = rx_payload = None
     for _ in range(repetitions):
@@ -195,8 +198,9 @@ def bench_single(client: McpClient, repetitions: int, args: argparse.Namespace) 
 def bench_multi(client: McpClient, repetitions: int, args: argparse.Namespace) -> bool:
     """Headliner: rx_multi_find vs N sequential rex_data_find calls."""
     count = len(args.patterns)
+    section = args.section or "all readable mapped segments"
     print(f"\n== {count} {'pattern' if count == 1 else 'patterns'} in one pass "
-          f"(section={args.section or 'all mapped segments'}, limit=50) ==")
+          f"(section={section}, limit=50) ==")
     multi_arguments = {
         "binary": args.binary,
         "patterns": args.patterns,
