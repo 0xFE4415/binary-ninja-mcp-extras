@@ -195,6 +195,20 @@ def test_xrefs_to_defaults_to_a_bounded_page() -> None:
     assert complete["truncated"] is True
 
 
+def test_xrefs_to_reports_only_fetched_refs_when_core_cap_hides_lower_address() -> None:
+    fetched = [FakeReferenceSource(None, 0x8000 + index) for index in range(501)]
+    omitted = FakeReferenceSource(None, 0x1000)
+    view = FakeBinaryView(code_refs={0x401000: [*fetched, omitted]})
+    _, xrefs = get_tool("rex_xrefs_to")
+
+    result = xrefs(_call(view), 0x401000, limit=1, offset=500)
+
+    assert result["total"] == 501
+    assert result["truncated"] is False
+    assert [entry["address"] for entry in result["code_refs"]] == [hex(0x8000 + 500)]
+    assert view.code_ref_requests == [(0x401000, 501)]
+
+
 def test_xrefs_to_truncates_long_function_names() -> None:
     view = FakeBinaryView(
         code_refs={

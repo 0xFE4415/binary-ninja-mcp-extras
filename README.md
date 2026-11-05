@@ -81,6 +81,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_tag_list` | List the tags set on the binary view. |
 | `rex_report_show` | Render a markdown report with `binaryninja://` links into the view. |
 | `rex_kv_get` | Read a stored scratch string from the view's database. |
+| `rex_eval_result` | Page back a spilled oversized `rex_eval_python` stdout or result. |
 | `rex_help` | List the `rex_*` tools, or one tool's parameters. |
 
 ### Destructive tools
@@ -105,52 +106,9 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_export_disasm` | Write one function's disassembly window to a file. |
 | `rex_export_symbols` | Write an address range's symbols to a CSV or JSON file. |
 | `rex_eval_python` | Run arbitrary Binary Ninja Python; binds `bv`, `call`, `binaryninja`/`bn`. |
-| `rex_eval_result` | Page back a spilled oversized `rex_eval_python` stdout or result. |
 | `rex_binary_close` | Discard unsaved changes and close the view. |
 | `rex_undo` | Undo the view's last transaction; reports post-op stack depths. |
 | `rex_redo` | Redo the last undone transaction; reports post-op stack depths. |
-
-### Shared response contract
-
-- Stock `bn_*` listings (e.g. `bn_function_list`) return a markdown table in the
-  `content` field and no `structuredContent`. The `rex_*` listing tools return
-  structured `total`/`truncated` data instead; prefer them when you want one shape to
-  parse.
-- Paged listings return `total`, `truncated`, and a `limit`/`offset` window:
-  `rex_string_search`, `rex_data_find`, `rex_string_refs`, `rex_xrefs_to`,
-  `rex_tag_list`, `rex_uidf_list`, and `rex_export_symbols`. `rex_component_get`
-  paginates the same way but names its count `function_count`.
-- Early-stop scans (`rex_constant_find`, `rex_find_functions_by_pattern`,
-  `rex_hlil_grep`) accept `limit`/`offset` too but never return a `total`: they stop
-  scanning once the requested window is filled. `rex_hlil_grep` reports where it
-  stopped with a `next_offset` cursor; pass it back as `offset` to get the next page.
-- Size parameters (`limit`, `length`, `offset`, `max_depth`, `max_paths`, `max_functions`,
-  `max_chars`) are range-checked, never clamped. A value out of range fails with the
-  MCP layer's `invalid_params`. A string argument over its cap fails with a
-  per-parameter code instead, e.g. `pattern_too_large`, `key_too_large`,
-  `value_too_large`, `data_too_large`, or `name_too_large`. Path and list-entry
-  parameters (component paths, `rex_type_library_*` names, export filenames) fail
-  with `invalid_params` even when over their cap.
-- Echoed strings clip at 512 characters with a `... [N chars truncated]` suffix. Most
-  echoes signal truncation with the suffix alone; these also return a boolean flag:
-  `rex_eval_python`'s `stdout_truncated`/`result_truncated`/`error_truncated`,
-  `data_truncated` in `rex_tag_list` and `rex_tag_set`, or `truncated` on the stored
-  value in `rex_kv_set`/`rex_kv_get`, `rex_report_show`'s preview, and
-  `rex_string_read_at`'s value. On the listing tools, `truncated` means rows were
-  left out, never a clipped string.
-- `rex_data_read` returns `bytes_read` (what was actually read) and `complete` (whether
-  that equals the requested `length`). A range extending past mapped memory comes back
-  short instead of failing.
-- `rex_eval_python` is the one tool that reports failure in-band. An exception comes
-  back in the response's `error` field instead of raising a tool error.
-- `rex_eval_python`'s oversized stdout and result are spilled: the echo stays clipped,
-  and `stdout_key`/`result_key` (with `stdout_length`/`result_length`) let
-  `rex_eval_result` page back the full text. Spills live in server memory for the most
-  recent few calls only; a spill larger than the per-spill cap is dropped and its key is
-  null.
-- Batch tools (`rex_annotate_many`, `rex_component_add_functions`,
-  `rex_type_library_export`, `rex_type_library_import`) return a uniform
-  `applied`/`failed_count`/`total` summary alongside their per-tool fields.
 
 ### Bounds on database-wide scans
 

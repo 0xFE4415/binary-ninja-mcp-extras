@@ -36,6 +36,26 @@ pub struct MultiFindArgs {
 /// per-pattern prefilter scans — the capability the Python plugin cannot offer.
 pub(super) struct RxMultiFind;
 
+fn response_json(pattern_texts: &[String], buckets: &[RunningScan]) -> serde_json::Value {
+    let results = pattern_texts
+        .iter()
+        .zip(buckets)
+        .map(|(pattern, bucket)| {
+            json!({
+                "pattern": pattern,
+                "total": bucket.total,
+                "truncated": bucket.truncated,
+                "matches": matches_json(&bucket.matches),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "total": buckets.iter().map(|bucket| bucket.total).sum::<u64>(),
+        "truncated": buckets.iter().any(|bucket| bucket.truncated),
+        "results": results,
+    })
+}
+
 impl TypedMcpTool for RxMultiFind {
     type Args = MultiFindArgs;
 
@@ -61,24 +81,10 @@ impl TypedMcpTool for RxMultiFind {
         for_each_segment(&*view, READ_CHUNK, bounds, overlap, |base, data| {
             scan_segment(data, base, &patterns, &mut buckets, &pagination)
         });
-        let results = args
-            .patterns
-            .iter()
-            .zip(buckets.iter())
-            .map(|(text, bucket)| {
-                json!({
-                    "pattern": text,
-                    "total": bucket.total,
-                    "truncated": bucket.truncated,
-                    "matches": matches_json(&bucket.matches),
-                })
-            })
-            .collect::<Vec<_>>();
-        Ok(McpToolResult::structured(json!({
-            "total": buckets.iter().map(|bucket| bucket.total).sum::<u64>(),
-            "truncated": buckets.iter().any(|bucket| bucket.truncated),
-            "results": results,
-        })))
+        Ok(McpToolResult::structured(response_json(
+            &args.patterns,
+            &buckets,
+        )))
     }
 }
 
@@ -135,6 +141,40 @@ mod tests {
     use crate::test_utils::{expected_pagination, naive_matches, pattern_from_tokens};
     use crate::tools::testing::FakeView;
     use proptest::prelude::*;
+
+    #[test]
+    fn response_preserves_patterns_and_aggregates_pages() {
+        let patterns = vec!["48 8b".to_string(), "90".to_string()];
+        let mut first = RunningScan::new();
+        first.total = 2;
+        first.truncated = true;
+        first.matches.push(0x1000);
+        let mut second = RunningScan::new();
+        second.total = 1;
+        second.matches.push(0x2000);
+
+        assert_eq!(
+            response_json(&patterns, &[first, second]),
+            serde_json::json!({
+                "total": 3,
+                "truncated": true,
+                "results": [
+                    {
+                        "pattern": "48 8b",
+                        "total": 2,
+                        "truncated": true,
+                        "matches": ["0x1000"],
+                    },
+                    {
+                        "pattern": "90",
+                        "total": 1,
+                        "truncated": false,
+                        "matches": ["0x2000"],
+                    },
+                ],
+            })
+        );
+    }
 
     #[test]
     fn multi_parse_errors_name_the_pattern_index() {

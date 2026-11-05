@@ -35,6 +35,14 @@ pub struct DataFindArgs {
 /// `rx_data_find`: the Python plugin's `rex_data_find` contract, scan in native Rust.
 pub(super) struct RxDataFind;
 
+fn response_json(running: &RunningScan) -> serde_json::Value {
+    json!({
+        "total": running.total,
+        "truncated": running.truncated,
+        "matches": matches_json(&running.matches),
+    })
+}
+
 impl TypedMcpTool for RxDataFind {
     type Args = DataFindArgs;
 
@@ -61,11 +69,7 @@ impl TypedMcpTool for RxDataFind {
         for_each_segment(&*view, READ_CHUNK, bounds, overlap, |base, data| {
             scan_pattern(data, base, &pattern, &pagination, &mut running)
         });
-        Ok(McpToolResult::structured(json!({
-            "total": running.total,
-            "truncated": running.truncated,
-            "matches": matches_json(&running.matches),
-        })))
+        Ok(McpToolResult::structured(response_json(&running)))
     }
 }
 
@@ -77,6 +81,23 @@ mod tests {
     use crate::test_utils::{expected_pagination, naive_matches, pattern_from_tokens};
     use crate::tools::testing::{FakeView, scan_fake_view};
     use proptest::prelude::*;
+
+    #[test]
+    fn response_includes_page_fields() {
+        let mut running = RunningScan::new();
+        running.total = 2;
+        running.truncated = true;
+        running.matches.push(0x1000);
+
+        assert_eq!(
+            response_json(&running),
+            serde_json::json!({
+                "total": 2,
+                "truncated": true,
+                "matches": ["0x1000"],
+            })
+        );
+    }
 
     fn scan_page(view: &FakeView, pattern: &HexPattern, offset: u64, limit: u64) -> RunningScan {
         scan_fake_view(
