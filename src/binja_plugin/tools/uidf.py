@@ -36,6 +36,7 @@ from binja_plugin.tools import (
 _UIDF_ANALYSIS_SLICE_MS = 100
 _MAX_UIDF_ANALYSIS_WAIT_MS = 10000
 _MAX_UIDF_BATCH = 128
+_MAX_NAME_CANDIDATES = 40
 
 _UIDF_ITEMS_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -213,10 +214,19 @@ def _collect_mlil_definitions(
         for definition in mlil.get_var_definitions(variable)
     ]
     if not matches:
+        names = sorted({variable.name for variable in target.vars})
+        shown = ", ".join(_truncate(candidate, 64) for candidate in names[:_MAX_NAME_CANDIDATES])
+        more = (
+            f" (+{len(names) - _MAX_NAME_CANDIDATES} more)"
+            if len(names) > _MAX_NAME_CANDIDATES
+            else ""
+        )
         raise mcp.ToolError(
             "no_variable",
             f"no MLIL variable named '{_truncate(name)}' in {_truncate(target.name)}; "
-            "variable names come from bn_variable_list",
+            f"variables: {shown}{more}; use bn_variable_list for the full list. "
+            "Register-allocated parameters are named by their register (for example r14), "
+            "not by their argument name",
         )
     return matches
 

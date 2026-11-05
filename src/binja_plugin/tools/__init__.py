@@ -129,9 +129,17 @@ def _containment_miss_hint(bv: BinaryView, address: int) -> str:
     """
     if not bv.is_valid_offset(address):
         return "the address is not mapped by any segment"
-    previous_start = bv.get_previous_function_start_before(address)
-    previous = bv.get_function_at(previous_start)
-    if previous is None or previous.highest_address + 1 != address:
+    # Overlapping function ranges (mis-split code) can hide the owner of address - 1 behind
+    # a larger neighbor, so check every function that contains the preceding byte.
+    previous = next(
+        (
+            candidate
+            for candidate in bv.get_functions_containing(address - 1)
+            if candidate.highest_address + 1 == address
+        ),
+        None,
+    )
+    if previous is None:
         return ""
     return (
         f"the address is immediately past the end of {_truncate(previous.name)} at "
