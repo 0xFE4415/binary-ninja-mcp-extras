@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from itertools import takewhile
 from typing import Annotated, Any
 
 from binaryninja import mcp
@@ -360,11 +361,10 @@ def _trap_terminator(function: Any) -> str | None:
     if not lines:
         return None
     last_address = lines[-1][0]
-    for line_address, text in reversed(lines):
-        # Lines at the last address include the instruction and its annotation
-        # continuations; only the instruction's mnemonic decides.
-        if line_address != last_address:
-            break
+    # Lines at the last address include the instruction and its annotation
+    # continuations; only the instruction's mnemonic decides.
+    last_lines = takewhile(lambda line: line[0] == last_address, reversed(lines))
+    for _, text in last_lines:
         tokens = text.split()
         if tokens and tokens[0].lower() in _TRAP_MNEMONICS:
             return tokens[0].lower()

@@ -1,0 +1,32 @@
+{
+  "cleanupPeriodDays": 60,
+  "env": {
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "USE_BUILTIN_RIPGREP": "0"
+  },
+  "includeCoAuthoredBy": false,
+  "permissions": {
+    "allow": [
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(ls:*)",
+      "Read(~/.gitconfig)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/.ssh/**)",
+      "Bash(rm -rf:*)"
+    ]
+  },
+  "awaySummaryEnabled": false,
+  "tui": "fullscreen",
+  "timeFormat": "24-hour",
+  "verbose": true,
+  "preferredNotifChannel": "auto",
+  "showTurnDuration": true,
+  "model": "sonnet"
+}

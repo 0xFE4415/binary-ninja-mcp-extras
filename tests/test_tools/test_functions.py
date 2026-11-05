@@ -300,6 +300,19 @@ def test_function_containing_explains_a_containment_miss() -> None:
     assert exc.value.message == "no function contains 0x1800"
 
 
+def test_function_containing_names_a_one_byte_predecessor() -> None:
+    # A one-byte function leaves no containing range for address - 2, so only the lookup
+    # of the preceding byte itself can name it.
+    view = FakeBinaryView(functions=[FakeFunction("tiny", 0x11FF, 0x1200)])
+    _, containing = get_tool("rex_function_containing")
+    with pytest.raises(FakeToolError) as exc:
+        containing(_call(view), 0x1200)
+    assert exc.value.message.startswith(
+        "no function contains 0x1200; the address is immediately past the end of tiny at "
+        "0x11ff (highest address 0x11ff)"
+    )
+
+
 def test_function_containing_explains_a_miss_after_a_function_at_zero() -> None:
     view = FakeBinaryView(functions=[FakeFunction("entry", 0, 0x10)])
     _, containing = get_tool("rex_function_containing")
