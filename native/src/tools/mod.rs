@@ -137,6 +137,10 @@ mod tests {
             properties["patterns"]["maxItems"].as_u64(),
             Some(MAX_MULTI_PATTERNS as u64)
         );
+        assert_eq!(
+            properties["patterns"]["items"]["maxLength"].as_u64(),
+            Some(MAX_PATTERN_CHARS as u64)
+        );
         assert_eq!(properties["limit"]["maximum"].as_u64(), Some(MAX_LIMIT));
         assert_eq!(properties["limit"]["minimum"].as_u64(), Some(0));
     }

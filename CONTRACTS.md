@@ -29,15 +29,22 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   address, then pages the combined list with code refs first. Counts cover only fetched
   refs; omitted refs are not necessarily higher addresses, and `truncated` can be false.
 - `rex_constant_find`, `rex_find_functions_by_pattern`, and `rex_hlil_grep` accept
-  `limit`/`offset` and return `truncated`, not `total`. The first two stop at the first
-  result past the page.
-  `rex_hlil_grep` stops at its matching-function `limit` or `max_functions` rendered;
-  `truncated` may therefore mean more functions remain to scan, not that another match
-  exists. Its `offset`/`next_offset` count functions in the view, not matches; pass the
-  cursor back as `offset`. `rex_disasm_many` also returns `truncated` and a
-  `next_offset` index into the input addresses; continue with addresses from that index.
-  Per-function address lists have no truncation flag: `rex_constant_find` returns at
-  most 6 and `rex_find_functions_by_pattern` at most 5.
+  `limit`/`offset` and return `truncated`, not `total`. All three stop their scan at the
+  first result past the page, so `truncated` means exactly "another matching function
+  exists beyond it".
+  `rex_hlil_grep` additionally returns `scan_incomplete`, set when the `max_functions`
+  render budget ran out before the whole view was scanned: nothing was proven about
+  matches past the page, so more may exist even though `truncated` is false. Its
+  `offset`/`next_offset` count functions in the view, not matches; pass the
+  cursor back as `offset` and page while either flag is set. `rex_disasm_many`
+  also returns `truncated` and a `next_offset` index into the input addresses;
+  continue with addresses from that index.
+  It returns valid `windows` plus per-address `errors` (`index`, `address`, and an
+  `error` code/message); a bad address does not fail other items. Each window includes its
+  input `index`.
+  Per-function address lists cap the echoed examples and say so per function:
+  `rex_constant_find` returns at most 6 addresses and `rex_find_functions_by_pattern`
+  at most 5, each function carrying an `addresses_truncated` flag.
 - Returned strings usually keep 512 characters, then append `... [N chars truncated]`;
   the suffix is additional. Larger caps are `rex_eval_python.stdout` (65,536),
   `result` (16,384), `rex_kv_get.value` (65,536), and `rex_string_read_at.value`
@@ -71,7 +78,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `rex_annotate_many` also has legacy `failed` and `results`; `rex_component_add_functions`
   has legacy `added_count` and `results`; the type-library tools return a `failed` list.
   Other batch responses: `rex_function_define_many` has `defined`, `failed`, `pending`,
-  `waited_ms`; `rex_disasm_many` has `windows`; `rex_decompile_many` has `functions`.
+  `waited_ms`; `rex_disasm_many` has `windows` and `errors`; `rex_decompile_many` has
+  `functions`. `rex_uidf_set_many` reports per-item `results`, counts, one
+  `analysis_complete` state, and the final HLIL `lines`.
 
 ### Parameters
 
@@ -82,3 +91,6 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `key_too_large`, `value_too_large`, `data_too_large`, `name_too_large`, or
   `library_name_too_large`. Over-cap component paths, type-name list entries, and export
   filenames return `invalid_params` instead.
+- `rx_multi_find` accepts 1-64 patterns: an empty list returns `invalid_params`, a longer
+  one `too_many_patterns`. Each entry is capped at 8,192 characters like `rex_data_find`'s
+  `pattern`, and an over-cap entry returns `pattern_too_large` naming its index.

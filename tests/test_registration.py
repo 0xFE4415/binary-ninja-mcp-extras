@@ -49,6 +49,7 @@ EXPECTED_NAMES = sorted(
         "rex_uidf_clear",
         "rex_uidf_list",
         "rex_uidf_set",
+        "rex_uidf_set_many",
         "rex_undo",
         "rex_xrefs_to",
     ]
@@ -112,6 +113,7 @@ EXPECTED_MARKINGS: dict[str, dict[str, bool]] = {
     "rex_uidf_clear": {"read_only": False, "destructive": True},
     "rex_uidf_list": {"read_only": True, "destructive": False},
     "rex_uidf_set": {"read_only": False, "destructive": True},
+    "rex_uidf_set_many": {"read_only": False, "destructive": True},
     "rex_undo": {"read_only": False, "destructive": True},
     "rex_xrefs_to": {"read_only": True, "destructive": False},
 }

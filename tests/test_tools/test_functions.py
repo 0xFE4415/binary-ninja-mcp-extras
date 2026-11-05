@@ -3,13 +3,15 @@ from __future__ import annotations
 import pytest
 from helpers import (
     FakeBasicBlock,
-    FakeBinaryView,
-    FakeFunction,
     FakeParsingToolCall,
     FakeToolError,
     _call,
     _view_with_functions,
     get_tool,
+)
+from helpers_view import (
+    FakeBinaryView,
+    FakeFunction,
 )
 
 from binja_plugin import tools
@@ -221,10 +223,10 @@ def test_function_define_many_is_all_or_nothing_on_parse_errors() -> None:
         assert view.created_functions == []
     with pytest.raises(FakeToolError) as exc:
         define_many(FakeParsingToolCall(view), [])
-    assert exc.value.message == "addresses must contain between 1 and 100 address expressions"
+    assert exc.value.message == "addresses must contain between 1 and 128 address expressions"
     with pytest.raises(FakeToolError) as exc:
-        define_many(FakeParsingToolCall(view), [f"0x{address:x}" for address in range(101)])
-    assert exc.value.message == "addresses must contain between 1 and 100 address expressions"
+        define_many(FakeParsingToolCall(view), [f"0x{address:x}" for address in range(129)])
+    assert exc.value.message == "addresses must contain between 1 and 128 address expressions"
 
 
 def test_function_define_many_reports_pending_and_failed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -269,6 +271,43 @@ def test_function_containing_caps_entries_and_truncates_names() -> None:
     with pytest.raises(FakeToolError) as exc:
         containing(_call(small), 0x2000)
     assert exc.value.code == "no_function"
+
+
+def test_function_containing_explains_a_containment_miss() -> None:
+    view = FakeBinaryView(functions=[FakeFunction("main", 0x1100, 0x1200)])
+    _, containing = get_tool("rex_function_containing")
+    # The byte after a function's last instruction is outside every function: name the
+    # predecessor so the caller can decide whether to define a function there.
+    with pytest.raises(FakeToolError) as exc:
+        containing(_call(view), 0x1200)
+    assert exc.value.code == "no_function"
+    assert exc.value.message == (
+        "no function contains 0x1200; the address is immediately past the end of main at "
+        "0x1100 (highest address 0x11ff); when the last instruction ends the block "
+        "(for example int3, ret, or jmp) the next bytes belong to no function, so define "
+        "one with rex_function_define(start=0x1200) if execution continues"
+    )
+    # An address outside the view's mapped range gets the unmapped diagnostic instead.
+    with pytest.raises(FakeToolError) as exc:
+        containing(_call(view), 0x20000)
+    assert (
+        exc.value.message
+        == "no function contains 0x20000; the address is not mapped by any segment"
+    )
+    # A plain gap between functions keeps the original message: nothing specific to add.
+    with pytest.raises(FakeToolError) as exc:
+        containing(_call(view), 0x1800)
+    assert exc.value.message == "no function contains 0x1800"
+
+
+def test_function_containing_explains_a_miss_after_a_function_at_zero() -> None:
+    view = FakeBinaryView(functions=[FakeFunction("entry", 0, 0x10)])
+    _, containing = get_tool("rex_function_containing")
+    with pytest.raises(FakeToolError) as exc:
+        containing(_call(view), 0x10)
+    assert exc.value.message.startswith(
+        "no function contains 0x10; the address is immediately past the end of entry at 0x0"
+    )
 
 
 def test_call_paths_finds_caller_and_callee_paths() -> None:

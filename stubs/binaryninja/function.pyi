@@ -8,6 +8,7 @@ class Function:
     name: str
     start: int
     end: int
+    highest_address: int
     callers: list[Function]
     callees: list[Function]
     hlil: Any

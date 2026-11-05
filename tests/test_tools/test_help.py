@@ -9,15 +9,18 @@ from typing import Any
 import pytest
 from helpers import (
     REGISTERED_TOOLS,
-    FakeBinaryView,
     FakeTool,
     FakeToolError,
     _call,
     get_tool,
 )
+from helpers_view import (
+    FakeBinaryView,
+)
 
 import binja_plugin
 from binja_plugin.tools.help import _PARAMETER_ERROR_CODES
+from binja_plugin.tools.scanning import _MAX_PATTERN_CHARS
 
 # Error codes the handlers define for the tool as a whole — batch or view-level failures
 # no single parameter owns, plus rex_help's own unknown-name rejection. The
@@ -117,6 +120,7 @@ def test_help_details_types_defaults_and_bounds() -> None:
 def test_help_details_required_flags_and_per_parameter_error_codes() -> None:
     by_name = {parameter["name"]: parameter for parameter in _help("rex_data_find")["parameters"]}
     assert by_name["pattern"]["required"] is True
+    assert by_name["pattern"]["maxLength"] == _MAX_PATTERN_CHARS
     assert by_name["pattern"]["error_codes"] == ["pattern_too_large", "invalid_pattern"]
     assert by_name["section"]["error_codes"] == ["section_not_found"]
     assert by_name["limit"]["required"] is False
@@ -130,6 +134,25 @@ def test_help_details_the_annotate_items_schema() -> None:
     assert items["type"] == "array"
     assert items["items"]["properties"]["addr"]["type"] == ["integer", "string"]
     assert items["items"]["required"] == ["addr"]
+
+
+def test_help_details_the_uidf_batch_items_schema() -> None:
+    by_name = {
+        parameter["name"]: parameter for parameter in _help("rex_uidf_set_many")["parameters"]
+    }
+    items = by_name["items"]
+    assert items["type"] == "array"
+    assert items["items"]["required"] == ["variable", "value"]
+    assert items["items"]["properties"]["def_address"]["type"] == ["integer", "string"]
+    assert items["items"]["properties"]["state"]["enum"] == [
+        "ConstantValue",
+        "ConstantPointerValue",
+        "StackFrameOffset",
+        "SignedRangeValue",
+        "UnsignedRangeValue",
+        "InSetOfValues",
+        "NotInSetOfValues",
+    ]
 
 
 def test_help_details_non_empty_strings_and_itself() -> None:

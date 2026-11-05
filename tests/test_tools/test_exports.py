@@ -4,13 +4,15 @@ from pathlib import Path
 
 import pytest
 from helpers import (
-    FakeBinaryView,
-    FakeSymbol,
     FakeToolError,
     _call,
     _disasm_view,
     _use_export_root,
     get_tool,
+)
+from helpers_view import (
+    FakeBinaryView,
+    FakeSymbol,
 )
 
 from binja_plugin import tools

@@ -11,16 +11,18 @@ from typing import Any
 
 import pytest
 from helpers import (
+    FakeToolCall,
+    FakeToolError,
+    get_tool,
+)
+from helpers_view import (
     FakeBinaryView,
     FakeDerivedString,
     FakeFunction,
     FakeSegment,
     FakeStringReference,
     FakeSymbol,
-    FakeToolCall,
-    FakeToolError,
     RenderableText,
-    get_tool,
 )
 from hypothesis import assume, example, given
 from hypothesis import strategies as st
@@ -683,6 +685,7 @@ def test_find_functions_by_pattern_pages_tile_the_full_result(
                     "name": function.name,
                     "match_count": len(inside),
                     "addresses": [hex(a) for a in inside[: tools._MAX_FIND_FUNCTIONS_EXAMPLES]],
+                    "addresses_truncated": len(inside) > tools._MAX_FIND_FUNCTIONS_EXAMPLES,
                 }
             )
     full = find(call, pattern=pattern, limit=tools._MAX_LIMIT)
@@ -695,8 +698,10 @@ def test_find_functions_by_pattern_pages_tile_the_full_result(
 
 # --- rex_hlil_grep paging ------------------------------------------------------------------
 #
-# The documented contract: pass next_offset back as offset until truncated is false and the
-# concatenated pages are the full result. A function with no HLIL is skipped, not counted.
+# The documented contract: pass next_offset back as offset while either truncated or
+# scan_incomplete is set, and the concatenated pages are the full result. truncated means
+# a rendered match past the page; scan_incomplete means the render budget ran out. A
+# function with no HLIL is skipped, not counted.
 
 _HLIL_BODIES = st.lists(
     st.none() | st.lists(st.text(alphabet="ab ", min_size=1, max_size=4), max_size=5),
@@ -746,7 +751,7 @@ def test_hlil_grep_pages_chain_through_next_offset(
     while True:
         page = grep(call, regex="a", limit=limit, offset=next_offset)
         chained.extend(page["functions"])
-        if not page["truncated"]:
+        if not page["truncated"] and not page["scan_incomplete"]:
             break
         # Strict progress bounds the loop by the function count.
         assert page["next_offset"] > next_offset

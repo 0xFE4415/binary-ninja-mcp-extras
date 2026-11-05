@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import pytest
 from helpers import (
-    FakeBinaryView,
-    FakeComponent,
-    FakeFunction,
     FakeParsingToolCall,
     FakeToolError,
     _call,
     get_tool,
+)
+from helpers_view import (
+    FakeBinaryView,
+    FakeComponent,
+    FakeFunction,
 )
 
 # --- rex_component_get / rex_component_create / rex_component_add_functions ------------
@@ -91,21 +93,21 @@ def test_component_get_defaults_to_a_bounded_function_page() -> None:
 
 def test_component_get_caps_children() -> None:
     overflow = FakeComponent(
-        "Hub", "guid-hub", children=[FakeComponent(f"k{i}", f"guid-k{i}") for i in range(201)]
+        "Hub", "guid-hub", children=[FakeComponent(f"k{i}", f"guid-k{i}") for i in range(257)]
     )
     view = FakeBinaryView(
         component_root=FakeComponent("__root__", "guid-root", children=[overflow])
     )
     _, get = get_tool("rex_component_get")
     result = get(_call(view), "/Hub")
-    assert len(result["children"]) == 200
-    assert result["children"][-1]["path"] == "/Hub/k199"
+    assert len(result["children"]) == 256
+    assert result["children"][-1]["path"] == "/Hub/k255"
     assert result["children_truncated"] is True
 
 
 def test_component_get_children_at_the_cap_are_not_truncated() -> None:
     exact = FakeComponent(
-        "Hub", "guid-hub", children=[FakeComponent(f"k{i}", f"guid-k{i}") for i in range(200)]
+        "Hub", "guid-hub", children=[FakeComponent(f"k{i}", f"guid-k{i}") for i in range(256)]
     )
     view = FakeBinaryView(component_root=FakeComponent("__root__", "guid-root", children=[exact]))
     _, get = get_tool("rex_component_get")
@@ -264,11 +266,11 @@ def test_component_add_functions_validates_inputs() -> None:
         ),
         (
             {"path": "/Network", "functions": []},
-            "functions must contain between 1 and 64 address expressions",
+            "functions must contain between 1 and 128 address expressions",
         ),
         (
-            {"path": "/Network", "functions": ["0x3000"] * 65},
-            "functions must contain between 1 and 64 address expressions",
+            {"path": "/Network", "functions": ["0x3000"] * 129},
+            "functions must contain between 1 and 128 address expressions",
         ),
         (
             {"path": "/Network", "functions": [7]},
@@ -287,5 +289,5 @@ def test_component_add_functions_validates_inputs() -> None:
     assert exc.value.code == "invalid_params"
     assert "bad address expression" in exc.value.message
     # At the batch cap the call still goes through.
-    at_cap = add(FakeParsingToolCall(view), "/Network", ["0x3000"] * 64)
-    assert at_cap["added_count"] == 64
+    at_cap = add(FakeParsingToolCall(view), "/Network", ["0x3000"] * 128)
+    assert at_cap["added_count"] == 128

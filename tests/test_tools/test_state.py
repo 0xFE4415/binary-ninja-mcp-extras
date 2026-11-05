@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from helpers import FakeBinaryView, FakeFileMetadata, FakeToolError, _call, get_tool
+from helpers import FakeToolError, _call, get_tool
+from helpers_view import FakeBinaryView, FakeFileMetadata
 
 from binja_plugin import tools
 from binja_plugin.tools import state

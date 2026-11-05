@@ -23,8 +23,8 @@ from binja_plugin.tools import (
 _MAX_COMPONENT_NAME_CHARS = 128
 _MAX_COMPONENT_PATH_CHARS = 512
 # rex_component_get child-component echo cap; functions are paginated instead.
-_MAX_COMPONENT_CHILDREN = 200
-_MAX_COMPONENT_ADD_FUNCTIONS = 64
+_MAX_COMPONENT_CHILDREN = 256
+_MAX_COMPONENT_ADD_FUNCTIONS = 128
 
 
 def _validate_component_path(parameter: str, path: str) -> str:

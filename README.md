@@ -49,8 +49,8 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 ## Tool reference
 
 Every tool is pinned as read-only or destructive when it registers, and that marking
-is the only approval-policy signal an MCP client gets. The tables below cover all 44
-registered tools, split on that marking: 42 Python `rex_*` tools and 2 native `rx_*`
+is the only approval-policy signal an MCP client gets. The tables below cover all 48
+registered tools, split on that marking: 46 Python `rex_*` tools and 2 native `rx_*`
 scanners. Read the destructive table before you let an agent run those tools.
 
 ### Read-only tools
@@ -60,7 +60,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_string_search` | Search detected strings by substring or regex; section and type filters. |
 | `rex_data_find` | Find every occurrence of a hex byte pattern (`??` wildcards) in mapped memory. |
 | `rex_data_read` | Read mapped bytes with relocations applied; reports what it actually read. |
-| `rx_multi_find` | Many hex patterns in one pass, with per-pattern prefilters in Rust. |
+| `rx_multi_find` | Up to 64 hex patterns in one pass, with per-pattern prefilters in Rust. |
 | `rx_data_find` | `rex_data_find`'s contract with the byte scan running in native Rust. |
 | `rex_hlil_grep` | Regex search over rendered HLIL text, paged with a `next_offset` cursor. |
 | `rex_constant_find` | Find functions whose rendered instructions reference a constant value. |
@@ -68,7 +68,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_string_refs` | Code refs to detected strings, synthesized included; filters. |
 | `rex_xrefs_to` | Code and data references to an address. |
 | `rex_disasm_at` | Window (max 4096 instructions per side); full function: `rex_export_disasm`. |
-| `rex_disasm_many` | Up to 64 disasm windows, one shared line budget; `next_offset` continues. |
+| `rex_disasm_many` | Up to 64 windows; errors, shared budget, and `next_offset` paging. |
 | `rex_decompile_many` | HLIL render for up to 1024 functions in one batch call. |
 | `rex_quick_main` | Entry point, `main`, and `main`'s HLIL in one call. |
 | `rex_analysis_wait` | Bounded wait for background analysis; snapshot at expiry. |
@@ -88,12 +88,13 @@ scanners. Read the destructive table before you let an agent run those tools.
 
 | Tool | Notes |
 | --- | --- |
-| `rex_annotate_many` | Rename, comment, or retype up to 100 functions in one transaction. |
+| `rex_annotate_many` | Rename, comment, or retype up to 128 functions in one transaction. |
 | `rex_memory_write` | Overwrite bytes in the binary view with a hex byte string. |
 | `rex_function_define` | Turn bytes at an address into a function; optional wait for analysis. |
-| `rex_function_define_many` | Define up to 100 functions per call, waiting for first blocks. |
+| `rex_function_define_many` | Define up to 128 functions per call, waiting for first blocks. |
 | `rex_function_undefine` | Remove the function covering an address. |
-| `rex_uidf_set` | Inform an MLIL variable's value at a definition site; returns the settled HLIL. |
+| `rex_uidf_set` | Set an MLIL variable's value at its definition; returns settled HLIL. |
+| `rex_uidf_set_many` | Set up to 128 MLIL values; report item errors, then reanalyze/render once. |
 | `rex_uidf_clear` | Clear one MLIL variable's informed values, or all of a function's. |
 | `rex_struct_from_access` | Infer a struct from recorded offset accesses and define it. |
 | `rex_type_library_import` | Attach a `.bntl` and import a bounded list of its type names. |
@@ -118,13 +119,17 @@ stay bounded per call:
 - `rex_constant_find` reuses the core's linear-view constant search (the engine behind
   Search > For Constant) instead of generating IL for every function. The search is a
   bounded, core-side pass that stops once the requested window is filled; a value that
-  occurs rarely or never requires scanning the whole view.
+  occurs rarely or never requires scanning the whole view. Each function echoes at most
+  6 reference addresses and flags clipping via `addresses_truncated`.
 - `rex_hlil_grep` renders at most `max_functions` functions per call. The first
   render of a function's HLIL costs tens of milliseconds, so on a large database,
-  page through the `next_offset` cursor.
+  page through the `next_offset` cursor. `truncated` proves a matching function exists
+  past the page; `scan_incomplete` says the render budget ran out first — page on
+  while either flag is set.
 - `rex_find_functions_by_pattern` reads memory in chunks and stops as soon as it finds
   a matching function past the requested window. Functions inside the window still
-  report their full match count.
+  report their full match count; their example addresses cap at 5 with the same
+  `addresses_truncated` flag.
 
 ### Known limits
 

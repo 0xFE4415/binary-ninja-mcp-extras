@@ -24,7 +24,7 @@ _MAX_STRING_READ_CHARS = 4096
 # rex_string_refs: the per-string code-ref echo cap. The core calls themselves are
 # bounded by max_items = cap + 1, so truncation is detected without enumerating past
 # what the response can echo.
-_MAX_STRING_REFS = 20
+_MAX_STRING_REFS = 64
 
 _STRING_TYPES = Literal["AsciiString", "Utf16String", "Utf32String", "Utf8String"]
 
