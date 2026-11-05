@@ -157,7 +157,7 @@ def rex_decompile_many(
     functions: list[str],
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
 ) -> dict[str, object]:
-    """Batch decompilation for triage.
+    """Batch HLIL triage; a bad address rejects the whole batch (rex_disasm_many reports per item).
 
     :param functions: 1 to 1024 address expressions, rendered in the order given.
     :param max_lines: HLIL lines rendered per function.
@@ -206,7 +206,7 @@ def rex_disasm_many(
     addresses: list[str],
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DISASM_MANY_LINES)] = 32,
 ) -> dict[str, object]:
-    """Batch address-anchored disassembly windows, e.g. one window per VM handler.
+    """Batch disassembly windows, e.g. one per VM handler; per-item errors, next_offset resumes.
 
     :param addresses: 1 to 64 address expressions; next_offset marks the first not returned.
     :param max_lines: Instructions per address, anchored at the last line at or before it.
@@ -277,7 +277,7 @@ def rex_hlil_grep(
     context_before: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_HLIL_GREP_CONTEXT)] = 0,
     context_after: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_HLIL_GREP_CONTEXT)] = 0,
 ) -> dict[str, object]:
-    """Search rendered HLIL text across functions with a regular expression.
+    """Regex search over rendered HLIL text; find calls and code shapes across the view in one pass.
 
     :param regex: Regular expression applied to every rendered HLIL line.
     :param function_filter: Case-insensitive regex matched against function names.

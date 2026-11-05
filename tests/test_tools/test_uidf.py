@@ -361,8 +361,12 @@ def test_uidf_set_rejects_unknown_variables() -> None:
     with pytest.raises(FakeToolError) as exc:
         uidf_set(_call(view), 0x1100, "nope", "1")
     assert exc.value.code == "no_variable"
-    assert exc.value.message.startswith("no MLIL variable named 'nope' in main; variables: ")
-    assert "use bn_variable_list for the full list" in exc.value.message
+    assert exc.value.message == (
+        "no MLIL variable named 'nope' in main; variables: argc, rax_1, var_10; "
+        "use bn_variable_list for the full list. "
+        "Register-allocated parameters are named by their register (for example r14), "
+        "not by their argument name"
+    )
     # A variable the function knows but never defines in the MLIL is equally unusable, and
     # the message must not claim the name is unknown while listing it among candidates.
     with pytest.raises(FakeToolError) as exc:
@@ -372,6 +376,27 @@ def test_uidf_set_rejects_unknown_variables() -> None:
         "MLIL variable 'argc' in main has no MediumLevelIL definition sites"
     )
     assert main.set_user_var_value_calls == []
+
+
+def test_uidf_set_lists_up_to_the_candidate_cap_without_a_more_suffix() -> None:
+    # Exactly _MAX_NAME_CANDIDATES names: each is listed in full (a 65-char name shows its
+    # 64-char truncation) and no "(+N more)" suffix is appended.
+    variables = [FakeVariable("L" * 65)] + [FakeVariable(f"var_{index:02d}") for index in range(39)]
+    leaf = FakeFunction("leaf", 0x2000, 0x2100, vars=variables, mlil=FakeMediumLevelIL({}))
+    view = FakeBinaryView(functions=[leaf])
+    _, uidf_set = get_tool("rex_uidf_set")
+    shown = ", ".join(
+        ["L" * 64 + "... [1 chars truncated]"] + [f"var_{index:02d}" for index in range(39)]
+    )
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x2000, "nope", "1")
+    assert exc.value.code == "no_variable"
+    assert exc.value.message == (
+        f"no MLIL variable named 'nope' in leaf; variables: {shown}; "
+        "use bn_variable_list for the full list. "
+        "Register-allocated parameters are named by their register (for example r14), "
+        "not by their argument name"
+    )
 
 
 def test_uidf_set_counts_candidates_past_the_listed_ones() -> None:
@@ -440,8 +465,10 @@ def test_uidf_set_rejects_functions_without_mlil() -> None:
     with pytest.raises(FakeToolError) as exc:
         uidf_set(_call(view), 0x2000, "x", "1")
     assert exc.value.code == "no_mlil"
-    assert "has no MediumLevelIL yet" in exc.value.message
-    assert "run bn_analysis_update_and_wait" in exc.value.message
+    assert exc.value.message == (
+        "function leaf has no MediumLevelIL yet; "
+        "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry"
+    )
 
 
 def test_uidf_set_rejects_bad_function_max_lines_and_state() -> None:

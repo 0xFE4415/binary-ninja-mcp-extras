@@ -83,8 +83,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   has legacy `added_count` and `results`; the type-library tools return a `failed` list.
   Other batch responses: `rex_function_define_many` has `defined`, `failed`, `pending`,
   `waited_ms`; `rex_disasm_many` has `windows` and `errors`; `rex_decompile_many` has
-  `functions`. `rex_uidf_set_many` reports per-item `results`, counts, one
-  `analysis_complete` state, and the final HLIL `lines`.
+  `functions`, and any address that fails to resolve rejects the whole batch before any
+  render (its per-item alternative is `rex_disasm_many`). `rex_uidf_set_many` reports
+  per-item `results`, counts, one `analysis_complete` state, and the final HLIL `lines`.
 
 ### Parameters
 
@@ -98,3 +99,29 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
 - `rx_multi_find` accepts 1-64 patterns: an empty list returns `invalid_params`, a longer
   one `too_many_patterns`. Each entry is capped at 8,192 characters like `rex_data_find`'s
   `pattern`, and an over-cap entry returns `pattern_too_large` naming its index.
+
+### Winning strategies
+
+Usage strategies that do not fit a tool's one-line description.
+
+- The UIDF fold: informing an MLIL value reanalyzes the function, dataflow propagates
+  the value into dependent loads and compares, and statically decided branches are
+  eliminated from HLIL (the core `set_user_var_value` docs warn of exactly this). The
+  highest-leverage target is the base pointer of a key/table load, informed as
+  `ConstantPointerValue`: one value resolves every `base[index]` load in the family, so
+  whole families of per-byte key checks fold away instead of being informed one compare
+  at a time. Find the targets with `rex_function_constraints`, which names the variable
+  or `base+offset` load behind each constant branch comparison, then inform the family
+  with `rex_uidf_set_many` (one reanalysis, not one per value).
+- `rex_constant_find` matches constants in rendered IL tokens, never raw bytes: use it
+  to enumerate every function touching a magic value; when the value lives in data
+  rather than code, use `rex_data_find` or `rx_multi_find` instead.
+- `rex_call_paths` with `direction=callers` from a sink answers "who can reach this"
+  without hand-walking xrefs; `direction=callees` from a source answers "what can this
+  reach". Both directions are bounded by `max_depth` and `max_paths`.
+- `rex_struct_from_access` only sees offset accesses analysis has already recorded, so
+  run it after the dereferencing code is analyzed; it registers the inferred struct
+  under an auto type id.
+- `rex_kv_set` stores under the `rex/` metadata prefix with the core's persistent-flag
+  default, so values serialize into the BNDB snapshot and survive reload; use it as
+  cross-call scratch for findings a later phase would otherwise re-derive.

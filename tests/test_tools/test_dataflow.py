@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from helpers import FakeToolError, _call, get_tool
 from helpers_dataflow import (
@@ -341,6 +343,24 @@ def test_constraints_describe_the_remaining_subject_shapes() -> None:
     }
 
 
+def test_constraints_char_prints_only_printable_constants() -> None:
+    # The char field maps constants in [0x20, 0x7F) to their character: 0x20 (space) is
+    # the printable floor, 0x7F (DEL) and above report None.
+    arg2 = FakeVariable("arg2")
+    mlil = FakeMLILInstructions(
+        instructions=[
+            branch(0x3010, compare("MLIL_CMP_NE", var(arg2), const(0x20))),
+            branch(0x3020, compare("MLIL_CMP_NE", var(arg2), const(0x7F))),
+            branch(0x3030, compare("MLIL_CMP_NE", var(arg2), const(0x2010))),
+        ],
+    )
+    function = FakeFunction("chars", 0x3000, 0x3100, mlil=mlil)
+    view = FakeBinaryView(functions=[function])
+    _, constraints = get_tool("rex_function_constraints")
+    rows = constraints(_call(view), function=0x3000)["constraints"]
+    assert [row["char"] for row in rows] == [" ", None, None]
+
+
 def test_uses_without_mlil_fail_with_no_mlil() -> None:
     function = FakeFunction("bare", 0x2000, 0x2100)
     view = FakeBinaryView(functions=[function])
@@ -407,3 +427,75 @@ def test_parameter_without_mlil_fails_with_no_mlil() -> None:
         parameter(_call(view), function=0x2000, parameter="arg2")
     assert error.value.code == "no_mlil"
     assert "run bn_analysis_update_and_wait" in error.value.message
+
+
+class _BareVariable:
+    """Mirrors a register variable: no source_type or storage attribute at all."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def test_parameter_storage_covers_variables_without_source_metadata() -> None:
+    # A variable with no source_type falls back to str(None), and a source type without a
+    # .name attribute still renders as its own string form.
+    bare = _BareVariable("reg9")
+    nameless = FakeVariable("reg9")
+    nameless.source_type = 42
+    function = FakeFunction(
+        "check",
+        0x1000,
+        0x1100,
+        mlil=FakeMLILInstructions([]),
+        vars=[bare, nameless],  # ty: ignore[invalid-argument-type] register vars lack the slots
+    )
+    view = FakeBinaryView(functions=[function])
+    _, parameter = get_tool("rex_parameter_variables")
+    result = parameter(_call(view), function=0x1000, parameter="reg9")
+    assert result["storage"] == [
+        {"source": "None", "storage": None},
+        {"source": "42", "storage": 0},
+    ]
+
+
+def test_parameter_carriers_scan_the_whole_function_and_sort_by_address() -> None:
+    # The scan must move past definitions whose source is not the parameter and past
+    # non-definition instructions, and the report sorts carriers by address.
+    arg4 = FakeVariable("arg4")
+    r14 = FakeVariable("r14")
+    r15 = FakeVariable("r15")
+    mlil = FakeMLILInstructions(
+        instructions=[
+            set_var(0x1010, FakeVariable("tmp"), load(var(arg4))),
+            branch(0x1020, var(arg4)),
+            set_var(0x1400, r14, var(arg4)),
+            set_var(0x1040, r15, var(arg4)),
+        ],
+    )
+    function = FakeFunction("check", 0x1000, 0x1100, mlil=mlil, vars=[arg4, r14, r15])
+    view = FakeBinaryView(functions=[function])
+    _, parameter = get_tool("rex_parameter_variables")
+    result = parameter(_call(view), function=0x1000, parameter="arg4")
+    assert result["carriers"] == [
+        {"variable": "r15", "address": "0x1040", "text": "r15 = arg4"},
+        {"variable": "r14", "address": "0x1400", "text": "r14 = arg4"},
+    ]
+
+
+def test_uses_render_a_use_whose_operation_has_no_name_attribute() -> None:
+    # An operation object without .name must render as its string form, not raise or
+    # report None.
+    arg_40 = FakeVariable("arg_40")
+    definition = set_var(0x1020, arg_40, const(1))
+    use = SimpleNamespace(operation=42, address=0x1030)
+    mlil = FakeMLILInstructions(
+        # ty: ignore[invalid-argument-type] the degenerate use is deliberately not a FakeInstruction
+        instructions=[definition, use],
+        definitions={arg_40: [definition]},
+        uses={arg_40: [use]},  # ty: ignore[invalid-argument-type]
+    )
+    function = FakeFunction("check", 0x1000, 0x1100, mlil=mlil)
+    view = FakeBinaryView(functions=[function])
+    _, uses = get_tool("rex_mlil_uses")
+    result = uses(_call(view), function=0x1000, address=0x1020)
+    assert result["uses"][0]["operation"] == "42"
