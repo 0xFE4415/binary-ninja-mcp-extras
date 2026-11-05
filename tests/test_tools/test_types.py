@@ -4,17 +4,19 @@ from pathlib import Path
 
 import pytest
 from helpers import (
+    FakeToolError,
+    _call,
+    _use_export_root,
+    get_tool,
+)
+from helpers_view import (
     TYPE_LIBRARIES_ON_DISK,
     FakeArchitecture,
     FakeBinaryView,
     FakeStructureMember,
     FakeStructureType,
-    FakeToolError,
     FakeType,
     FakeTypeLibrary,
-    _call,
-    _use_export_root,
-    get_tool,
 )
 
 from binja_plugin import tools

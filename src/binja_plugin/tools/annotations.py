@@ -11,11 +11,11 @@ from binaryninja.function import Function
 
 from binja_plugin.tools import _truncate
 
-# rex_annotate_many caps: 100 items bound one call's mutation cost and its echoed result
+# rex_annotate_many caps: 128 items bound one call's mutation cost and its echoed result
 # rows; the string caps bound what reaches the core per field. The name cap is far below
 # any sane symbol length, the type cap matches the pattern-string cap (both feed a
 # parser), and the comment cap matches the tag-data cap.
-_MAX_ANNOTATE_ITEMS = 100
+_MAX_ANNOTATE_ITEMS = 128
 _MAX_ANNOTATE_NAME_CHARS = 256
 _MAX_ANNOTATE_COMMENT_CHARS = 65536
 _MAX_ANNOTATE_PROTOTYPE_CHARS = 8192

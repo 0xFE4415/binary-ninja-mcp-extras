@@ -3,6 +3,11 @@ from __future__ import annotations
 import pytest
 from binaryninja.enums import LowLevelILOperation
 from helpers import (
+    FakeToolError,
+    _call,
+    get_tool,
+)
+from helpers_view import (
     FakeBinaryView,
     FakeCoreSymbol,
     FakeFunction,
@@ -10,9 +15,6 @@ from helpers import (
     FakeRelocation,
     FakeRelocationInfo,
     FakeSegment,
-    FakeToolError,
-    _call,
-    get_tool,
 )
 
 from binja_plugin import tools

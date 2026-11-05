@@ -4,7 +4,8 @@ import inspect
 from collections.abc import Iterator
 
 import pytest
-from helpers import FakeBinaryView, FakeToolError, _call, _view_with_functions, get_tool
+from helpers import FakeToolError, _call, _view_with_functions, get_tool
+from helpers_view import FakeBinaryView
 
 from binja_plugin.tools import escape
 

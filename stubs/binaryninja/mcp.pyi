@@ -43,6 +43,8 @@ class IntegerExpression(int): ...
 
 
 class ToolError(Exception):
+    code: str
+    message: str
     def __init__(self, code: str, message: str, details: Any = None) -> None: ...
 
 

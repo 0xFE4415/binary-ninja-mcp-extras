@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import pytest
 from helpers import (
-    FakeBinaryView,
-    FakeFunction,
-    FakeSegment,
     FakeToolError,
-    SpyBinaryView,
     _call,
     _view_with_functions,
     get_tool,
+)
+from helpers_view import (
+    FakeBinaryView,
+    FakeFunction,
+    FakeSegment,
+    SpyBinaryView,
 )
 
 from binja_plugin import tools
@@ -186,7 +188,15 @@ def test_data_find_skips_segments_marked_unreadable(monkeypatch: pytest.MonkeyPa
     _, by_function = get_tool("rex_find_functions_by_pattern")
     assert by_function(_call(functioned), "eb0e") == {
         "truncated": False,
-        "functions": [{"start": "0x2000", "name": "f", "match_count": 1, "addresses": ["0x2000"]}],
+        "functions": [
+            {
+                "start": "0x2000",
+                "name": "f",
+                "match_count": 1,
+                "addresses": ["0x2000"],
+                "addresses_truncated": False,
+            }
+        ],
     }
 
 
@@ -257,8 +267,18 @@ def test_constant_find_reports_functions_from_the_constant_search() -> None:
     assert result == {
         "truncated": False,
         "functions": [
-            {"start": "0x1100", "name": "main", "addresses": ["0x1140", "0x1150"]},
-            {"start": "0x2000", "name": "handler", "addresses": ["0x2050"]},
+            {
+                "start": "0x1100",
+                "name": "main",
+                "addresses": ["0x1140", "0x1150"],
+                "addresses_truncated": False,
+            },
+            {
+                "start": "0x2000",
+                "name": "handler",
+                "addresses": ["0x2050"],
+                "addresses_truncated": False,
+            },
         ],
     }
     assert find(_call(view), value=0x1234)["functions"][0]["addresses"] == ["0x3010"]
@@ -275,7 +295,7 @@ def test_constant_find_caps_matches_per_function() -> None:
     function = FakeFunction("sink", 0x3000, 0x3100)
     view = FakeBinaryView(
         functions=[function],
-        constant_references=[(7, 0x3000 + index, function) for index in range(7)],
+        constant_references=[(7, 0x3000 + index, function) for index in range(8)],
     )
     _, find = get_tool("rex_constant_find")
     result = find(_call(view), value=7)
@@ -286,6 +306,25 @@ def test_constant_find_caps_matches_per_function() -> None:
                 "start": "0x3000",
                 "name": "sink",
                 "addresses": [hex(0x3000 + index) for index in range(6)],
+                "addresses_truncated": True,
+            }
+        ],
+    }
+    # Exactly at the cap the list is whole, so the flag stays false and the echo
+    # distinguishes six real references from a clipped longer one.
+    exact = FakeFunction("main", 0x1000, 0x1100)
+    six_view = FakeBinaryView(
+        functions=[exact],
+        constant_references=[(7, 0x1000 + index, exact) for index in range(6)],
+    )
+    assert find(_call(six_view), value=7) == {
+        "truncated": False,
+        "functions": [
+            {
+                "start": "0x1000",
+                "name": "main",
+                "addresses": [hex(0x1000 + index) for index in range(6)],
+                "addresses_truncated": False,
             }
         ],
     }
@@ -478,8 +517,15 @@ def test_find_functions_by_pattern_reports_containing_functions() -> None:
                 "name": "main",
                 "match_count": 4,
                 "addresses": ["0x1000", "0x1004", "0x1008", "0x100c"],
+                "addresses_truncated": False,
             },
-            {"start": "0x2000", "name": "handler", "match_count": 1, "addresses": ["0x2000"]},
+            {
+                "start": "0x2000",
+                "name": "handler",
+                "match_count": 1,
+                "addresses": ["0x2000"],
+                "addresses_truncated": False,
+            },
         ],
     }
 
@@ -492,7 +538,8 @@ def test_find_functions_by_pattern_caps_examples_at_five() -> None:
     )
     _, find = get_tool("rex_find_functions_by_pattern")
     result = find(_call(view), "eb0e")
-    # The count stays true while the example list is capped at the first 5 addresses.
+    # The count stays true while the example list is capped at the first 5 addresses;
+    # the truncation flag says the example list was clipped.
     assert result == {
         "truncated": False,
         "functions": [
@@ -501,6 +548,25 @@ def test_find_functions_by_pattern_caps_examples_at_five() -> None:
                 "name": "f",
                 "match_count": 8,
                 "addresses": [hex(0x1000 + 2 * index) for index in range(5)],
+                "addresses_truncated": True,
+            }
+        ],
+    }
+    # Exactly at the cap the list is whole, not flagged as clipped.
+    five_view = FakeBinaryView(
+        segments=[FakeSegment(0x2000, 10)],
+        memory={0x2000: b"\xeb\x0e" * 5},
+        functions=[FakeFunction("g", 0x2000, 0x2100)],
+    )
+    assert find(_call(five_view), "eb0e") == {
+        "truncated": False,
+        "functions": [
+            {
+                "start": "0x2000",
+                "name": "g",
+                "match_count": 5,
+                "addresses": [hex(0x2000 + 2 * index) for index in range(5)],
+                "addresses_truncated": False,
             }
         ],
     }
@@ -548,7 +614,15 @@ def test_find_functions_by_pattern_maps_matches_across_chunk_boundaries(
     )
     assert find(_call(straddle), "33 eb") == {
         "truncated": False,
-        "functions": [{"start": "0x1000", "name": "f", "match_count": 1, "addresses": ["0x1003"]}],
+        "functions": [
+            {
+                "start": "0x1000",
+                "name": "f",
+                "match_count": 1,
+                "addresses": ["0x1003"],
+                "addresses_truncated": False,
+            }
+        ],
     }
     # A match starting exactly at the chunk edge is reported once: the reads overlap,
     # but every match start belongs to exactly one read.
@@ -559,7 +633,15 @@ def test_find_functions_by_pattern_maps_matches_across_chunk_boundaries(
     )
     assert find(_call(boundary), "33 eb") == {
         "truncated": False,
-        "functions": [{"start": "0x1000", "name": "f", "match_count": 1, "addresses": ["0x1004"]}],
+        "functions": [
+            {
+                "start": "0x1000",
+                "name": "f",
+                "match_count": 1,
+                "addresses": ["0x1004"],
+                "addresses_truncated": False,
+            }
+        ],
     }
 
 
@@ -606,7 +688,13 @@ def test_find_functions_by_pattern_uses_the_first_of_overlapping_functions() -> 
     assert find(_call(view), "eb0e") == {
         "truncated": False,
         "functions": [
-            {"start": "0x1004", "name": "narrow", "match_count": 1, "addresses": ["0x1004"]}
+            {
+                "start": "0x1004",
+                "name": "narrow",
+                "match_count": 1,
+                "addresses": ["0x1004"],
+                "addresses_truncated": False,
+            }
         ],
     }
 

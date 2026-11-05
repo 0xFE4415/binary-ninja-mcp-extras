@@ -18,7 +18,7 @@ from binja_plugin.tools import (
 # Type-library tools: one call moves at most this many type names, and each name is
 # capped before it reaches the type system — QualifiedNames have no core-side length
 # bound and persist in the type database or the .bntl.
-_MAX_TYPE_LIBRARY_NAMES = 64
+_MAX_TYPE_LIBRARY_NAMES = 128
 _MAX_TYPE_NAME_CHARS = 255
 _EXPORT_KINDS = Literal["types", "objects"]
 # rex_struct_from_access echoes at most this many members; the struct is defined in full

@@ -4,18 +4,20 @@ from typing import override
 
 import pytest
 from helpers import (
-    FakeBasicBlock,
-    FakeBinaryView,
     FakeDisasmFunction,
-    FakeDisassemblyLine,
-    FakeFunction,
     FakeParsingToolCall,
     FakeToolError,
-    RenderableText,
     _call,
     _disasm_view,
     _view_with_functions,
     get_tool,
+)
+from helpers_view import (
+    FakeBasicBlock,
+    FakeBinaryView,
+    FakeDisassemblyLine,
+    FakeFunction,
+    RenderableText,
 )
 
 from binja_plugin import tools
@@ -144,6 +146,19 @@ def test_disasm_at_rejects_addresses_outside_functions() -> None:
         assert exc.value.message == f"no analyzed function contains {address:#x}"
 
 
+def test_disasm_at_explains_a_miss_one_byte_past_a_function_end() -> None:
+    view = _disasm_view()
+    _, disasm = get_tool("rex_disasm_at")
+    # main ends at 0x1200; the byte there follows its terminator and belongs to no
+    # function, so the error names main and the define action instead of a bare miss.
+    with pytest.raises(FakeToolError) as exc:
+        disasm(_call(view), 0x1200)
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message.startswith("no analyzed function contains 0x1200; ")
+    assert "immediately past the end of main at 0x1100" in exc.value.message
+    assert "rex_function_define(start=0x1200)" in exc.value.message
+
+
 def test_disasm_at_rejects_out_of_range_window() -> None:
     view = _disasm_view()
     _, disasm = get_tool("rex_disasm_at")
@@ -241,6 +256,7 @@ def test_hlil_grep_caps_lines_per_function() -> None:
     assert result == {
         "scanned": 1,
         "truncated": False,
+        "scan_incomplete": False,
         "functions": [
             {
                 "start": "0x1000",
@@ -353,7 +369,15 @@ def test_hlil_grep_limits_and_errors() -> None:
     assert limited["truncated"] is True
     assert limited["functions"] == []
     zero_scan = grep(_call(view), ".", max_functions=0)
-    assert zero_scan == {"scanned": 0, "truncated": True, "functions": [], "next_offset": 0}
+    # A zero render budget proves nothing about matches: truncated stays untouched and
+    # scan_incomplete says the view was never scanned.
+    assert zero_scan == {
+        "scanned": 0,
+        "truncated": False,
+        "scan_incomplete": True,
+        "functions": [],
+        "next_offset": 0,
+    }
     with pytest.raises(FakeToolError) as exc:
         grep(_call(view), "(")
     assert exc.value.code == "invalid_regex"
@@ -416,8 +440,30 @@ def test_hlil_grep_caps_limit_and_max_functions() -> None:
         limit=tools._MAX_HLIL_GREP_LIMIT,
         max_functions=decompile_tools._MAX_HLIL_GREP_FUNCTIONS,
     )
+    # The budget ran out before the view ended: the scan is incomplete, but no render
+    # proved a match past the (empty) page, so truncated must stay false.
     assert scanned_result["scanned"] == decompile_tools._MAX_HLIL_GREP_FUNCTIONS
-    assert scanned_result["truncated"] is True
+    assert scanned_result["truncated"] is False
+    assert scanned_result["scan_incomplete"] is True
+
+
+def test_hlil_grep_proves_truncation_past_non_matching_functions() -> None:
+    functions = [
+        FakeFunction("a0", 0x1000, 0x1010, hlil=RenderableText("call ax\n")),
+        FakeFunction("b1", 0x1010, 0x1020, hlil=RenderableText("nop\n")),
+        FakeFunction("a2", 0x1020, 0x1030, hlil=RenderableText("call ax\n")),
+    ]
+    view = FakeBinaryView(functions=functions)
+    _, grep = get_tool("rex_hlil_grep")
+    # The page holds a0; b1 renders inside the verification pass before a2 proves
+    # truncation, so scanned counts it and next_offset lands on the proven match.
+    assert grep(_call(view), "call", limit=1) == {
+        "scanned": 3,
+        "truncated": True,
+        "scan_incomplete": False,
+        "functions": [{"start": "0x1000", "name": "a0", "lines": ["call ax"]}],
+        "next_offset": 2,
+    }
 
 
 def test_hlil_grep_offset_and_next_offset() -> None:
@@ -434,8 +480,9 @@ def test_hlil_grep_offset_and_next_offset() -> None:
     _, grep = get_tool("rex_hlil_grep")
     paged = grep(_call(view), "call", limit=2, offset=1)
     assert paged == {
-        "scanned": 2,
+        "scanned": 3,
         "truncated": True,
+        "scan_incomplete": False,
         "functions": [
             {"start": hex(0x1000 + index * 0x10), "name": f"a{index}", "lines": ["call ax"]}
             for index in (1, 2)
@@ -446,11 +493,18 @@ def test_hlil_grep_offset_and_next_offset() -> None:
     assert resumed == {
         "scanned": 1,
         "truncated": False,
+        "scan_incomplete": False,
         "functions": [{"start": "0x1030", "name": "a3", "lines": ["call ax"]}],
         "next_offset": None,
     }
     beyond = grep(_call(view), "call", offset=10)
-    assert beyond == {"scanned": 0, "truncated": False, "functions": [], "next_offset": None}
+    assert beyond == {
+        "scanned": 0,
+        "truncated": False,
+        "scan_incomplete": False,
+        "functions": [],
+        "next_offset": None,
+    }
     with pytest.raises(FakeToolError) as exc:
         grep(_call(view), "call", offset=-1)
     assert exc.value.code == "invalid_params"
@@ -856,6 +910,7 @@ def test_disasm_many_renders_one_window_per_address() -> None:
         "windows": [
             {
                 "address": "0x1104",
+                "index": 0,
                 "function": {"start": "0x1100", "name": "main"},
                 "instructions": [
                     {"address": "0x1104", "text": "sub rsp, 0x20"},
@@ -866,6 +921,7 @@ def test_disasm_many_renders_one_window_per_address() -> None:
             },
             {
                 "address": "0x2000",
+                "index": 1,
                 "function": {"start": "0x2000", "name": "handler"},
                 "instructions": [
                     {"address": "0x2000", "text": "push rbp"},
@@ -874,6 +930,7 @@ def test_disasm_many_renders_one_window_per_address() -> None:
                 "truncated": False,
             },
         ],
+        "errors": [],
         "truncated": False,
         "next_offset": None,
     }
@@ -895,6 +952,7 @@ def test_disasm_many_clips_at_the_cross_window_budget(monkeypatch: pytest.Monkey
     _, disasm = get_tool("rex_disasm_many")
     clipped = disasm(FakeParsingToolCall(view), ["0x1100", "0x2000"])
     assert [entry["address"] for entry in clipped["windows"]] == ["0x1100"]
+    assert clipped["errors"] == []
     assert clipped["truncated"] is True
     assert clipped["next_offset"] == 1
     continuation = disasm(FakeParsingToolCall(view), ["0x2000"])
@@ -906,6 +964,7 @@ def test_disasm_many_clips_at_the_cross_window_budget(monkeypatch: pytest.Monkey
     monkeypatch.setattr(decompile_tools, "_MAX_DISASM_MANY_TOTAL_LINES", 3)
     nothing = disasm(FakeParsingToolCall(view), ["0x1100", "0x2000"])
     assert nothing["windows"] == []
+    assert nothing["errors"] == []
     assert nothing["truncated"] is True
     assert nothing["next_offset"] == 0
 
@@ -913,17 +972,50 @@ def test_disasm_many_clips_at_the_cross_window_budget(monkeypatch: pytest.Monkey
     monkeypatch.setattr(decompile_tools, "_MAX_DISASM_MANY_TOTAL_LINES", 8)
     exact = disasm(FakeParsingToolCall(view), ["0x1100", "0x2000"])
     assert [entry["address"] for entry in exact["windows"]] == ["0x1100", "0x2000"]
+    assert exact["errors"] == []
     assert exact["truncated"] is False
     assert exact["next_offset"] is None
 
 
-def test_disasm_many_rejects_bad_batches() -> None:
+def test_disasm_many_reports_errors_per_address() -> None:
     view = _disasm_view()
     _, disasm = get_tool("rex_disasm_many")
+    mixed = disasm(FakeParsingToolCall(view), ["0x1100", "not-an-address", "0x9999", 17])
+    assert [window["index"] for window in mixed["windows"]] == [0]
+    assert mixed["errors"] == [
+        {
+            "index": 1,
+            "address": "not-an-address",
+            "error": {
+                "code": "invalid_params",
+                "message": (
+                    "bad address expression 'not-an-address': "
+                    "unparsable address expression 'not-an-address'"
+                ),
+            },
+        },
+        {
+            "index": 2,
+            "address": "0x9999",
+            "error": {
+                "code": "invalid_params",
+                "message": "no analyzed function contains 0x9999",
+            },
+        },
+        {
+            "index": 3,
+            "address": "17",
+            "error": {
+                "code": "invalid_params",
+                "message": "addresses[3] must be a string address expression",
+            },
+        },
+    ]
+    assert mixed["truncated"] is False
+    assert mixed["next_offset"] is None
     with pytest.raises(FakeToolError) as exc:
-        disasm(FakeParsingToolCall(view), ["0x1100", "0x9999"])
-    assert exc.value.code == "invalid_params"
-    assert exc.value.message == "no analyzed function contains 0x9999"
+        disasm(FakeParsingToolCall(view), "0x1100")
+    assert exc.value.message == "addresses must be a list of address expressions"
     with pytest.raises(FakeToolError) as exc:
         disasm(FakeParsingToolCall(view), [])
     assert exc.value.message == "addresses must contain between 1 and 64 address expressions"
@@ -931,8 +1023,8 @@ def test_disasm_many_rejects_bad_batches() -> None:
         disasm(FakeParsingToolCall(view), [f"0x{address:x}" for address in range(65)])
     assert exc.value.message == "addresses must contain between 1 and 64 address expressions"
     with pytest.raises(FakeToolError) as exc:
-        disasm(FakeParsingToolCall(view), ["0x1100"], max_lines=201)
-    assert exc.value.message == "Invalid integer parameter 'max_lines': Must be at most 200"
+        disasm(FakeParsingToolCall(view), ["0x1100"], max_lines=513)
+    assert exc.value.message == "Invalid integer parameter 'max_lines': Must be at most 512"
 
 
 def test_disasm_many_reports_pending_analysis() -> None:
@@ -941,13 +1033,20 @@ def test_disasm_many_reports_pending_analysis() -> None:
     pending = FakeFunction("sub_4000", 0x4000, 0x4010)
     view = FakeBinaryView(pending_functions=[pending])
     _, disasm = get_tool("rex_disasm_many")
-    with pytest.raises(FakeToolError) as exc:
-        disasm(FakeParsingToolCall(view), ["0x4000"])
-    assert exc.value.code == "analysis_pending"
-    assert exc.value.message == (
-        "function at 0x4000 exists but has not been analyzed yet; wait for analysis "
-        "(rex_function_define with wait=true) or run bn_analysis_update"
-    )
+    pending_result = disasm(FakeParsingToolCall(view), ["0x4000"])
+    assert pending_result["errors"] == [
+        {
+            "index": 0,
+            "address": "0x4000",
+            "error": {
+                "code": "analysis_pending",
+                "message": (
+                    "function at 0x4000 exists but has not been analyzed yet; wait for analysis "
+                    "(rex_function_define with wait=true) or run bn_analysis_update"
+                ),
+            },
+        }
+    ]
     # Same diagnostic through the single-window tool and the batch decompiler.
     _, at = get_tool("rex_disasm_at")
     with pytest.raises(FakeToolError) as exc:

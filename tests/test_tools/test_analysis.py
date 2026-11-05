@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import pytest
 from helpers import (
+    FakeToolError,
+    _call,
+    get_tool,
+)
+from helpers_view import (
     FakeActiveAnalysisInfo,
     FakeAnalysisInfo,
     FakeAnalysisProgress,
@@ -9,9 +14,6 @@ from helpers import (
     FakeBinaryView,
     FakeFileMetadata,
     FakeFunction,
-    FakeToolError,
-    _call,
-    get_tool,
 )
 
 from binja_plugin import tools

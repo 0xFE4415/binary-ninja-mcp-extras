@@ -13,7 +13,7 @@ use super::{
     MAX_LIMIT, READ_CHUNK, default_limit, matches_json, parse_checked_pattern, resolve_bounds,
     validate_pagination,
 };
-use crate::hexpattern::HexPattern;
+use crate::hexpattern::{HexPattern, MAX_PATTERN_CHARS};
 use crate::multi::{MAX_MULTI_PATTERNS, scan_segment};
 use crate::scan::{Pagination, RunningScan};
 
@@ -21,6 +21,7 @@ use crate::scan::{Pagination, RunningScan};
 #[derive(Deserialize, JsonSchema)]
 pub struct MultiFindArgs {
     #[schemars(length(min = 1, max = MAX_MULTI_PATTERNS))]
+    #[schemars(inner(length(max = MAX_PATTERN_CHARS)))]
     pub patterns: Vec<String>,
     #[serde(default)]
     pub section: Option<String>,
@@ -72,8 +73,9 @@ impl TypedMcpTool for RxMultiFind {
         call: &McpToolCall,
         args: MultiFindArgs,
     ) -> Result<McpToolResult, McpToolError> {
-        let (patterns, pagination) = prepare_scan(&args.patterns, args.limit, args.offset)?;
+        // View resolution first, matching rx_data_find's error precedence.
         let view = call.require_binary_view()?;
+        let (patterns, pagination) = prepare_scan(&args.patterns, args.limit, args.offset)?;
         let bounds = resolve_bounds(&view, args.section.as_deref())?;
         let mut buckets: Vec<RunningScan> =
             (0..patterns.len()).map(|_| RunningScan::new()).collect();

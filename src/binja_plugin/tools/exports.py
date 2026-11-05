@@ -22,8 +22,8 @@ from binja_plugin.tools import (
     _write_export_file,
 )
 
-_MAX_EXPORT_DISASM_LINES = 400
-_MAX_EXPORT_SYMBOLS = 2000
+_MAX_EXPORT_DISASM_LINES = 512
+_MAX_EXPORT_SYMBOLS = 2048
 
 _EXPORT_FORMATS = Literal["csv", "json"]
 

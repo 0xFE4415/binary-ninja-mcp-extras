@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterator
-from typing import Annotated, Literal
+from dataclasses import dataclass
+from typing import Annotated, Any, Literal
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -34,6 +35,32 @@ from binja_plugin.tools import (
 # polling like rex_analysis_wait; the deadline bounds one call's hold on the server thread.
 _UIDF_ANALYSIS_SLICE_MS = 100
 _MAX_UIDF_ANALYSIS_WAIT_MS = 10000
+_MAX_UIDF_BATCH = 128
+
+_UIDF_ITEMS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "variable": {"type": "string", "minLength": 1},
+        "value": {"type": "string", "minLength": 1},
+        "def_address": {
+            "type": ["integer", "string"],
+            "description": "Definition site; required when the variable has multiple definitions.",
+        },
+        "state": {
+            "type": "string",
+            "enum": [
+                "ConstantValue",
+                "ConstantPointerValue",
+                "StackFrameOffset",
+                "SignedRangeValue",
+                "UnsignedRangeValue",
+                "InSetOfValues",
+                "NotInSetOfValues",
+            ],
+        },
+    },
+    "required": ["variable", "value"],
+}
 
 # The states BinaryView.parse_possiblevalueset documents a string grammar for; the schema
 # advertises exactly these, so a state with no documented syntax is never offered.
@@ -56,6 +83,98 @@ ValueState = Literal[
     "InSetOfValues",
     "NotInSetOfValues",
 ]
+
+
+def _parse_uidf_value(
+    bv: BinaryView, value: str, state: str, site: MediumLevelILInstruction
+) -> Any:
+    value_state = _require_value_state(state)
+    try:
+        return bv.parse_possiblevalueset(value, value_state, here=site.address)
+    except Exception as error:
+        raise mcp.ToolError("invalid_params", f"Invalid value parameter 'value': {error}") from None
+
+
+@dataclass
+class _UIDFSetPlan:
+    index: int
+    variable_name: str
+    variable: Variable
+    site: MediumLevelILInstruction
+    value: Any
+
+
+def _uidf_item_def_address(call: mcp.ToolCall, raw_site: object) -> int | None:
+    """Parse an optional batch definition address, rejecting bool-as-int inputs."""
+    if raw_site is None:
+        return None
+    if not isinstance(raw_site, (int, str)) or isinstance(raw_site, bool):
+        raise mcp.ToolError("invalid_params", "def_address must be an integer or string")
+    if isinstance(raw_site, int):
+        # Raw ints pass through untouched: an int expression is already an address.
+        return raw_site
+    try:
+        return call.parse_address(raw_site)
+    except Exception as error:
+        raise mcp.ToolError("invalid_params", f"bad definition address: {error}") from None
+
+
+def _stage_uidf_item(
+    call: mcp.ToolCall,
+    bv: BinaryView,
+    target: Function,
+    index: int,
+    item: Any,
+) -> tuple[dict[str, object], _UIDFSetPlan | None]:
+    """Validate and parse one batch item without mutating the function."""
+    if not isinstance(item, dict):
+        return (
+            {
+                "index": index,
+                "variable": _truncate(repr(item)),
+                "ok": False,
+                "error": {"code": "invalid_params", "message": "each item must be a JSON object"},
+            },
+            None,
+        )
+    label = str(item.get("variable", "<invalid item>"))
+    try:
+        allowed = {"variable", "value", "def_address", "state"}
+        unknown = sorted(str(key) for key in item if key not in allowed)
+        if unknown:
+            raise mcp.ToolError("invalid_params", f"unknown field(s): {', '.join(unknown)}")
+        variable_name = item.get("variable")
+        value = item.get("value")
+        if not isinstance(variable_name, str) or not variable_name:
+            raise mcp.ToolError("invalid_params", "variable must be a non-empty string")
+        if not isinstance(value, str) or not value:
+            raise mcp.ToolError("invalid_params", "value must be a non-empty string")
+        def_address = _uidf_item_def_address(call, item.get("def_address"))
+        state = item.get("state", "ConstantValue")
+        if not isinstance(state, str):
+            raise mcp.ToolError("invalid_params", "state must be a string")
+        site_variable, site = _select_definition_site(target, variable_name, def_address)
+        parsed = _parse_uidf_value(bv, value, state, site)
+        return (
+            {
+                "index": index,
+                "variable": _truncate(variable_name),
+                "definition_site": hex(site.address),
+                "value": {"state": parsed.type.name, "rendered": _truncate(str(parsed))},
+                "ok": True,
+            },
+            _UIDFSetPlan(index, variable_name, site_variable, site, parsed),
+        )
+    except mcp.ToolError as error:
+        return (
+            {
+                "index": index,
+                "variable": _truncate(label),
+                "ok": False,
+                "error": {"code": error.code, "message": error.message},
+            },
+            None,
+        )
 
 
 def _wait_analysis_settled(bv: BinaryView) -> bool:
@@ -168,11 +287,7 @@ def rex_uidf_set(
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
     target = _require_analyzed_function(bv, function)
     site_variable, site = _select_definition_site(target, variable, def_address)
-    value_state = _require_value_state(state)
-    try:
-        parsed = bv.parse_possiblevalueset(value, value_state, here=site.address)
-    except Exception as error:
-        raise mcp.ToolError("invalid_params", f"Invalid value parameter 'value': {error}") from None
+    parsed = _parse_uidf_value(bv, value, state, site)
     try:
         target.set_user_var_value(site_variable, site.address, parsed, after=True)
     except Exception as error:
@@ -187,6 +302,66 @@ def rex_uidf_set(
         "variable": _truncate(variable),
         "definition_site": hex(site.address),
         "value": {"state": parsed.type.name, "rendered": _truncate(str(parsed))},
+        "analysis_complete": analysis_complete,
+        "lines": lines,
+        "truncated": truncated,
+    }
+
+
+@mcp.tool(destructive=True)
+def rex_uidf_set_many(
+    call: mcp.ToolCall,
+    function: mcp.Address,
+    items: list[Annotated[Any, mcp.Schema(_UIDF_ITEMS_SCHEMA)]],
+    max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
+) -> dict[str, object]:
+    """Inform multiple MLIL values, report item errors, and reanalyze once.
+
+    :param function: Address expression inside the target function.
+    :param items: 1 to 128 objects with variable, value, optional def_address and state.
+    :param max_lines: HLIL lines rendered after the batch settles.
+    """
+    bv = call.binary_view
+    max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
+    target = _require_analyzed_function(bv, function)
+    if not isinstance(items, list):
+        raise mcp.ToolError("invalid_params", "items must be a list of uidf item objects")
+    if not 1 <= len(items) <= _MAX_UIDF_BATCH:
+        raise mcp.ToolError(
+            "invalid_params", f"items must contain between 1 and {_MAX_UIDF_BATCH} entries"
+        )
+    results: list[dict[str, object]] = []
+    staged: list[_UIDFSetPlan] = []
+    for index, item in enumerate(items):
+        row, plan = _stage_uidf_item(call, bv, target, index, item)
+        results.append(row)
+        if plan is not None:
+            staged.append(plan)
+
+    applied = 0
+    for plan in staged:
+        try:
+            target.set_user_var_value(plan.variable, plan.site.address, plan.value, after=True)
+            applied += 1
+        except Exception as error:
+            results[plan.index]["ok"] = False
+            results[plan.index]["error"] = {
+                "code": "set_failed",
+                "message": f"could not inform '{_truncate(plan.variable_name)}': {error}",
+            }
+
+    analysis_complete = True
+    if applied:
+        bv.update_analysis()
+        analysis_complete = _wait_analysis_settled(bv)
+    lines, truncated = _render_hlil_lines(target.hlil, max_lines)
+    failed = len(results) - applied
+    return {
+        "function": _function_entry(target),
+        "applied": applied,
+        "failed": failed,
+        "total": len(results),
+        "results": results,
         "analysis_complete": analysis_complete,
         "lines": lines,
         "truncated": truncated,

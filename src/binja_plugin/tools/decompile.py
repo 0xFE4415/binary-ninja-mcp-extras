@@ -16,10 +16,10 @@ from binja_plugin.tools import (
     _drop,
     _function_entry,
     _name_filter,
+    _parse_address_entry,
     _render_function_disassembly,
     _require_analyzed_function,
     _resolve_address_batch,
-    _resolve_address_pairs,
     _truncate,
     _validate_disasm_window,
     _validate_range,
@@ -34,13 +34,13 @@ _MAX_HLIL_GREP_CONTEXT = 8
 # rex_decompile_many caps: the batch size bounds one call's decompilation cost, the
 # line cap the echoed text per function.
 _MAX_DECOMPILE_BATCH = 1024
-_MAX_DECOMPILE_LINES = 400
+_MAX_DECOMPILE_LINES = 512
 
 # rex_disasm_many caps: the batch size and per-window line cap bound one call's render
 # and echo, and the cross-window budget paginates so one call cannot return an
 # unbounded dump.
 _MAX_DISASM_BATCH = 64
-_MAX_DISASM_MANY_LINES = 200
+_MAX_DISASM_MANY_LINES = 512
 _MAX_DISASM_MANY_TOTAL_LINES = 1024
 
 # rex_quick_main's resolution chain: function symbols first, then the __libc_start_main
@@ -213,12 +213,31 @@ def rex_disasm_many(
     """
     bv = call.binary_view
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DISASM_MANY_LINES)
-    resolved = _resolve_address_pairs(call, bv, addresses, _MAX_DISASM_BATCH, "addresses")
+    if not isinstance(addresses, list):
+        raise mcp.ToolError("invalid_params", "addresses must be a list of address expressions")
+    if not 1 <= len(addresses) <= _MAX_DISASM_BATCH:
+        raise mcp.ToolError(
+            "invalid_params",
+            f"addresses must contain between 1 and {_MAX_DISASM_BATCH} address expressions",
+        )
     windows: list[dict[str, object]] = []
+    errors: list[dict[str, object]] = []
     total_lines = 0
     truncated = False
     next_offset: int | None = None
-    for index, (address, function) in enumerate(resolved):
+    for index, address_expression in enumerate(addresses):
+        try:
+            address = _parse_address_entry(call, index, address_expression, "addresses")
+            function = _require_analyzed_function(bv, address)
+        except mcp.ToolError as error:
+            errors.append(
+                {
+                    "index": index,
+                    "address": _truncate(str(address_expression)),
+                    "error": {"code": error.code, "message": error.message},
+                }
+            )
+            continue
         lines = _render_function_disassembly(function)
         start, end = _disasm_window(lines, address, 0, max_lines - 1)
         window = lines[start:end]
@@ -230,6 +249,7 @@ def rex_disasm_many(
         windows.append(
             {
                 "address": hex(address),
+                "index": index,
                 "function": _function_entry(function),
                 "instructions": [
                     {"address": hex(line_address), "text": _truncate(text)}
@@ -238,7 +258,12 @@ def rex_disasm_many(
                 "truncated": end < len(lines),
             }
         )
-    return {"windows": windows, "truncated": truncated, "next_offset": next_offset}
+    return {
+        "windows": windows,
+        "errors": errors,
+        "truncated": truncated,
+        "next_offset": next_offset,
+    }
 
 
 @mcp.tool(read_only=True)
@@ -274,10 +299,16 @@ def rex_hlil_grep(
     matches: list[dict[str, object]] = []
     scanned = 0
     truncated = False
+    scan_incomplete = False
     next_offset: int | None = None
+    # limit=0 pages nothing out, so the window is full from the first scan.
+    window_full = limit == 0
     for index, function in enumerate(_drop(bv.functions, offset), offset):
-        if len(matches) >= limit or scanned >= max_functions:
-            truncated = True
+        if scanned >= max_functions:
+            # The render budget ran out with functions left unscanned. Whether matching
+            # functions remain is unknown either way, so `truncated` stays untouched:
+            # only a rendered past-page match may set it.
+            scan_incomplete = True
             next_offset = index
             break
         if name_matcher is not None and name_matcher.search(function.name) is None:
@@ -288,7 +319,14 @@ def rex_hlil_grep(
         scanned += 1
         source_lines = str(hlil).splitlines()
         matched = [line_index for line_index, line in enumerate(source_lines) if search(line)]
-        if matched:
+        if window_full:
+            if matched:
+                # One matching function past the page proves more matches exist; stop
+                # the scan there instead of collecting the rest.
+                truncated = True
+                next_offset = index
+                break
+        elif matched:
             lines = _render_hlil_matches(source_lines, matched, context_before, context_after)
             matches.append(
                 {
@@ -297,9 +335,11 @@ def rex_hlil_grep(
                     "lines": lines,
                 }
             )
+            window_full = len(matches) >= limit
     return {
         "scanned": scanned,
         "truncated": truncated,
+        "scan_incomplete": scan_incomplete,
         "functions": matches,
         "next_offset": next_offset,
     }

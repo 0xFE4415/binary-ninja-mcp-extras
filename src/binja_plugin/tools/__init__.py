@@ -14,7 +14,7 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterable, Iterator
 from itertools import islice
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, NoReturn, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -119,31 +119,79 @@ def _paginate[Item](items: Iterable[Item], offset: int, limit: int) -> tuple[lis
     return page, skipped + len(page) + int(truncated), truncated
 
 
+def _containment_miss_hint(bv: BinaryView, address: int) -> str:
+    """Explain a containment miss, or return "" when the view offers nothing specific.
+
+    The two cases worth naming are the ones a caller can act on: an address no segment
+    maps, and an address one byte past a function's end. The latter is what a block-ending
+    instruction (int3, ret, jmp) leaves behind: analysis stops at the terminator, so the
+    following bytes belong to no function even though execution may continue there.
+    """
+    if not bv.is_valid_offset(address):
+        return "the address is not mapped by any segment"
+    previous_start = bv.get_previous_function_start_before(address)
+    previous = bv.get_function_at(previous_start)
+    if previous is None or previous.highest_address + 1 != address:
+        return ""
+    return (
+        f"the address is immediately past the end of {_truncate(previous.name)} at "
+        f"{previous.start:#x} (highest address {previous.highest_address:#x}); when the last "
+        "instruction ends the block (for example int3, ret, or jmp) the next bytes belong to "
+        f"no function, so define one with rex_function_define(start={address:#x}) if "
+        "execution continues"
+    )
+
+
+def _raise_containment_miss(bv: BinaryView, address: int, code: str, described: str) -> NoReturn:
+    """Reject a containment miss with the caller's error code and the best available reason.
+
+    A defined function the engine has not analyzed yet is invisible to containment lookups,
+    so that case gets its own diagnostic instead of a misleading "no function" answer.
+    """
+    pending = bv.get_function_at(address)
+    if pending is not None:
+        raise mcp.ToolError(
+            "analysis_pending",
+            f"function at {address:#x} exists but has not been analyzed yet; wait for "
+            "analysis (rex_function_define with wait=true) or run bn_analysis_update",
+        )
+    message = f"no {described} contains {address:#x}"
+    hint = _containment_miss_hint(bv, address)
+    if hint:
+        message = f"{message}; {hint}"
+    raise mcp.ToolError(code, message)
+
+
 def _require_containing_function(
     bv: BinaryView, address: int, code: str, described: str
 ) -> Function:
     """Return the function containing ``address``, or reject with the caller's convention.
 
     ``code`` is deliberate: scan-style tools answer ``no_function`` for a containment
-    miss, argument-validating tools treat the same miss as ``invalid_params``. A defined
-    function the engine has not analyzed yet is invisible to containment lookups, so that
-    case gets its own diagnostic instead of a misleading "no function" answer.
+    miss, argument-validating tools treat the same miss as ``invalid_params``.
     """
     functions = bv.get_functions_containing(address)
     if not functions:
-        pending = bv.get_function_at(address)
-        if pending is not None:
-            raise mcp.ToolError(
-                "analysis_pending",
-                f"function at {address:#x} exists but has not been analyzed yet; wait for "
-                "analysis (rex_function_define with wait=true) or run bn_analysis_update",
-            )
-        raise mcp.ToolError(code, f"no {described} contains {address:#x}")
+        _raise_containment_miss(bv, address, code, described)
     return functions[0]
 
 
 def _require_analyzed_function(bv: BinaryView, address: int) -> Function:
     return _require_containing_function(bv, address, "invalid_params", "analyzed function")
+
+
+def _parse_address_entry(call: mcp.ToolCall, index: int, entry: object, noun: str) -> int:
+    """Parse one entry of a tool's address-expression list to an integer."""
+    if not isinstance(entry, str):
+        raise mcp.ToolError(
+            "invalid_params", f"{noun}[{index}] must be a string address expression"
+        )
+    try:
+        return call.parse_address(entry)
+    except Exception as error:
+        raise mcp.ToolError(
+            "invalid_params", f"bad address expression '{_truncate(entry)}': {error}"
+        ) from None
 
 
 def _parse_address_batch(call: mcp.ToolCall, entries: object, maximum: int, noun: str) -> list[int]:
@@ -159,19 +207,7 @@ def _parse_address_batch(call: mcp.ToolCall, entries: object, maximum: int, noun
             "invalid_params",
             f"{noun} must contain between 1 and {maximum} address expressions",
         )
-    parsed: list[int] = []
-    for index, entry in enumerate(entries):
-        if not isinstance(entry, str):
-            raise mcp.ToolError(
-                "invalid_params", f"{noun}[{index}] must be a string address expression"
-            )
-        try:
-            parsed.append(call.parse_address(entry))
-        except Exception as error:
-            raise mcp.ToolError(
-                "invalid_params", f"bad address expression '{_truncate(entry)}': {error}"
-            ) from None
-    return parsed
+    return [_parse_address_entry(call, index, entry, noun) for index, entry in enumerate(entries)]
 
 
 def _resolve_address_pairs(
@@ -401,4 +437,4 @@ from .types import (
     rex_type_library_export,
     rex_type_library_import,
 )
-from .uidf import rex_uidf_clear, rex_uidf_list, rex_uidf_set
+from .uidf import rex_uidf_clear, rex_uidf_list, rex_uidf_set, rex_uidf_set_many

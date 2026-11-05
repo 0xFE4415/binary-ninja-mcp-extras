@@ -13,14 +13,15 @@ from binja_plugin.tools import (
     _function_entry,
     _FunctionEntry,
     _parse_address_batch,
+    _raise_containment_miss,
     _require_function,
     _validate_range,
 )
 
 _MAX_CALL_PATH_DEPTH = 16
-_MAX_CALL_PATHS = 50
-_MAX_FUNCTION_ENTRIES = 50
-_MAX_DEFINE_BATCH = 100
+_MAX_CALL_PATHS = 64
+_MAX_FUNCTION_ENTRIES = 64
+_MAX_DEFINE_BATCH = 128
 
 # The define tools' analysis wait polls in ~100 ms slices like rex_analysis_wait; a
 # defined function counts as analyzed once the engine has produced its first basic
@@ -153,7 +154,7 @@ def rex_function_containing(call: mcp.ToolCall, addr: mcp.Address) -> _FunctionC
     """
     functions = call.binary_view.get_functions_containing(addr)
     if not functions:
-        raise mcp.ToolError("no_function", f"no function contains {addr:#x}")
+        _raise_containment_miss(call.binary_view, addr, "no_function", "function")
     return {
         "functions": [_function_entry(function) for function in functions[:_MAX_FUNCTION_ENTRIES]],
         "truncated": len(functions) > _MAX_FUNCTION_ENTRIES,

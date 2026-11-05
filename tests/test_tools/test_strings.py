@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import pytest
 from helpers import (
+    FakeToolError,
+    _call,
+    get_tool,
+)
+from helpers_view import (
     FakeBinaryView,
     FakeDerivedString,
     FakeDerivedStringLocation,
     FakeFunction,
     FakeReferenceSource,
     FakeStringReference,
-    FakeToolError,
-    _call,
-    get_tool,
 )
 
 from binja_plugin import tools
@@ -243,7 +245,7 @@ def test_string_refs_returns_refs_to_ordinary_strings() -> None:
     }
     # Pin: the core call is bounded by exactly the echo cap plus one, so a wider or
     # narrower bound than _MAX_STRING_REFS + 1 must update this pin deliberately.
-    assert view.code_ref_requests == [(0x4000, 21)]
+    assert view.code_ref_requests == [(0x4000, 65)]
 
 
 def test_string_refs_lists_ordinary_then_derived_strings() -> None:
@@ -271,7 +273,7 @@ def test_string_refs_lists_ordinary_then_derived_strings() -> None:
             "refs_truncated": False,
         },
     ]
-    assert view.derived_code_ref_requests == [21, 21]
+    assert view.derived_code_ref_requests == [65, 65]
 
 
 def test_string_refs_filters_by_substring_regex_and_case() -> None:
@@ -312,14 +314,14 @@ def test_string_refs_caps_refs_per_string() -> None:
     view = FakeBinaryView(
         strings=[FakeStringReference("big", 0x8000), FakeStringReference("exact", 0x8100)],
         code_refs={
-            0x8000: [FakeReferenceSource(filler, 0x9000 + index) for index in range(23)],
-            0x8100: [FakeReferenceSource(filler, 0x9000 + index) for index in range(20)],
+            0x8000: [FakeReferenceSource(filler, 0x9000 + index) for index in range(65)],
+            0x8100: [FakeReferenceSource(filler, 0x9000 + index) for index in range(64)],
         },
     )
     _, refs = get_tool("rex_string_refs")
     entries = refs(_call(view))["strings"]
-    assert len(entries[0]["refs"]) == 20
-    assert entries[0]["refs"][-1]["address"] == "0x9013"
+    assert len(entries[0]["refs"]) == 64
+    assert entries[0]["refs"][-1]["address"] == "0x903f"
     assert entries[0]["refs_truncated"] is True
     # Exactly at the cap the flag stays False: the cap is a bound, not an off-by-one hint.
     assert entries[1]["refs_truncated"] is False
@@ -328,16 +330,16 @@ def test_string_refs_caps_refs_per_string() -> None:
 def test_string_refs_caps_derived_refs_per_string() -> None:
     filler = FakeFunction("filler", 0x9000, 0x9100)
     capped = FakeDerivedString(
-        "big", None, refs=[FakeReferenceSource(filler, 0x9000 + index) for index in range(23)]
+        "big", None, refs=[FakeReferenceSource(filler, 0x9000 + index) for index in range(65)]
     )
     exact = FakeDerivedString(
-        "exact", None, refs=[FakeReferenceSource(filler, 0x9000 + index) for index in range(20)]
+        "exact", None, refs=[FakeReferenceSource(filler, 0x9000 + index) for index in range(64)]
     )
     view = FakeBinaryView(derived_strings=[capped, exact])
     _, refs = get_tool("rex_string_refs")
     entries = refs(_call(view))["strings"]
-    assert len(entries[0]["refs"]) == 20
-    assert entries[0]["refs"][-1]["address"] == "0x9013"
+    assert len(entries[0]["refs"]) == 64
+    assert entries[0]["refs"][-1]["address"] == "0x903f"
     assert entries[0]["refs_truncated"] is True
     # Exactly at the cap the flag stays False: the cap is a bound, not an off-by-one hint.
     assert entries[1]["refs_truncated"] is False

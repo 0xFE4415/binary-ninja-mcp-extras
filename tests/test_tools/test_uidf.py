@@ -2,12 +2,8 @@ from __future__ import annotations
 
 import pytest
 from helpers import (
-    FakeAnalysisProgress,
-    FakeAnalysisState,
-    FakeBinaryView,
-    FakeFunction,
+    FakeParsingToolCall,
     FakeToolError,
-    RenderableText,
     _call,
     get_tool,
 )
@@ -17,6 +13,15 @@ from helpers_uidf import (
     FakeRegisterValueType,
     FakeVariable,
 )
+from helpers_view import (
+    FakeAnalysisProgress,
+    FakeAnalysisState,
+    FakeBinaryView,
+    FakeFunction,
+    RenderableText,
+)
+from hypothesis import given
+from hypothesis import strategies as st
 
 from binja_plugin import tools
 from binja_plugin.tools import uidf as uidf_tools
@@ -110,6 +115,205 @@ def test_uidf_set_informs_a_constant_and_renders_hlil(monkeypatch: pytest.Monkey
     clipped = uidf_set(_call(view), 0x1100, "rax_1", "0x10", max_lines=2)
     assert clipped["lines"] == ["int32_t rax_1 = 1", "if (rax_1 == 1)"]
     assert clipped["truncated"] is True
+
+
+def test_uidf_set_many_applies_valid_items_and_reanalyzes_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_time(monkeypatch, FakeClock())
+    view, main = _uidf_view()
+    _, uidf_set_many = get_tool("rex_uidf_set_many")
+    result = uidf_set_many(
+        FakeParsingToolCall(view),
+        0x1100,
+        [
+            {"variable": "rax_1", "value": "0x10"},
+            {"variable": "missing", "value": "1"},
+            {"variable": "var_10", "value": "2"},
+            {"variable": "var_10", "def_address": 0x1196, "value": "3", "state": "ConstantValue"},
+        ],
+    )
+    assert result["applied"] == 2
+    assert result["failed"] == 2
+    assert result["total"] == 4
+    assert result["results"][0] == {
+        "index": 0,
+        "variable": "rax_1",
+        "definition_site": "0x1104",
+        "value": {"state": "ConstantValue", "rendered": "<const 0x10>"},
+        "ok": True,
+    }
+    assert result["results"][1]["error"]["code"] == "no_variable"
+    assert result["results"][2]["error"]["code"] == "ambiguous_definition"
+    assert result["results"][3]["definition_site"] == "0x1196"
+    assert view.update_analysis_calls == 1
+    assert len(main.set_user_var_value_calls) == 2
+    assert [str(entry[2]) for entry in main.set_user_var_value_calls] == [
+        "<const 0x10>",
+        "<const 0x3>",
+    ]
+    assert result["analysis_complete"] is True
+    assert result["lines"] == [
+        "int32_t rax_1 = 1",
+        "if (rax_1 == 1)",
+        "    return 0",
+        "return 1",
+    ]
+
+
+def test_uidf_set_many_validates_limits_and_item_fields() -> None:
+    view, _ = _uidf_view()
+    _, uidf_set_many = get_tool("rex_uidf_set_many")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set_many(_call(view), 0x1100, {"variable": "rax_1", "value": "1"})
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == "items must be a list of uidf item objects"
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set_many(_call(view), 0x1100, [])
+    assert exc.value.code == "invalid_params"
+    assert f"between 1 and {uidf_tools._MAX_UIDF_BATCH}" in exc.value.message
+    result = uidf_set_many(
+        FakeParsingToolCall(view),
+        0x1100,
+        [
+            {"variable": "rax_1", "value": "garbage!!"},
+            {"variable": "rax_1", "value": "1", "unexpected": True, "mystery": 2},
+            "not-an-object",
+            {"variable": 3, "value": "1"},
+            {"variable": "rax_1", "value": 3},
+            {"variable": "rax_1", "value": "1", "def_address": True},
+            {"variable": "rax_1", "value": "1", "def_address": "bad"},
+            {"variable": "rax_1", "value": "1", "state": 2},
+            {"variable": "rax_1", "value": "1", "state": "Bogus"},
+            {"value": "1"},
+        ],
+    )
+    assert result["results"] == [
+        {
+            "index": 0,
+            "variable": "rax_1",
+            "ok": False,
+            "error": {
+                "code": "invalid_params",
+                "message": (
+                    "Invalid value parameter 'value': invalid literal for int() with base 16: "
+                    "'garbage!!'"
+                ),
+            },
+        },
+        {
+            "index": 1,
+            "variable": "rax_1",
+            "ok": False,
+            "error": {
+                "code": "invalid_params",
+                "message": "unknown field(s): mystery, unexpected",
+            },
+        },
+        {
+            "index": 2,
+            "variable": "'not-an-object'",
+            "ok": False,
+            "error": {"code": "invalid_params", "message": "each item must be a JSON object"},
+        },
+        {
+            "index": 3,
+            "variable": "3",
+            "ok": False,
+            "error": {"code": "invalid_params", "message": "variable must be a non-empty string"},
+        },
+        {
+            "index": 4,
+            "variable": "rax_1",
+            "ok": False,
+            "error": {"code": "invalid_params", "message": "value must be a non-empty string"},
+        },
+        {
+            "index": 5,
+            "variable": "rax_1",
+            "ok": False,
+            "error": {
+                "code": "invalid_params",
+                "message": "def_address must be an integer or string",
+            },
+        },
+        {
+            "index": 6,
+            "variable": "rax_1",
+            "ok": False,
+            "error": {
+                "code": "invalid_params",
+                "message": "bad definition address: unparsable address expression 'bad'",
+            },
+        },
+        {
+            "index": 7,
+            "variable": "rax_1",
+            "ok": False,
+            "error": {"code": "invalid_params", "message": "state must be a string"},
+        },
+        {
+            "index": 8,
+            "variable": "rax_1",
+            "ok": False,
+            "error": {
+                "code": "invalid_params",
+                "message": (
+                    "Invalid state parameter 'state': must be one of ConstantValue, "
+                    "ConstantPointerValue, StackFrameOffset, SignedRangeValue, "
+                    "UnsignedRangeValue, InSetOfValues, NotInSetOfValues"
+                ),
+            },
+        },
+        {
+            "index": 9,
+            "variable": "<invalid item>",
+            "ok": False,
+            "error": {"code": "invalid_params", "message": "variable must be a non-empty string"},
+        },
+    ]
+    assert result["applied"] == 0
+    assert view.update_analysis_calls == 0
+
+
+@given(
+    item=st.recursive(
+        st.none() | st.booleans() | st.integers() | st.text(max_size=24),
+        lambda children: st.lists(children, max_size=4),
+        max_leaves=8,
+    )
+)
+def test_uidf_set_many_rejects_non_object_items_with_a_stable_result_shape(item: object) -> None:
+    view, _ = _uidf_view()
+    _, uidf_set_many = get_tool("rex_uidf_set_many")
+    result = uidf_set_many(_call(view), 0x1100, [item])
+    assert result["results"] == [
+        {
+            "index": 0,
+            "variable": repr(item),
+            "ok": False,
+            "error": {"code": "invalid_params", "message": "each item must be a JSON object"},
+        }
+    ]
+    assert result["applied"] == 0
+
+
+def test_uidf_set_many_reports_core_apply_failures_without_reanalysis() -> None:
+    view, main = _uidf_view()
+    main.set_user_var_value_error = Exception("core refused")
+    _, uidf_set_many = get_tool("rex_uidf_set_many")
+    result = uidf_set_many(
+        _call(view),
+        0x1100,
+        [{"variable": "rax_1", "value": "1"}],
+    )
+    assert result["applied"] == 0
+    assert result["failed"] == 1
+    assert result["results"][0]["error"] == {
+        "code": "set_failed",
+        "message": "could not inform 'rax_1': core refused",
+    }
+    assert view.update_analysis_calls == 0
 
 
 def test_uidf_set_parses_ranges_and_value_sets(monkeypatch: pytest.MonkeyPatch) -> None:

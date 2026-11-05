@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import pytest
 from helpers import (
-    FakeBinaryView,
-    FakeFunction,
     FakeParsingToolCall,
     FakeToolError,
     _call,
     get_tool,
+)
+from helpers_view import (
+    FakeBinaryView,
+    FakeFunction,
 )
 
 from binja_plugin.tools import annotations as annotations_tools

@@ -21,7 +21,6 @@ _PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
     ("rex_data_find", "section"): ("section_not_found",),
     ("rex_decompile_many", "functions"): ("analysis_pending",),
     ("rex_disasm_at", "address"): ("analysis_pending",),
-    ("rex_disasm_many", "addresses"): ("analysis_pending",),
     ("rex_eval_result", "key"): ("not_found",),
     ("rex_export_disasm", "address"): ("analysis_pending",),
     ("rex_export_disasm", "filename"): ("path_escape", "export_failed"),
@@ -85,7 +84,15 @@ def rex_help(call: mcp.ToolCall, tool_name: str = "") -> dict[str, object]:
             "description": parameter_schema["description"],
             "error_codes": list(_PARAMETER_ERROR_CODES.get((tool_name, parameter_name), ())),
         }
-        for bound in ("minimum", "maximum", "default", "enum", "minLength", "items"):
+        for bound in (
+            "minimum",
+            "maximum",
+            "default",
+            "enum",
+            "minLength",
+            "maxLength",
+            "items",
+        ):
             if bound in parameter_schema:
                 parameter[bound] = parameter_schema[bound]
         parameters.append(parameter)
