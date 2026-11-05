@@ -114,6 +114,7 @@ pub fn verify_at(haystack: &[u8], pos: usize, pattern: &[Option<u8>]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn parse_ok(pattern: &str) -> Vec<Option<u8>> {
         HexPattern::parse(pattern).unwrap().bytes().to_vec()
@@ -209,6 +210,38 @@ mod tests {
     fn all_wildcard_has_no_concrete_run() {
         let pattern = HexPattern::parse("?? ??").unwrap();
         assert_eq!(pattern.first_concrete_run(), None);
+    }
+
+    proptest! {
+        #[test]
+        fn parses_generated_tokens_and_finds_the_first_maximal_concrete_run(
+            tokens in prop::collection::vec(
+                prop_oneof![Just(None::<u8>), any::<u8>().prop_map(Some)],
+                1..128
+            )
+        ) {
+            let text = tokens
+                .iter()
+                .map(|token| match token {
+                    Some(byte) => format!("{byte:02x}"),
+                    None => "??".to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            let pattern = HexPattern::parse(&text).unwrap();
+            let start = tokens.iter().position(Option::is_some);
+            let expected_run = start.map(|start| {
+                let bytes = tokens[start..]
+                    .iter()
+                    .map_while(|token| *token)
+                    .collect();
+                (start, bytes)
+            });
+
+            prop_assert_eq!(pattern.bytes(), tokens.as_slice());
+            prop_assert_eq!(pattern.len(), tokens.len());
+            prop_assert_eq!(pattern.first_concrete_run(), expected_run);
+        }
     }
 
     #[test]

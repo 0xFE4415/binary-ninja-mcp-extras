@@ -317,5 +317,57 @@ mod tests {
             prop_assert_eq!(running.truncated, truncated);
             prop_assert_eq!(running.matches, expected);
         }
+
+        #[test]
+        fn chunked_multi_segment_scan_matches_each_segment_independently(
+            first in prop::collection::vec(0u8..4, 1..48),
+            second in prop::collection::vec(0u8..4, 1..48),
+            tokens in prop::collection::vec(
+                prop_oneof![Just(None::<u8>), (0u8..4).prop_map(Some)],
+                1..6
+            ),
+            gap in 1u64..8,
+            chunk in 1u64..16,
+            offset in prop_oneof![0u64..10, Just(u64::MAX)],
+            limit in prop_oneof![0u64..10, Just(u64::MAX)]
+        ) {
+            let pattern = pattern_from_tokens(tokens);
+            let first_start = 0x1000;
+            let first_end = first_start + first.len() as u64;
+            let second_start = first_end + gap;
+            let view = FakeView {
+                segments: vec![
+                    (first_start, first_end),
+                    (second_start, second_start + second.len() as u64),
+                ],
+                unreadable_segments: Vec::new(),
+                runs: vec![(first_start, first.clone()), (second_start, second.clone())],
+            };
+            let pagination = Pagination { offset, limit };
+            let running = scan_fake_view(
+                &view,
+                chunk,
+                None,
+                (pattern.len() - 1) as u64,
+                &pattern,
+                &pagination,
+            );
+
+            let mut naive: Vec<u64> = naive_matches(&first, &pattern)
+                .into_iter()
+                .map(|position| first_start + position as u64)
+                .collect();
+            naive.extend(
+                naive_matches(&second, &pattern)
+                    .into_iter()
+                    .map(|position| second_start + position as u64),
+            );
+            let expected_page = expected_pagination(naive.len(), offset, limit);
+            let expected = naive[expected_page.start..expected_page.end].to_vec();
+
+            prop_assert_eq!(running.total, expected_page.total);
+            prop_assert_eq!(running.truncated, expected_page.truncated);
+            prop_assert_eq!(running.matches, expected);
+        }
     }
 }
