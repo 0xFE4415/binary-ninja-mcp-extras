@@ -47,7 +47,7 @@ def _validate_type_names(names: list[str]) -> list[str]:
 
 @mcp.tool(destructive=True)
 def rex_struct_from_access(call: mcp.ToolCall, name: str) -> dict[str, object]:
-    """Infer and define a struct from the view's recorded offset accesses.
+    """Infer a struct from the offset accesses analysis has recorded; analyze the derefs first.
 
     :param name: Name for the new structure.
     """

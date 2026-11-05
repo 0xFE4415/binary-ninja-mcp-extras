@@ -94,7 +94,7 @@ def rex_call_paths(
     max_depth: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_CALL_PATH_DEPTH)] = 8,
     max_paths: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_CALL_PATHS)] = 5,
 ) -> _CallPathsResult:
-    """Bounded breadth-first search for call paths between two functions.
+    """Bounded BFS for call paths; direction picks which call edges the walk follows to the target.
 
     :param from_addr: Address inside the starting function.
     :param to_addr: Address inside the target function.

@@ -292,7 +292,7 @@ def rex_uidf_set(
     state: ValueState = "ConstantValue",
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
 ) -> dict[str, object]:
-    """Inform a value for an MLIL variable at one definition site; returns the settled HLIL.
+    """Inform an MLIL value; a key-table base pointer as ConstantPointerValue folds its byte checks.
 
     :param function: Address expression inside the target function.
     :param variable: MLIL variable name, as listed by bn_variable_list.
@@ -333,7 +333,7 @@ def rex_uidf_set_many(
     items: list[Annotated[Any, mcp.Schema(_UIDF_ITEMS_SCHEMA)]],
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
 ) -> dict[str, object]:
-    """Inform multiple MLIL values, report item errors, and reanalyze once.
+    """Inform several MLIL values in one reanalysis: a byte-check family's operands all at once.
 
     :param function: Address expression inside the target function.
     :param items: 1 to 128 objects with variable, value, optional def_address and state.

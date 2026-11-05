@@ -140,7 +140,7 @@ def rex_function_constraints(
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> dict[str, object]:
-    """List branch comparisons against constants, with the load or variable each one tests.
+    """List constant branch comparisons; inform their variable with rex_uidf_set to fold them.
 
     :param function: Address expression inside the target function.
     :param limit: Maximum constraints to return.
