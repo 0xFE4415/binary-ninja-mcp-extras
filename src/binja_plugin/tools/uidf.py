@@ -9,6 +9,7 @@ that a user value always attaches to a real definition site.
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
 from typing import Annotated, Literal
 
 from binaryninja import mcp
@@ -99,6 +100,24 @@ def _collect_mlil_definitions(
             "variable names come from bn_variable_list",
         )
     return matches
+
+
+def _iter_uidf_entries(targets: list[Function]) -> Iterator[dict[str, object]]:
+    return (
+        {
+            "function": _function_entry(target),
+            "variable": _truncate(stored.name),
+            "definition_site": hex(site.addr),
+            "architecture": site.arch.name,
+            "state": value.type.name,
+            "value": _truncate(str(value)),
+        }
+        for target in targets
+        for stored, sites in sorted(
+            target.get_all_user_var_values().items(), key=lambda item: item[0].name
+        )
+        for site, value in sorted(sites.items(), key=lambda item: item[0].addr)
+    )
 
 
 def _select_definition_site(
@@ -245,20 +264,5 @@ def rex_uidf_list(
         if function is not None
         else sorted(bv.functions, key=lambda entry: entry.start)
     )
-    entries: list[dict[str, object]] = []
-    for target in targets:
-        informed = target.get_all_user_var_values()
-        for stored, sites in sorted(informed.items(), key=lambda item: item[0].name):
-            for site, value in sorted(sites.items(), key=lambda item: item[0].addr):
-                entries.append(
-                    {
-                        "function": _function_entry(target),
-                        "variable": _truncate(stored.name),
-                        "definition_site": hex(site.addr),
-                        "architecture": site.arch.name,
-                        "state": value.type.name,
-                        "value": _truncate(str(value)),
-                    }
-                )
-    page, total, truncated = _paginate(entries, offset, limit)
+    page, total, truncated = _paginate(_iter_uidf_entries(targets), offset, limit)
     return {"total": total, "truncated": truncated, "values": page}

@@ -39,6 +39,42 @@ def _text_matcher(pattern: str, regex: bool, ignore_case: bool) -> Callable[[str
     return lambda value: pattern in value
 
 
+def _string_reference_entry(view: Any, string: Any, derived: bool) -> dict[str, object]:
+    if derived:
+        refs = list(view.get_derived_string_code_refs(string, max_items=_MAX_STRING_REFS + 1))
+        location = string.location
+        location_out = (
+            None
+            if location is None
+            else {
+                "type": location.location_type.name,
+                "address": hex(location.address),
+                "length": location.length,
+            }
+        )
+    else:
+        refs = list(view.get_code_refs(string.start, max_items=_MAX_STRING_REFS + 1))
+        location_out = {
+            "type": string.type.name,
+            "address": hex(string.start),
+            "length": len(string),
+        }
+    return {
+        "value": _truncate(str(string.value)),
+        "location": location_out,
+        "derived": derived,
+        "refs": [
+            {
+                "function_start": None if ref.function is None else hex(ref.function.start),
+                "function_name": None if ref.function is None else _truncate(ref.function.name),
+                "address": hex(ref.address),
+            }
+            for ref in refs[:_MAX_STRING_REFS]
+        ],
+        "refs_truncated": len(refs) > _MAX_STRING_REFS,
+    }
+
+
 @mcp.tool(read_only=True)
 def rex_string_refs(
     call: mcp.ToolCall,
@@ -74,45 +110,7 @@ def rex_string_refs(
         offset,
         limit,
     )
-    strings = []
-    for string, derived in page:
-        if derived:
-            refs = list(bv.get_derived_string_code_refs(string, max_items=_MAX_STRING_REFS + 1))
-            location = string.location
-            location_out = (
-                None
-                if location is None
-                else {
-                    "type": location.location_type.name,
-                    "address": hex(location.address),
-                    "length": location.length,
-                }
-            )
-        else:
-            refs = list(bv.get_code_refs(string.start, max_items=_MAX_STRING_REFS + 1))
-            location_out = {
-                "type": string.type.name,
-                "address": hex(string.start),
-                "length": len(string),
-            }
-        strings.append(
-            {
-                "value": _truncate(str(string.value)),
-                "location": location_out,
-                "derived": derived,
-                "refs": [
-                    {
-                        "function_start": None if ref.function is None else hex(ref.function.start),
-                        "function_name": None
-                        if ref.function is None
-                        else _truncate(ref.function.name),
-                        "address": hex(ref.address),
-                    }
-                    for ref in refs[:_MAX_STRING_REFS]
-                ],
-                "refs_truncated": len(refs) > _MAX_STRING_REFS,
-            }
-        )
+    strings = [_string_reference_entry(bv, string, derived) for string, derived in page]
     return {"total": total, "truncated": truncated, "strings": strings}
 
 

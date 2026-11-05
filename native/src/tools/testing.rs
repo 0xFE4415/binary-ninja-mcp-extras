@@ -28,17 +28,19 @@ impl ChunkedReadView for FakeView {
     }
 
     fn read_into(&self, buffer: &mut [u8], position: u64) -> usize {
-        for (start, bytes) in &self.runs {
-            let run_end = *start + bytes.len() as u64;
-            if position >= *start && position < run_end {
+        self.runs
+            .iter()
+            .find(|(start, bytes)| {
+                let run_end = *start + bytes.len() as u64;
+                position >= *start && position < run_end
+            })
+            .map_or(0, |(start, bytes)| {
                 let offset = (position - start) as usize;
                 let taken = bytes.len().min(offset + buffer.len());
                 let copied = taken - offset;
                 buffer[..copied].copy_from_slice(&bytes[offset..taken]);
-                return copied;
-            }
-        }
-        0
+                copied
+            })
     }
 }
 

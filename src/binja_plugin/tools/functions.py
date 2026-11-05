@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypedDict
 
 from binaryninja import mcp
 from binaryninja.function import Function
 
 from binja_plugin.tools import (
     _function_entry,
+    _FunctionEntry,
     _parse_address_batch,
     _require_function,
     _validate_range,
@@ -28,8 +29,40 @@ _DEFINE_WAIT_SLICE_MS = 100
 _MAX_DEFINE_WAIT_MS = 600000
 
 
+class _CallPathsResult(TypedDict):
+    reachable: bool
+    paths: list[list[_FunctionEntry]]
+    truncated: bool
+    explored: int
+
+
+class _FunctionContainingResult(TypedDict):
+    functions: list[_FunctionEntry]
+    truncated: bool
+
+
+class _FunctionDefinitionResult(_FunctionEntry):
+    analyzed: bool
+    waited_ms: int
+
+
+class _DefinedFunctionEntry(_FunctionEntry):
+    analyzed: bool
+
+
+class _FunctionDefineManyResult(TypedDict):
+    defined: list[_DefinedFunctionEntry]
+    failed: list[str]
+    pending: list[str]
+    waited_ms: int
+
+
 def _is_analyzed(function: Function) -> bool:
     return len(list(function.basic_blocks)) > 0
+
+
+def _pending_functions(functions: list[Function]) -> list[Function]:
+    return [function for function in functions if not _is_analyzed(function)]
 
 
 def _settle_analysis(
@@ -41,13 +74,13 @@ def _settle_analysis(
     one has a block or the deadline passes; without it the state is sampled once.
     """
     if not wait:
-        return [function for function in functions if not _is_analyzed(function)], 0
+        return _pending_functions(functions), 0
     started = time.monotonic()
     deadline = started + timeout_ms / 1000
-    pending = [function for function in functions if not _is_analyzed(function)]
+    pending = _pending_functions(functions)
     while pending and time.monotonic() < deadline:
         time.sleep(_DEFINE_WAIT_SLICE_MS / 1000)
-        pending = [function for function in functions if not _is_analyzed(function)]
+        pending = _pending_functions(functions)
     return pending, round((time.monotonic() - started) * 1000)
 
 
@@ -59,7 +92,7 @@ def rex_call_paths(
     direction: Literal["callers", "callees"] = "callers",
     max_depth: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_CALL_PATH_DEPTH)] = 8,
     max_paths: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_CALL_PATHS)] = 5,
-) -> dict[str, object]:
+) -> _CallPathsResult:
     """Bounded breadth-first search for call paths between two functions.
 
     :param from_addr: Address inside the starting function.
@@ -73,7 +106,7 @@ def rex_call_paths(
     max_paths = _validate_range("max_paths", max_paths, 1, _MAX_CALL_PATHS)
     source = _require_function(bv, from_addr)
     target = _require_function(bv, to_addr)
-    paths: list[list[dict[str, object]]] = []
+    paths: list[list[_FunctionEntry]] = []
     if source.start == target.start:
         return {
             "reachable": True,
@@ -113,7 +146,7 @@ def rex_call_paths(
 
 
 @mcp.tool(read_only=True)
-def rex_function_containing(call: mcp.ToolCall, addr: mcp.Address) -> dict[str, object]:
+def rex_function_containing(call: mcp.ToolCall, addr: mcp.Address) -> _FunctionContainingResult:
     """List the functions that contain an address.
 
     :param addr: Address to look up.
@@ -133,7 +166,7 @@ def rex_function_define(
     start: mcp.Address,
     wait: bool = True,
     timeout_ms: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DEFINE_WAIT_MS)] = 10000,
-) -> dict[str, object]:
+) -> _FunctionDefinitionResult:
     """Turn the bytes at an address into a function, optionally waiting for analysis.
 
     :param start: Address of the new function's entry point.
@@ -154,7 +187,7 @@ def rex_function_define_many(
     addresses: list[str],
     wait: bool = True,
     timeout_ms: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DEFINE_WAIT_MS)] = 10000,
-) -> dict[str, object]:
+) -> _FunctionDefineManyResult:
     """Turn the bytes at many addresses into functions, then optionally wait for analysis.
 
     :param addresses: 1 to 100 address expressions; the batch fails whole on a bad entry.
@@ -175,7 +208,9 @@ def rex_function_define_many(
     still_pending = {function.start for function in pending}
     return {
         "defined": [
-            {**_function_entry(function), "analyzed": function.start not in still_pending}
+            _DefinedFunctionEntry(
+                **_function_entry(function), analyzed=function.start not in still_pending
+            )
             for function in defined
         ],
         "failed": failed,
@@ -185,7 +220,7 @@ def rex_function_define_many(
 
 
 @mcp.tool(destructive=True)
-def rex_function_undefine(call: mcp.ToolCall, start: mcp.Address) -> dict[str, object]:
+def rex_function_undefine(call: mcp.ToolCall, start: mcp.Address) -> _FunctionEntry:
     """Remove the user function covering an address.
 
     :param start: Any address inside the function to remove.

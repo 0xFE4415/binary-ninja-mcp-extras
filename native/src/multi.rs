@@ -37,7 +37,7 @@ pub fn scan_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{naive_matches, pattern_from_tokens};
+    use crate::test_utils::{expected_pagination, naive_matches, pattern_from_tokens};
     use proptest::prelude::*;
 
     fn parse_all<S: AsRef<str>>(patterns: &[S]) -> Vec<HexPattern> {
@@ -256,23 +256,15 @@ mod tests {
             let buckets = walk_windows(&haystack, base, &patterns, chunk, &pagination);
             for (text, (pattern, bucket)) in texts.iter().zip(patterns.iter().zip(&buckets)) {
                 let naive = naive_matches(&haystack, pattern);
-                let window_end = offset.saturating_add(limit);
-                let available = naive.len() as u64;
-                let truncated = available > window_end;
-                let page_start = offset.min(available) as usize;
-                let page_end = window_end.min(available) as usize;
-                let expected: Vec<u64> = naive[page_start..page_end]
+                let expected_page = expected_pagination(naive.len(), offset, limit);
+                let expected: Vec<u64> = naive[expected_page.start..expected_page.end]
                     .iter()
                     .map(|pos| base + *pos as u64)
                     .collect();
                 let context =
                     format!("{text:?} chunk {chunk} page ({offset}, {limit}) hay {haystack:?}");
-                assert_eq!(
-                    bucket.total,
-                    if truncated { window_end + 1 } else { available },
-                    "{context}"
-                );
-                assert_eq!(bucket.truncated, truncated, "{context}");
+                assert_eq!(bucket.total, expected_page.total, "{context}");
+                assert_eq!(bucket.truncated, expected_page.truncated, "{context}");
                 assert_eq!(bucket.matches, expected, "{context}");
             }
         }
@@ -311,18 +303,15 @@ mod tests {
                         &pagination,
                     );
                     for (index, bucket) in buckets.iter().enumerate() {
-                        let window_end = offset.saturating_add(limit);
-                        let available = naive[index].len() as u64;
-                        let truncated = available > window_end;
-                        let expected_total = if truncated { window_end + 1 } else { available };
-                        let page_start = offset.min(available) as usize;
-                        let page_end = window_end.min(available) as usize;
-                        let expected: Vec<u64> = naive[index][page_start..page_end]
+                        let expected_page =
+                            expected_pagination(naive[index].len(), offset, limit);
+                        let expected: Vec<u64> = naive[index]
+                            [expected_page.start..expected_page.end]
                             .iter()
                             .map(|pos| *pos as u64)
                             .collect();
-                        prop_assert_eq!(bucket.total, expected_total, "pattern {} offset {} limit {}", index, offset, limit);
-                        prop_assert_eq!(bucket.truncated, truncated, "pattern {} offset {} limit {}", index, offset, limit);
+                        prop_assert_eq!(bucket.total, expected_page.total, "pattern {} offset {} limit {}", index, offset, limit);
+                        prop_assert_eq!(bucket.truncated, expected_page.truncated, "pattern {} offset {} limit {}", index, offset, limit);
                         prop_assert_eq!(&bucket.matches, &expected, "pattern {} offset {} limit {}", index, offset, limit);
                     }
                     let all_done = buckets.iter().all(RunningScan::is_done);

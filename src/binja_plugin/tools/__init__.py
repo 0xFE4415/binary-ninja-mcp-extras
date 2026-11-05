@@ -14,7 +14,7 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterable, Iterator
 from itertools import islice
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -224,7 +224,12 @@ def _require_function(bv: BinaryView, address: int) -> Function:
     return _require_containing_function(bv, address, "no_function", "function")
 
 
-def _function_entry(function: Function) -> dict[str, object]:
+class _FunctionEntry(TypedDict):
+    start: str
+    name: str
+
+
+def _function_entry(function: Function) -> _FunctionEntry:
     return {"start": hex(function.start), "name": _truncate(function.name)}
 
 

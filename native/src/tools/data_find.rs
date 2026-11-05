@@ -74,9 +74,20 @@ mod tests {
     use super::*;
     use crate::hexpattern::HexPattern;
     use crate::scan::Pagination;
-    use crate::test_utils::{naive_matches, pattern_from_tokens};
+    use crate::test_utils::{expected_pagination, naive_matches, pattern_from_tokens};
     use crate::tools::testing::{FakeView, scan_fake_view};
     use proptest::prelude::*;
+
+    fn scan_page(view: &FakeView, pattern: &HexPattern, offset: u64, limit: u64) -> RunningScan {
+        scan_fake_view(
+            view,
+            4,
+            None,
+            pattern.len().saturating_sub(1) as u64,
+            pattern,
+            &Pagination { offset, limit },
+        )
+    }
 
     #[test]
     fn finds_matches_across_chunk_boundaries() {
@@ -221,63 +232,29 @@ mod tests {
                 })
                 .collect();
             let pattern = HexPattern::parse(&tokens.join(" ")).unwrap();
-            let overlap = (pattern.len() - 1) as u64;
-
-            let full_page = Pagination {
-                offset: 0,
-                limit: 500,
-            };
-            let full = scan_fake_view(&view, 4, None, overlap, &pattern, &full_page);
+            let full = scan_page(&view, &pattern, 0, 500);
             assert!(!full.truncated, "case {case}");
             assert_eq!(full.matches.len() as u64, full.total, "case {case}");
             let true_total = full.total;
 
-            let mut tiled = Vec::new();
-            for page_offset in (0..=true_total).step_by(2) {
-                let page = scan_fake_view(
-                    &view,
-                    4,
-                    None,
-                    overlap,
-                    &pattern,
-                    &Pagination {
-                        offset: page_offset,
-                        limit: 2,
-                    },
-                );
-                tiled.extend(page.matches);
-            }
+            let tiled: Vec<u64> = (0..=true_total)
+                .step_by(2)
+                .flat_map(|page_offset| scan_page(&view, &pattern, page_offset, 2).matches)
+                .collect();
             assert_eq!(tiled, full.matches, "case {case}");
 
             // Every offset pages the exact expected slice.
             for page_offset in 0..=true_total {
-                let page = scan_fake_view(
-                    &view,
-                    4,
-                    None,
-                    overlap,
-                    &pattern,
-                    &Pagination {
-                        offset: page_offset,
-                        limit: 2,
-                    },
-                );
-                let expected: Vec<u64> = full
-                    .matches
-                    .iter()
-                    .skip(page_offset as usize)
-                    .take(2)
-                    .copied()
-                    .collect();
+                let page = scan_page(&view, &pattern, page_offset, 2);
+                let expected_page = expected_pagination(full.matches.len(), page_offset, 2);
+                let expected = full.matches[expected_page.start..expected_page.end].to_vec();
                 assert_eq!(page.matches, expected, "case {case} offset {page_offset}");
                 assert_eq!(
-                    page.total,
-                    true_total.min(page_offset.saturating_add(3)),
+                    page.total, expected_page.total,
                     "case {case} offset {page_offset}"
                 );
                 assert_eq!(
-                    page.truncated,
-                    true_total > page_offset + 2,
+                    page.truncated, expected_page.truncated,
                     "case {case} offset {page_offset}"
                 );
             }
@@ -285,32 +262,12 @@ mod tests {
             // An arbitrary adversarial (but valid) limit/offset pair.
             let limit = (next() % 501) as u64;
             let offset = ((next() as u64) << 32) | next() as u64;
-            let page = scan_fake_view(
-                &view,
-                4,
-                None,
-                overlap,
-                &pattern,
-                &Pagination { offset, limit },
-            );
-            let expected: Vec<u64> = full
-                .matches
-                .iter()
-                .skip(offset as usize)
-                .take(limit as usize)
-                .copied()
-                .collect();
+            let page = scan_page(&view, &pattern, offset, limit);
+            let expected_page = expected_pagination(full.matches.len(), offset, limit);
+            let expected = full.matches[expected_page.start..expected_page.end].to_vec();
             assert_eq!(page.matches, expected, "case {case}");
-            assert_eq!(
-                page.total,
-                true_total.min(offset.saturating_add(limit).saturating_add(1)),
-                "case {case}"
-            );
-            assert_eq!(
-                page.truncated,
-                true_total > offset.saturating_add(limit),
-                "case {case}"
-            );
+            assert_eq!(page.total, expected_page.total, "case {case}");
+            assert_eq!(page.truncated, expected_page.truncated, "case {case}");
         }
     }
 

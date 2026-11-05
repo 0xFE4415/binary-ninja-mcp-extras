@@ -15,7 +15,7 @@ use super::{
 };
 use crate::hexpattern::HexPattern;
 use crate::multi::{MAX_MULTI_PATTERNS, scan_segment};
-use crate::scan::RunningScan;
+use crate::scan::{Pagination, RunningScan};
 
 // No `binary` field — same server-reserved argument rule as `DataFindArgs`.
 #[derive(Deserialize, JsonSchema)]
@@ -52,30 +52,7 @@ impl TypedMcpTool for RxMultiFind {
         call: &McpToolCall,
         args: MultiFindArgs,
     ) -> Result<McpToolResult, McpToolError> {
-        // The published schema caps the list (minItems/maxItems), but nothing
-        // on the server enforces array length before `invoke`: the typed
-        // adapter only deserializes, and an empty list would also violate
-        // `longest_pattern_overlap`'s precondition below.
-        if args.patterns.is_empty() {
-            return Err(McpToolError::invalid_params(
-                "at least one pattern is required",
-            ));
-        }
-        if args.patterns.len() > MAX_MULTI_PATTERNS {
-            return Err(McpToolError::new(
-                "too_many_patterns",
-                format!("at most {MAX_MULTI_PATTERNS} patterns are allowed"),
-            ));
-        }
-        let pagination = validate_pagination(args.limit, args.offset)?;
-        let patterns = args
-            .patterns
-            .iter()
-            .enumerate()
-            .map(|(index, text)| {
-                parse_checked_pattern(text).map_err(|error| prefix_pattern_error(index, error))
-            })
-            .collect::<Result<Vec<_>, McpToolError>>()?;
+        let (patterns, pagination) = prepare_scan(&args.patterns, args.limit, args.offset)?;
         let view = call.require_binary_view()?;
         let bounds = resolve_bounds(&view, args.section.as_deref())?;
         let mut buckets: Vec<RunningScan> =
@@ -105,6 +82,34 @@ impl TypedMcpTool for RxMultiFind {
     }
 }
 
+fn prepare_scan(
+    pattern_texts: &[String],
+    limit: u32,
+    offset: u64,
+) -> Result<(Vec<HexPattern>, Pagination), McpToolError> {
+    // Schema constraints are not enforced by the typed adapter before invoke.
+    if pattern_texts.is_empty() {
+        return Err(McpToolError::invalid_params(
+            "at least one pattern is required",
+        ));
+    }
+    if pattern_texts.len() > MAX_MULTI_PATTERNS {
+        return Err(McpToolError::new(
+            "too_many_patterns",
+            format!("at most {MAX_MULTI_PATTERNS} patterns are allowed"),
+        ));
+    }
+    let pagination = validate_pagination(limit, offset)?;
+    let patterns = pattern_texts
+        .iter()
+        .enumerate()
+        .map(|(index, text)| {
+            parse_checked_pattern(text).map_err(|error| prefix_pattern_error(index, error))
+        })
+        .collect::<Result<Vec<_>, McpToolError>>()?;
+    Ok((patterns, pagination))
+}
+
 /// Multi-pattern parse failures name the offending entry.
 fn prefix_pattern_error(index: usize, error: McpToolError) -> McpToolError {
     let (code, message) = (error.code, error.message);
@@ -127,7 +132,7 @@ fn longest_pattern_overlap(patterns: &[HexPattern]) -> u64 {
 mod tests {
     use super::*;
     use crate::scan::Pagination;
-    use crate::test_utils::{naive_matches, pattern_from_tokens};
+    use crate::test_utils::{expected_pagination, naive_matches, pattern_from_tokens};
     use crate::tools::testing::FakeView;
     use proptest::prelude::*;
 
@@ -138,6 +143,30 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "invalid_pattern");
         assert_eq!(error.message, "pattern 2: invalid hex byte token 'zz'");
+    }
+
+    #[test]
+    fn scan_input_validation_preserves_error_order() {
+        let empty = Vec::new();
+        let error = prepare_scan(&empty, 501, 0).unwrap_err();
+        assert_eq!(error.code, "invalid_params");
+        assert_eq!(error.message, "at least one pattern is required");
+
+        let too_many = vec!["zz".to_string(); MAX_MULTI_PATTERNS + 1];
+        let error = prepare_scan(&too_many, 501, 0).unwrap_err();
+        assert_eq!(error.code, "too_many_patterns");
+
+        let invalid = vec!["zz".to_string()];
+        let error = prepare_scan(&invalid, 501, 0).unwrap_err();
+        assert_eq!(
+            error.message,
+            "Invalid integer parameter 'limit': Must be at most 500"
+        );
+
+        let valid = vec!["90".to_string()];
+        let (patterns, pagination) = prepare_scan(&valid, 50, 2).unwrap();
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(pagination.offset, 2);
     }
 
     // The multi-pattern walk overlaps windows by the LONGEST pattern minus one:
@@ -243,19 +272,14 @@ mod tests {
             });
 
             for (index, (pattern, bucket)) in patterns.iter().zip(&buckets).enumerate() {
-                let window_end = offset.saturating_add(limit);
                 let naive = naive_matches(&haystack, pattern);
-                let available = naive.len() as u64;
-                let truncated = available > window_end;
-                let expected_total = if truncated { window_end + 1 } else { available };
-                let page_start = offset.min(available) as usize;
-                let page_end = window_end.min(available) as usize;
-                let expected: Vec<u64> = naive[page_start..page_end]
+                let expected_page = expected_pagination(naive.len(), offset, limit);
+                let expected: Vec<u64> = naive[expected_page.start..expected_page.end]
                     .iter()
                     .map(|position| base + *position as u64)
                     .collect();
-                prop_assert_eq!(bucket.total, expected_total, "pattern {}", index);
-                prop_assert_eq!(bucket.truncated, truncated, "pattern {}", index);
+                prop_assert_eq!(bucket.total, expected_page.total, "pattern {}", index);
+                prop_assert_eq!(bucket.truncated, expected_page.truncated, "pattern {}", index);
                 prop_assert_eq!(&bucket.matches, &expected, "pattern {}", index);
             }
             prop_assert_eq!(alive, !buckets.iter().all(RunningScan::is_done));
