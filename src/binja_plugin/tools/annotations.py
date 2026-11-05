@@ -44,6 +44,9 @@ class _AnnotationPlan:
     """One fully validated annotation, staged for the batch transaction's apply phase."""
 
     function: Function
+    # The parsed address the item named: comments land exactly here, while name and
+    # prototype are function-level and always apply to the whole function.
+    address: int
     name: str | None = None
     comment: str | None = None
     parsed_type: object | None = None
@@ -99,13 +102,17 @@ def _annotate_apply_plans(bv: BinaryView, staged: list[_AnnotationPlan]) -> None
     try:
         with bv.undoable_transaction():
             for plan in staged:
+                # Any because the stubbed Function type does not model set_comment_at.
+                function: Any = plan.function
                 if plan.comment is not None:
-                    plan.function.comment = plan.comment
+                    # The comment lands at the exact address the item named, not as the
+                    # function-level comment snapped to the start.
+                    function.set_comment_at(plan.address, plan.comment)
                 if plan.parsed_type is not None:
-                    plan.function.set_user_type(plan.parsed_type)
+                    function.set_user_type(plan.parsed_type)
                 # Name last, so an explicit name has the final word on naming.
                 if plan.name is not None:
-                    plan.function.name = plan.name
+                    function.name = plan.name
     except Exception as error:
         # undoable_transaction reverted the whole batch core-side before this runs;
         # saying so keeps a caller from retrying a half-applied batch.
@@ -155,9 +162,18 @@ def _annotate_resolve(
         except Exception as error:
             return _annotate_function_error(address, f"bad type: {_truncate(str(error))}"), None
     function = functions[0]
+    # A comment lands at the exact address the item named; the other fields are
+    # function-level and apply to the start, so the row echoes where it landed.
+    annotated = address if comment is not None else function.start
     return (
-        {"addr": hex(function.start), "ok": True},
-        _AnnotationPlan(function=function, name=name, comment=comment, parsed_type=parsed_type),
+        {"addr": hex(annotated), "ok": True},
+        _AnnotationPlan(
+            function=function,
+            address=address,
+            name=name,
+            comment=comment,
+            parsed_type=parsed_type,
+        ),
     )
 
 

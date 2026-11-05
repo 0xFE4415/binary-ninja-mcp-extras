@@ -111,7 +111,9 @@ def rex_constant_find(
         }
         for start, name, addresses in _drop(groups, offset)
     ]
-    return {"truncated": truncated, "functions": functions}
+    # Count seen, like _paginate: exact when the scan completed, so a page past the end
+    # carries the total it undershot; a lower bound once truncated stops the scan early.
+    return {"total": matched, "truncated": truncated, "functions": functions}
 
 
 @mcp.tool(read_only=True)
@@ -187,4 +189,6 @@ def rex_find_functions_by_pattern(
         }
         for start, entry in _drop(hits.items(), offset)
     ]
-    return {"truncated": truncated, "functions": functions}
+    # Count seen, like _paginate: exact when the scan completed, so a page past the end
+    # carries the total it undershot; a lower bound once truncated stops the scan early.
+    return {"total": len(hits) + int(truncated), "truncated": truncated, "functions": functions}

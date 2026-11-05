@@ -216,6 +216,10 @@ class FakeFunction:
         self.callers = callers if callers is not None else []
         self.callees = callees if callees is not None else []
         self.comment = ""
+        # Addressed comments, separate storage from the function-level ``comment``:
+        # the real core keeps BNSetFunctionComment and BNSetCommentForAddress apart,
+        # and get_comment_at answers "" wherever set_comment_at never ran.
+        self.comments: dict[int, str] = {}
         self.user_type: object | None = None
         self.user_type_error: Exception | None = None
         self.vars = vars if vars is not None else []
@@ -247,6 +251,12 @@ class FakeFunction:
         if self.user_type_error is not None:
             raise self.user_type_error
         self.user_type = value
+
+    def get_comment_at(self, address: int) -> str:
+        return self.comments.get(address, "")
+
+    def set_comment_at(self, address: int, comment: str) -> None:
+        self.comments[address] = comment
 
     def _definition_addresses(self, variable: FakeVariable) -> list[int]:
         if self.mlil is None:

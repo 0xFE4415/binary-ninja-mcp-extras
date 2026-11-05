@@ -51,6 +51,15 @@ _MAIN_FALLBACK_NOTE = (
     "no main symbol and no parsable __libc_start_main pointer in the entry function"
 )
 
+# A trap ends the basic block, so analysis stops there: bytes after it belong to no
+# function even though a handler can resume execution past the trap (the same
+# block-ending blind spot _containment_miss_hint names).
+_TRAP_MNEMONICS = frozenset({"int3", "breakpoint", "ud2"})
+_QUICK_MAIN_TRAP_HINT = (
+    "function ends in {mnemonic}; if a SIGTRAP-style handler resumes past it, execution "
+    "reaches code outside this function — inspect with rex_disasm_at and rex_function_define"
+)
+
 # Precompiled once: _argument_address runs per rendered call argument, so the compiled
 # pattern must not go through the re-module cache on every call.
 _HEX_ADDRESS_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
@@ -345,6 +354,23 @@ def rex_hlil_grep(
     }
 
 
+def _trap_terminator(function: Any) -> str | None:
+    """The trap mnemonic when the function's last addressed instruction is a trap, else None."""
+    lines = _render_function_disassembly(function)
+    if not lines:
+        return None
+    last_address = lines[-1][0]
+    for line_address, text in reversed(lines):
+        # Lines at the last address include the instruction and its annotation
+        # continuations; only the instruction's mnemonic decides.
+        if line_address != last_address:
+            break
+        tokens = text.split()
+        if tokens and tokens[0].lower() in _TRAP_MNEMONICS:
+            return tokens[0].lower()
+    return None
+
+
 @mcp.tool(read_only=True)
 def rex_quick_main(
     call: mcp.ToolCall,
@@ -365,11 +391,14 @@ def rex_quick_main(
     main, method, note = _resolve_main(bv, call, functions[0])
     function = main if main is not None else functions[0]
     lines, truncated = _render_hlil_lines(function.hlil, max_lines)
+    mnemonic = _trap_terminator(function)
+    hint = _QUICK_MAIN_TRAP_HINT.format(mnemonic=mnemonic) if mnemonic is not None else None
     return {
         "entry_point": hex(entry_point),
         "method": method,
         "main": hex(main.start) if main is not None else None,
         "note": note,
+        "hint": hint,
         "function": _function_entry(function),
         "lines": lines,
         "truncated": truncated,

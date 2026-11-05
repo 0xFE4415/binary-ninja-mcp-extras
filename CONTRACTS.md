@@ -33,12 +33,16 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   address, then pages the combined list with code refs first. Counts cover only fetched
   refs; omitted refs are not necessarily higher addresses, and `truncated` can be false.
 - `rex_constant_find`, `rex_find_functions_by_pattern`, and `rex_hlil_grep` accept
-  `limit`/`offset` and return `truncated`, not `total`. All three stop their scan at the
+  `limit`/`offset` and return `truncated`. All three stop their scan at the
   first result past the page, so `truncated` means exactly "another matching function
-  exists beyond it".
-  `rex_hlil_grep` additionally returns `scan_incomplete`, set when the `max_functions`
-  render budget ran out before the whole view was scanned: nothing was proven about
-  matches past the page, so more may exist even though `truncated` is false. Its
+  exists beyond it". `rex_constant_find` and `rex_find_functions_by_pattern` also return
+  `total`, the count of matching functions seen before the scan stopped: exact once
+  `truncated` is false, so an empty page whose `total` is at or below the `offset` is an
+  out-of-range page, not an empty result set.
+  `rex_hlil_grep` returns no `total`; it additionally returns `scan_incomplete`, set when
+  the `max_functions` render budget ran out before the whole view was scanned: nothing
+  was proven about matches past the page, so more may exist even though `truncated` is
+  false. Its
   `offset`/`next_offset` count functions in the view, not matches; pass the
   cursor back as `offset` and page while either flag is set. `rex_disasm_many`
   also returns `truncated` and a `next_offset` index into the input addresses;

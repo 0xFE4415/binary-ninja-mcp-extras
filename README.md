@@ -92,7 +92,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 
 | Tool | Notes |
 | --- | --- |
-| `rex_annotate_many` | Rename, comment, or retype up to 128 functions in one transaction. |
+| `rex_annotate_many` | Rename or retype a function; comment at the exact address; 128 items. |
 | `rex_memory_write` | Overwrite bytes in the binary view with a hex byte string. |
 | `rex_function_define` | Turn bytes at an address into a function; optional wait for analysis. |
 | `rex_function_define_many` | Define up to 128 functions per call, waiting for first blocks. |

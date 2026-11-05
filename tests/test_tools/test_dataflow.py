@@ -143,6 +143,23 @@ def test_hlil_statements_carry_their_addresses() -> None:
     assert first_page["truncated"] is True
 
 
+def test_hlil_statements_page_past_the_end_keeps_the_exact_total() -> None:
+    # The in-repo counterpart of the core's bn_function_disassembly, whose past-end page
+    # reports an empty listing: here the page is empty but `total` stays exact, so an
+    # out-of-range offset is detectable and must never read as an empty function.
+    hlil = FakeHLIL([[_statement(0x1000, 0, "i = 0"), _statement(0x1004, 1, "return i")]])
+    function = FakeFunction("main", 0x1000, 0x1100, hlil=hlil)
+    view = FakeBinaryView(functions=[function])
+    _, statements = get_tool("rex_hlil_statements")
+    result = statements(_call(view), function=0x1000, limit=10, offset=5)
+    assert result == {
+        "function": {"start": "0x1000", "name": "main"},
+        "total": 2,
+        "truncated": False,
+        "statements": [],
+    }
+
+
 def test_hlil_statements_without_hlil_fail_with_no_hlil() -> None:
     function = FakeFunction("bare", 0x2000, 0x2100)
     view = FakeBinaryView(functions=[function])
