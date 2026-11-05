@@ -19,6 +19,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   and `truncated`; the flag also covers rows dropped by its 4 MiB file cap.
   `rex_component_get` pages functions and returns exact `function_count` instead of
   `total`.
+  `rex_function_constraints`, `rex_hlil_statements`, and `rex_mlil_uses` build their full
+  list and return exact `total`/`truncated`. `rex_mlil_uses` resolves the variable one
+  address assigns; a split write defines a high:low pair and the tool reports the high
+  half.
 - For `rex_string_search`, `rex_data_find`, `rx_data_find`, `rex_string_refs`, and
   `rex_uidf_list`, a truncated `total` is a lower bound: scanning stops at the first
   result past the page. `rex_xrefs_to` has the same rule for fetched refs; `rx_multi_find`

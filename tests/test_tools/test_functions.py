@@ -310,6 +310,22 @@ def test_function_containing_explains_a_miss_after_a_function_at_zero() -> None:
     )
 
 
+def test_function_containing_names_the_function_that_ends_at_the_miss() -> None:
+    # Overlapping ranges: a shorter function starts inside the one that ends at the miss,
+    # so the previous-start lookup lands on it, and only a check of every function holding
+    # the preceding byte finds the range that actually ends at the miss.
+    view = FakeBinaryView(
+        functions=[FakeFunction("tail", 0x1000, 0x1100), FakeFunction("inner", 0x1080, 0x10A0)]
+    )
+    _, containing = get_tool("rex_function_containing")
+    with pytest.raises(FakeToolError) as exc:
+        containing(_call(view), 0x1100)
+    assert exc.value.code == "no_function"
+    assert exc.value.message.startswith(
+        "no function contains 0x1100; the address is immediately past the end of tail at 0x1000"
+    )
+
+
 def test_call_paths_finds_caller_and_callee_paths() -> None:
     view = _view_with_functions()
     _, paths = get_tool("rex_call_paths")

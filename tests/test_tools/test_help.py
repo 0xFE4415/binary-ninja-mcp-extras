@@ -235,3 +235,23 @@ def test_help_error_code_table_matches_the_handler_sources() -> None:
     defined = _defined_error_codes() - {"invalid_params"} - _TOOL_LEVEL_CODES
     listed = {code for codes in _PARAMETER_ERROR_CODES.values() for code in codes}
     assert listed == defined
+
+
+def test_help_details_the_dataflow_tool_error_codes() -> None:
+    constraints = {
+        parameter["name"]: parameter
+        for parameter in _help("rex_function_constraints")["parameters"]
+    }
+    assert constraints["function"]["error_codes"] == ["no_mlil"]
+    statements = {
+        parameter["name"]: parameter for parameter in _help("rex_hlil_statements")["parameters"]
+    }
+    assert statements["function"]["error_codes"] == ["no_hlil"]
+    uses = {parameter["name"]: parameter for parameter in _help("rex_mlil_uses")["parameters"]}
+    assert uses["function"]["error_codes"] == ["no_mlil"]
+    assert uses["address"]["error_codes"] == ["no_definition"]
+    parameter = {
+        parameter["name"]: parameter for parameter in _help("rex_parameter_variables")["parameters"]
+    }
+    assert parameter["function"]["error_codes"] == ["no_mlil"]
+    assert parameter["parameter"]["error_codes"] == ["no_variable"]

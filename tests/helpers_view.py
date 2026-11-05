@@ -12,6 +12,7 @@ import types
 from collections.abc import Callable, Generator, Iterator
 from typing import Any, override
 
+from helpers_dataflow import FakeMLILInstructions
 from helpers_uidf import (
     FakeMediumLevelIL,
     FakePossibleValueSet,
@@ -206,7 +207,7 @@ class FakeFunction:
         callers: list[FakeFunction] | None = None,
         callees: list[FakeFunction] | None = None,
         vars: list[FakeVariable] | None = None,
-        mlil: FakeMediumLevelIL | None = None,
+        mlil: FakeMediumLevelIL | FakeMLILInstructions | None = None,
     ) -> None:
         self.name = name
         self.start = start

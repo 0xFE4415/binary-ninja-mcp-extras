@@ -28,6 +28,10 @@ _MAX_CHARS = 512
 # are invoked directly.
 _MAX_LIMIT = 500
 
+# Candidate variable names an error message may echo before it switches to a "+N more"
+# suffix: bounded so one misspelled name can never flood the MCP response.
+_MAX_NAME_CANDIDATES = 40
+
 # rex_disasm_at window sizes: bounded so one call can never request an unbounded
 # instruction render, whatever the containing function's size.
 _MAX_DISASM_CONTEXT = 4096
@@ -396,6 +400,12 @@ from .components import (
     rex_component_get,
 )
 from .data import rex_data_read, rex_relocation_at, rex_xrefs_to
+from .dataflow import (
+    rex_function_constraints,
+    rex_hlil_statements,
+    rex_mlil_uses,
+    rex_parameter_variables,
+)
 from .decompile import (
     _MAX_DECOMPILE_LINES,
     _MAX_HLIL_GREP_CONTEXT,

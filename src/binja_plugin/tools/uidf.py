@@ -23,6 +23,7 @@ from binaryninja.variable import Variable
 from binja_plugin.tools import (
     _MAX_DECOMPILE_LINES,
     _MAX_LIMIT,
+    _MAX_NAME_CANDIDATES,
     _function_entry,
     _paginate,
     _render_hlil_lines,
@@ -36,7 +37,6 @@ from binja_plugin.tools import (
 _UIDF_ANALYSIS_SLICE_MS = 100
 _MAX_UIDF_ANALYSIS_WAIT_MS = 10000
 _MAX_UIDF_BATCH = 128
-_MAX_NAME_CANDIDATES = 40
 
 _UIDF_ITEMS_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -205,7 +205,9 @@ def _collect_mlil_definitions(
     mlil = target.mlil
     if mlil is None:
         raise mcp.ToolError(
-            "no_mlil", f"function {_truncate(target.name)} has no MediumLevelIL yet"
+            "no_mlil",
+            f"function {_truncate(target.name)} has no MediumLevelIL yet; "
+            "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry",
         )
     matches = [
         (variable, definition)
@@ -214,6 +216,12 @@ def _collect_mlil_definitions(
         for definition in mlil.get_var_definitions(variable)
     ]
     if not matches:
+        if any(variable.name == name for variable in target.vars):
+            raise mcp.ToolError(
+                "no_variable",
+                f"MLIL variable '{_truncate(name)}' in {_truncate(target.name)} has no "
+                "MediumLevelIL definition sites",
+            )
         names = sorted({variable.name for variable in target.vars})
         shown = ", ".join(_truncate(candidate, 64) for candidate in names[:_MAX_NAME_CANDIDATES])
         more = (

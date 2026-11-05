@@ -363,11 +363,27 @@ def test_uidf_set_rejects_unknown_variables() -> None:
     assert exc.value.code == "no_variable"
     assert exc.value.message.startswith("no MLIL variable named 'nope' in main; variables: ")
     assert "use bn_variable_list for the full list" in exc.value.message
-    # A variable the function knows but never defines in the MLIL is equally unusable.
+    # A variable the function knows but never defines in the MLIL is equally unusable, and
+    # the message must not claim the name is unknown while listing it among candidates.
     with pytest.raises(FakeToolError) as exc:
         uidf_set(_call(view), 0x1100, "argc", "1")
     assert exc.value.code == "no_variable"
+    assert exc.value.message == (
+        "MLIL variable 'argc' in main has no MediumLevelIL definition sites"
+    )
     assert main.set_user_var_value_calls == []
+
+
+def test_uidf_set_counts_candidates_past_the_listed_ones() -> None:
+    variables = [FakeVariable(f"var_{index:02d}") for index in range(41)]
+    leaf = FakeFunction("leaf", 0x2000, 0x2100, vars=variables, mlil=FakeMediumLevelIL({}))
+    view = FakeBinaryView(functions=[leaf])
+    _, uidf_set = get_tool("rex_uidf_set")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x2000, "nope", "1")
+    assert exc.value.code == "no_variable"
+    assert exc.value.message.startswith("no MLIL variable named 'nope' in leaf; variables: ")
+    assert "(+1 more); use bn_variable_list for the full list" in exc.value.message
 
 
 def test_uidf_set_requires_def_address_for_multi_site_variables(
@@ -425,6 +441,7 @@ def test_uidf_set_rejects_functions_without_mlil() -> None:
         uidf_set(_call(view), 0x2000, "x", "1")
     assert exc.value.code == "no_mlil"
     assert "has no MediumLevelIL yet" in exc.value.message
+    assert "run bn_analysis_update_and_wait" in exc.value.message
 
 
 def test_uidf_set_rejects_bad_function_max_lines_and_state() -> None:

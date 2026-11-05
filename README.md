@@ -49,8 +49,8 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 ## Tool reference
 
 Every tool is pinned as read-only or destructive when it registers, and that marking
-is the only approval-policy signal an MCP client gets. The tables below cover all 48
-registered tools, split on that marking: 46 Python `rex_*` tools and 2 native `rx_*`
+is the only approval-policy signal an MCP client gets. The tables below cover all 52
+registered tools, split on that marking: 50 Python `rex_*` tools and 2 native `rx_*`
 scanners. Read the destructive table before you let an agent run those tools.
 
 ### Read-only tools
@@ -63,6 +63,10 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rx_multi_find` | Up to 64 hex patterns in one pass, with per-pattern prefilters in Rust. |
 | `rx_data_find` | `rex_data_find`'s contract with the byte scan running in native Rust. |
 | `rex_hlil_grep` | Regex search over rendered HLIL text, paged with a `next_offset` cursor. |
+| `rex_hlil_statements` | HLIL statements in block order, each tagged with its source address. |
+| `rex_function_constraints` | Branch comparisons against a constant, with the tested subject. |
+| `rex_mlil_uses` | Every read of the MLIL variable assigned at an address, plus its definitions. |
+| `rex_parameter_variables` | Map a parameter to its storage, MLIL variables, and carrying copies. |
 | `rex_constant_find` | Find functions whose rendered instructions reference a constant value. |
 | `rex_find_functions_by_pattern` | Map a byte pattern to the functions containing its matches. |
 | `rex_string_refs` | Code refs to detected strings, synthesized included; filters. |
