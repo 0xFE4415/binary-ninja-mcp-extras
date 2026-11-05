@@ -166,7 +166,7 @@ pub fn scan_pattern(
 mod tests {
     use super::*;
     use crate::hexpattern::HexPattern;
-    use crate::test_utils::{naive_matches, pattern_from_tokens};
+    use crate::test_utils::{expected_pagination, naive_matches, pattern_from_tokens};
     use proptest::prelude::*;
 
     fn pattern(text: &str) -> HexPattern {
@@ -361,20 +361,15 @@ mod tests {
                     let mut running = RunningScan::new();
                     let page = Pagination { offset, limit };
                     let keep_going = scan_pattern(&hay, 0, &pat, &page, &mut running);
-                    let window_end = offset.saturating_add(limit);
-                    let available = naive.len() as u64;
-                    let truncated = available > window_end;
-                    let expected_total = if truncated { window_end + 1 } else { available };
-                    let page_start = offset.min(available) as usize;
-                    let page_end = window_end.min(available) as usize;
-                    let expected: Vec<u64> = naive[page_start..page_end]
+                    let expected_page = expected_pagination(naive.len(), offset, limit);
+                    let expected: Vec<u64> = naive[expected_page.start..expected_page.end]
                         .iter()
                         .map(|pos| *pos as u64)
                         .collect();
-                    prop_assert_eq!(running.total, expected_total, "offset {} limit {}", offset, limit);
-                    prop_assert_eq!(running.truncated, truncated, "offset {} limit {}", offset, limit);
+                    prop_assert_eq!(running.total, expected_page.total, "offset {} limit {}", offset, limit);
+                    prop_assert_eq!(running.truncated, expected_page.truncated, "offset {} limit {}", offset, limit);
                     prop_assert_eq!(running.matches, expected, "offset {} limit {}", offset, limit);
-                    prop_assert_eq!(keep_going, !truncated, "offset {} limit {}", offset, limit);
+                    prop_assert_eq!(keep_going, !expected_page.truncated, "offset {} limit {}", offset, limit);
                 }
             }
         }

@@ -35,6 +35,14 @@ pub struct DataFindArgs {
 /// `rx_data_find`: the Python plugin's `rex_data_find` contract, scan in native Rust.
 pub(super) struct RxDataFind;
 
+fn response_json(running: &RunningScan) -> serde_json::Value {
+    json!({
+        "total": running.total,
+        "truncated": running.truncated,
+        "matches": matches_json(&running.matches),
+    })
+}
+
 impl TypedMcpTool for RxDataFind {
     type Args = DataFindArgs;
 
@@ -61,11 +69,7 @@ impl TypedMcpTool for RxDataFind {
         for_each_segment(&*view, READ_CHUNK, bounds, overlap, |base, data| {
             scan_pattern(data, base, &pattern, &pagination, &mut running)
         });
-        Ok(McpToolResult::structured(json!({
-            "total": running.total,
-            "truncated": running.truncated,
-            "matches": matches_json(&running.matches),
-        })))
+        Ok(McpToolResult::structured(response_json(&running)))
     }
 }
 
@@ -74,9 +78,37 @@ mod tests {
     use super::*;
     use crate::hexpattern::HexPattern;
     use crate::scan::Pagination;
-    use crate::test_utils::{naive_matches, pattern_from_tokens};
+    use crate::test_utils::{expected_pagination, naive_matches, pattern_from_tokens};
     use crate::tools::testing::{FakeView, scan_fake_view};
     use proptest::prelude::*;
+
+    #[test]
+    fn response_includes_page_fields() {
+        let mut running = RunningScan::new();
+        running.total = 2;
+        running.truncated = true;
+        running.matches.push(0x1000);
+
+        assert_eq!(
+            response_json(&running),
+            serde_json::json!({
+                "total": 2,
+                "truncated": true,
+                "matches": ["0x1000"],
+            })
+        );
+    }
+
+    fn scan_page(view: &FakeView, pattern: &HexPattern, offset: u64, limit: u64) -> RunningScan {
+        scan_fake_view(
+            view,
+            4,
+            None,
+            pattern.len().saturating_sub(1) as u64,
+            pattern,
+            &Pagination { offset, limit },
+        )
+    }
 
     #[test]
     fn finds_matches_across_chunk_boundaries() {
@@ -221,63 +253,29 @@ mod tests {
                 })
                 .collect();
             let pattern = HexPattern::parse(&tokens.join(" ")).unwrap();
-            let overlap = (pattern.len() - 1) as u64;
-
-            let full_page = Pagination {
-                offset: 0,
-                limit: 500,
-            };
-            let full = scan_fake_view(&view, 4, None, overlap, &pattern, &full_page);
+            let full = scan_page(&view, &pattern, 0, 500);
             assert!(!full.truncated, "case {case}");
             assert_eq!(full.matches.len() as u64, full.total, "case {case}");
             let true_total = full.total;
 
-            let mut tiled = Vec::new();
-            for page_offset in (0..=true_total).step_by(2) {
-                let page = scan_fake_view(
-                    &view,
-                    4,
-                    None,
-                    overlap,
-                    &pattern,
-                    &Pagination {
-                        offset: page_offset,
-                        limit: 2,
-                    },
-                );
-                tiled.extend(page.matches);
-            }
+            let tiled: Vec<u64> = (0..=true_total)
+                .step_by(2)
+                .flat_map(|page_offset| scan_page(&view, &pattern, page_offset, 2).matches)
+                .collect();
             assert_eq!(tiled, full.matches, "case {case}");
 
             // Every offset pages the exact expected slice.
             for page_offset in 0..=true_total {
-                let page = scan_fake_view(
-                    &view,
-                    4,
-                    None,
-                    overlap,
-                    &pattern,
-                    &Pagination {
-                        offset: page_offset,
-                        limit: 2,
-                    },
-                );
-                let expected: Vec<u64> = full
-                    .matches
-                    .iter()
-                    .skip(page_offset as usize)
-                    .take(2)
-                    .copied()
-                    .collect();
+                let page = scan_page(&view, &pattern, page_offset, 2);
+                let expected_page = expected_pagination(full.matches.len(), page_offset, 2);
+                let expected = full.matches[expected_page.start..expected_page.end].to_vec();
                 assert_eq!(page.matches, expected, "case {case} offset {page_offset}");
                 assert_eq!(
-                    page.total,
-                    true_total.min(page_offset.saturating_add(3)),
+                    page.total, expected_page.total,
                     "case {case} offset {page_offset}"
                 );
                 assert_eq!(
-                    page.truncated,
-                    true_total > page_offset + 2,
+                    page.truncated, expected_page.truncated,
                     "case {case} offset {page_offset}"
                 );
             }
@@ -285,32 +283,12 @@ mod tests {
             // An arbitrary adversarial (but valid) limit/offset pair.
             let limit = (next() % 501) as u64;
             let offset = ((next() as u64) << 32) | next() as u64;
-            let page = scan_fake_view(
-                &view,
-                4,
-                None,
-                overlap,
-                &pattern,
-                &Pagination { offset, limit },
-            );
-            let expected: Vec<u64> = full
-                .matches
-                .iter()
-                .skip(offset as usize)
-                .take(limit as usize)
-                .copied()
-                .collect();
+            let page = scan_page(&view, &pattern, offset, limit);
+            let expected_page = expected_pagination(full.matches.len(), offset, limit);
+            let expected = full.matches[expected_page.start..expected_page.end].to_vec();
             assert_eq!(page.matches, expected, "case {case}");
-            assert_eq!(
-                page.total,
-                true_total.min(offset.saturating_add(limit).saturating_add(1)),
-                "case {case}"
-            );
-            assert_eq!(
-                page.truncated,
-                true_total > offset.saturating_add(limit),
-                "case {case}"
-            );
+            assert_eq!(page.total, expected_page.total, "case {case}");
+            assert_eq!(page.truncated, expected_page.truncated, "case {case}");
         }
     }
 
@@ -358,6 +336,58 @@ mod tests {
 
             prop_assert_eq!(running.total, expected_total);
             prop_assert_eq!(running.truncated, truncated);
+            prop_assert_eq!(running.matches, expected);
+        }
+
+        #[test]
+        fn chunked_multi_segment_scan_matches_each_segment_independently(
+            first in prop::collection::vec(0u8..4, 1..48),
+            second in prop::collection::vec(0u8..4, 1..48),
+            tokens in prop::collection::vec(
+                prop_oneof![Just(None::<u8>), (0u8..4).prop_map(Some)],
+                1..6
+            ),
+            gap in 1u64..8,
+            chunk in 1u64..16,
+            offset in prop_oneof![0u64..10, Just(u64::MAX)],
+            limit in prop_oneof![0u64..10, Just(u64::MAX)]
+        ) {
+            let pattern = pattern_from_tokens(tokens);
+            let first_start = 0x1000;
+            let first_end = first_start + first.len() as u64;
+            let second_start = first_end + gap;
+            let view = FakeView {
+                segments: vec![
+                    (first_start, first_end),
+                    (second_start, second_start + second.len() as u64),
+                ],
+                unreadable_segments: Vec::new(),
+                runs: vec![(first_start, first.clone()), (second_start, second.clone())],
+            };
+            let pagination = Pagination { offset, limit };
+            let running = scan_fake_view(
+                &view,
+                chunk,
+                None,
+                (pattern.len() - 1) as u64,
+                &pattern,
+                &pagination,
+            );
+
+            let mut naive: Vec<u64> = naive_matches(&first, &pattern)
+                .into_iter()
+                .map(|position| first_start + position as u64)
+                .collect();
+            naive.extend(
+                naive_matches(&second, &pattern)
+                    .into_iter()
+                    .map(|position| second_start + position as u64),
+            );
+            let expected_page = expected_pagination(naive.len(), offset, limit);
+            let expected = naive[expected_page.start..expected_page.end].to_vec();
+
+            prop_assert_eq!(running.total, expected_page.total);
+            prop_assert_eq!(running.truncated, expected_page.truncated);
             prop_assert_eq!(running.matches, expected);
         }
     }

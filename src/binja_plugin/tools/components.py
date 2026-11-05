@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated
 
 from binaryninja import mcp
+
+if TYPE_CHECKING:
+    from binaryninja.binaryview import BinaryView
+    from binaryninja.component import Component
 
 from binja_plugin.tools import (
     _MAX_LIMIT,
@@ -37,11 +41,11 @@ def _validate_component_path(parameter: str, path: str) -> str:
     return path
 
 
-def _resolve_component(call: mcp.ToolCall, path: str) -> Any:
+def _resolve_component(view: BinaryView, path: str) -> Component:
     """Return the component at an already-validated path, "/" mapping to the root."""
     if path == "/":
-        return call.binary_view.root_component
-    component = call.binary_view.get_component_by_path(path)
+        return view.root_component
+    component = view.get_component_by_path(path)
     if component is None:
         raise mcp.ToolError("component_not_found", f"no component at path '{_truncate(path)}'")
     return component
@@ -69,7 +73,7 @@ def rex_component_add_functions(
     bv = call.binary_view
     _validate_component_path("path", path)
     resolved = _resolve_address_batch(call, bv, functions, _MAX_COMPONENT_ADD_FUNCTIONS)
-    component = _resolve_component(call, path)
+    component = _resolve_component(bv, path)
     results = []
     for function in resolved:
         added = component.add_function(function)
@@ -108,10 +112,10 @@ def rex_component_create(
         # "/" is the path delimiter, so a name containing one can never be addressed by path.
         raise mcp.ToolError("invalid_params", "name must not contain '/'")
     bv = call.binary_view
-    parent: Any = None
+    parent: Component | None = None
     if parent_path:
         _validate_component_path("parent_path", parent_path)
-        parent = _resolve_component(call, parent_path)
+        parent = _resolve_component(bv, parent_path)
     component = bv.create_component(name, parent)
     return {
         "path": _component_child_path(parent_path, component.display_name),
@@ -136,7 +140,7 @@ def rex_component_get(
     _validate_component_path("path", path)
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
-    component = _resolve_component(call, path)
+    component = _resolve_component(call.binary_view, path)
     functions = sorted(component.function_list, key=lambda function: function.start)
     total = len(functions)
     children = component.components

@@ -15,7 +15,7 @@ use super::{
 };
 use crate::hexpattern::HexPattern;
 use crate::multi::{MAX_MULTI_PATTERNS, scan_segment};
-use crate::scan::RunningScan;
+use crate::scan::{Pagination, RunningScan};
 
 // No `binary` field — same server-reserved argument rule as `DataFindArgs`.
 #[derive(Deserialize, JsonSchema)]
@@ -36,6 +36,26 @@ pub struct MultiFindArgs {
 /// per-pattern prefilter scans — the capability the Python plugin cannot offer.
 pub(super) struct RxMultiFind;
 
+fn response_json(pattern_texts: &[String], buckets: &[RunningScan]) -> serde_json::Value {
+    let results = pattern_texts
+        .iter()
+        .zip(buckets)
+        .map(|(pattern, bucket)| {
+            json!({
+                "pattern": pattern,
+                "total": bucket.total,
+                "truncated": bucket.truncated,
+                "matches": matches_json(&bucket.matches),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "total": buckets.iter().map(|bucket| bucket.total).sum::<u64>(),
+        "truncated": buckets.iter().any(|bucket| bucket.truncated),
+        "results": results,
+    })
+}
+
 impl TypedMcpTool for RxMultiFind {
     type Args = MultiFindArgs;
 
@@ -52,30 +72,7 @@ impl TypedMcpTool for RxMultiFind {
         call: &McpToolCall,
         args: MultiFindArgs,
     ) -> Result<McpToolResult, McpToolError> {
-        // The published schema caps the list (minItems/maxItems), but nothing
-        // on the server enforces array length before `invoke`: the typed
-        // adapter only deserializes, and an empty list would also violate
-        // `longest_pattern_overlap`'s precondition below.
-        if args.patterns.is_empty() {
-            return Err(McpToolError::invalid_params(
-                "at least one pattern is required",
-            ));
-        }
-        if args.patterns.len() > MAX_MULTI_PATTERNS {
-            return Err(McpToolError::new(
-                "too_many_patterns",
-                format!("at most {MAX_MULTI_PATTERNS} patterns are allowed"),
-            ));
-        }
-        let pagination = validate_pagination(args.limit, args.offset)?;
-        let patterns = args
-            .patterns
-            .iter()
-            .enumerate()
-            .map(|(index, text)| {
-                parse_checked_pattern(text).map_err(|error| prefix_pattern_error(index, error))
-            })
-            .collect::<Result<Vec<_>, McpToolError>>()?;
+        let (patterns, pagination) = prepare_scan(&args.patterns, args.limit, args.offset)?;
         let view = call.require_binary_view()?;
         let bounds = resolve_bounds(&view, args.section.as_deref())?;
         let mut buckets: Vec<RunningScan> =
@@ -84,25 +81,39 @@ impl TypedMcpTool for RxMultiFind {
         for_each_segment(&*view, READ_CHUNK, bounds, overlap, |base, data| {
             scan_segment(data, base, &patterns, &mut buckets, &pagination)
         });
-        let results = args
-            .patterns
-            .iter()
-            .zip(buckets.iter())
-            .map(|(text, bucket)| {
-                json!({
-                    "pattern": text,
-                    "total": bucket.total,
-                    "truncated": bucket.truncated,
-                    "matches": matches_json(&bucket.matches),
-                })
-            })
-            .collect::<Vec<_>>();
-        Ok(McpToolResult::structured(json!({
-            "total": buckets.iter().map(|bucket| bucket.total).sum::<u64>(),
-            "truncated": buckets.iter().any(|bucket| bucket.truncated),
-            "results": results,
-        })))
+        Ok(McpToolResult::structured(response_json(
+            &args.patterns,
+            &buckets,
+        )))
     }
+}
+
+fn prepare_scan(
+    pattern_texts: &[String],
+    limit: u32,
+    offset: u64,
+) -> Result<(Vec<HexPattern>, Pagination), McpToolError> {
+    // Schema constraints are not enforced by the typed adapter before invoke.
+    if pattern_texts.is_empty() {
+        return Err(McpToolError::invalid_params(
+            "at least one pattern is required",
+        ));
+    }
+    if pattern_texts.len() > MAX_MULTI_PATTERNS {
+        return Err(McpToolError::new(
+            "too_many_patterns",
+            format!("at most {MAX_MULTI_PATTERNS} patterns are allowed"),
+        ));
+    }
+    let pagination = validate_pagination(limit, offset)?;
+    let patterns = pattern_texts
+        .iter()
+        .enumerate()
+        .map(|(index, text)| {
+            parse_checked_pattern(text).map_err(|error| prefix_pattern_error(index, error))
+        })
+        .collect::<Result<Vec<_>, McpToolError>>()?;
+    Ok((patterns, pagination))
 }
 
 /// Multi-pattern parse failures name the offending entry.
@@ -127,9 +138,43 @@ fn longest_pattern_overlap(patterns: &[HexPattern]) -> u64 {
 mod tests {
     use super::*;
     use crate::scan::Pagination;
-    use crate::test_utils::{naive_matches, pattern_from_tokens};
+    use crate::test_utils::{expected_pagination, naive_matches, pattern_from_tokens};
     use crate::tools::testing::FakeView;
     use proptest::prelude::*;
+
+    #[test]
+    fn response_preserves_patterns_and_aggregates_pages() {
+        let patterns = vec!["48 8b".to_string(), "90".to_string()];
+        let mut first = RunningScan::new();
+        first.total = 2;
+        first.truncated = true;
+        first.matches.push(0x1000);
+        let mut second = RunningScan::new();
+        second.total = 1;
+        second.matches.push(0x2000);
+
+        assert_eq!(
+            response_json(&patterns, &[first, second]),
+            serde_json::json!({
+                "total": 3,
+                "truncated": true,
+                "results": [
+                    {
+                        "pattern": "48 8b",
+                        "total": 2,
+                        "truncated": true,
+                        "matches": ["0x1000"],
+                    },
+                    {
+                        "pattern": "90",
+                        "total": 1,
+                        "truncated": false,
+                        "matches": ["0x2000"],
+                    },
+                ],
+            })
+        );
+    }
 
     #[test]
     fn multi_parse_errors_name_the_pattern_index() {
@@ -138,6 +183,30 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "invalid_pattern");
         assert_eq!(error.message, "pattern 2: invalid hex byte token 'zz'");
+    }
+
+    #[test]
+    fn scan_input_validation_preserves_error_order() {
+        let empty = Vec::new();
+        let error = prepare_scan(&empty, 501, 0).unwrap_err();
+        assert_eq!(error.code, "invalid_params");
+        assert_eq!(error.message, "at least one pattern is required");
+
+        let too_many = vec!["zz".to_string(); MAX_MULTI_PATTERNS + 1];
+        let error = prepare_scan(&too_many, 501, 0).unwrap_err();
+        assert_eq!(error.code, "too_many_patterns");
+
+        let invalid = vec!["zz".to_string()];
+        let error = prepare_scan(&invalid, 501, 0).unwrap_err();
+        assert_eq!(
+            error.message,
+            "Invalid integer parameter 'limit': Must be at most 500"
+        );
+
+        let valid = vec!["90".to_string()];
+        let (patterns, pagination) = prepare_scan(&valid, 50, 2).unwrap();
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(pagination.offset, 2);
     }
 
     // The multi-pattern walk overlaps windows by the LONGEST pattern minus one:
@@ -243,19 +312,14 @@ mod tests {
             });
 
             for (index, (pattern, bucket)) in patterns.iter().zip(&buckets).enumerate() {
-                let window_end = offset.saturating_add(limit);
                 let naive = naive_matches(&haystack, pattern);
-                let available = naive.len() as u64;
-                let truncated = available > window_end;
-                let expected_total = if truncated { window_end + 1 } else { available };
-                let page_start = offset.min(available) as usize;
-                let page_end = window_end.min(available) as usize;
-                let expected: Vec<u64> = naive[page_start..page_end]
+                let expected_page = expected_pagination(naive.len(), offset, limit);
+                let expected: Vec<u64> = naive[expected_page.start..expected_page.end]
                     .iter()
                     .map(|position| base + *position as u64)
                     .collect();
-                prop_assert_eq!(bucket.total, expected_total, "pattern {}", index);
-                prop_assert_eq!(bucket.truncated, truncated, "pattern {}", index);
+                prop_assert_eq!(bucket.total, expected_page.total, "pattern {}", index);
+                prop_assert_eq!(bucket.truncated, expected_page.truncated, "pattern {}", index);
                 prop_assert_eq!(&bucket.matches, &expected, "pattern {}", index);
             }
             prop_assert_eq!(alive, !buckets.iter().all(RunningScan::is_done));

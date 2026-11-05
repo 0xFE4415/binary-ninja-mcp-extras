@@ -85,6 +85,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn windows_advance_by_chunk_with_overlap_tail() {
@@ -153,5 +154,36 @@ mod tests {
             clamp_to_bounds((0x1000, 0x2000), Some((0x2000, 0x3000))),
             None
         );
+    }
+
+    proptest! {
+        #[test]
+        fn every_overlap_sized_match_start_is_covered_by_exactly_one_window(
+            start in 0u64..1024,
+            length in 0u64..128,
+            chunk in 1u64..32,
+            overlap in 0u64..32,
+        ) {
+            let end = start + length;
+            let mut windows = Vec::new();
+            let completed = for_each_window(start, end, chunk, overlap, |position, read_size| {
+                windows.push((position, read_size));
+                true
+            });
+            prop_assert!(completed);
+
+            if let Some(last_match_start) = end.checked_sub(overlap + 1) {
+                for match_start in start..=last_match_start {
+                    let visible_windows = windows
+                        .iter()
+                        .filter(|(position, read_size)| {
+                            *position <= match_start
+                                && match_start + overlap < *position + *read_size
+                        })
+                        .count();
+                    prop_assert_eq!(visible_windows, 1, "start {}, chunk {}, overlap {}", match_start, chunk, overlap);
+                }
+            }
+        }
     }
 }

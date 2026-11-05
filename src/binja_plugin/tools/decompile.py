@@ -131,6 +131,26 @@ def _resolve_main(
     return None, "entry-fallback", note
 
 
+def _render_hlil_matches(
+    source_lines: list[str],
+    matched_indices: list[int],
+    context_before: int,
+    context_after: int,
+) -> list[str]:
+    if context_before == 0 and context_after == 0:
+        return [_truncate(source_lines[index]) for index in matched_indices[:3]]
+    lines: list[str] = []
+    for match_index in matched_indices[:3]:
+        if lines:
+            lines.append("--")
+        before = source_lines[max(0, match_index - context_before) : match_index]
+        after = source_lines[match_index + 1 : match_index + 1 + context_after]
+        lines.extend("  " + _truncate(line) for line in before)
+        lines.append("> " + _truncate(source_lines[match_index]))
+        lines.extend("  " + _truncate(line) for line in after)
+    return lines
+
+
 @mcp.tool(read_only=True)
 def rex_decompile_many(
     call: mcp.ToolCall,
@@ -269,19 +289,7 @@ def rex_hlil_grep(
         source_lines = str(hlil).splitlines()
         matched = [line_index for line_index, line in enumerate(source_lines) if search(line)]
         if matched:
-            if context_before == 0 and context_after == 0:
-                lines = [_truncate(source_lines[match_index]) for match_index in matched[:3]]
-            else:
-                # "--" keeps windows apart even when their context ranges overlap.
-                lines = []
-                for match_index in matched[:3]:
-                    if lines:
-                        lines.append("--")
-                    before = source_lines[max(0, match_index - context_before) : match_index]
-                    after = source_lines[match_index + 1 : match_index + 1 + context_after]
-                    lines.extend("  " + _truncate(line) for line in before)
-                    lines.append("> " + _truncate(source_lines[match_index]))
-                    lines.extend("  " + _truncate(line) for line in after)
+            lines = _render_hlil_matches(source_lines, matched, context_before, context_after)
             matches.append(
                 {
                     "start": hex(function.start),

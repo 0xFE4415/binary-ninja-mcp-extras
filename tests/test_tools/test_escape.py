@@ -1,11 +1,27 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Iterator
 
 import pytest
 from helpers import FakeBinaryView, FakeToolError, _call, _view_with_functions, get_tool
 
 from binja_plugin.tools import escape
+
+
+@pytest.fixture(autouse=True)
+def clear_eval_spills() -> Iterator[None]:
+    escape._EVAL_SPILLS.clear()
+    yield
+    escape._EVAL_SPILLS.clear()
+
+
+def test_eval_limits_match_contract() -> None:
+    assert escape._MAX_EVAL_STDOUT_CHARS == 65_536
+    assert escape._MAX_EVAL_RESULT_CHARS == 16_384
+    assert escape._MAX_EVAL_SPILLS == 8
+    assert escape._MAX_EVAL_SPILL_CHARS == 4 * 1024 * 1024
+    assert escape._MAX_EVAL_RESULT_PAGE_CHARS == 65_536
 
 
 def test_memory_write_validates_and_writes() -> None:
@@ -176,6 +192,60 @@ def test_eval_python_spills_oversized_stdout() -> None:
     assert spilled["total"] == escape._MAX_EVAL_STDOUT_CHARS + 11
 
 
+def test_eval_python_uses_two_spill_slots_when_stdout_and_result_overflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    escape._EVAL_SPILLS.clear()
+    monkeypatch.setattr(escape, "_MAX_EVAL_SPILLS", 2)
+    view = _view_with_functions()
+    _, evaluate = get_tool("rex_eval_python")
+    _, page = get_tool("rex_eval_result")
+    both = evaluate(
+        _call(view),
+        f"print('s' * {escape._MAX_EVAL_STDOUT_CHARS})\n"
+        f"result = 'r' * {escape._MAX_EVAL_RESULT_CHARS}",
+    )
+    stdout_key = both["stdout_key"]
+    result_key = both["result_key"]
+    assert stdout_key is not None
+    assert result_key is not None
+    assert len(escape._EVAL_SPILLS) == 2
+
+    newer = evaluate(_call(view), f"result = 'n' * {escape._MAX_EVAL_RESULT_CHARS}")
+    assert newer["result_key"] is not None
+    with pytest.raises(FakeToolError) as exc:
+        page(_call(view), stdout_key)
+    assert exc.value.code == "not_found"
+    assert page(_call(view), result_key)["value"].startswith("'r")
+    assert page(_call(view), newer["result_key"])["value"].startswith("'n")
+    escape._EVAL_SPILLS.clear()
+
+
+def test_eval_result_validates_page_bounds() -> None:
+    escape._EVAL_SPILLS.clear()
+    view = _view_with_functions()
+    _, evaluate = get_tool("rex_eval_python")
+    _, page = get_tool("rex_eval_result")
+    result = evaluate(_call(view), f"result = 'x' * {escape._MAX_EVAL_RESULT_CHARS + 1}")
+    key = result["result_key"]
+    assert key is not None
+
+    for kwargs in (
+        {"limit": 0},
+        {"limit": escape._MAX_EVAL_RESULT_PAGE_CHARS + 1},
+        {"offset": -1},
+    ):
+        with pytest.raises(FakeToolError) as exc:
+            page(_call(view), key, **kwargs)
+        assert exc.value.code == "invalid_params"
+
+    assert len(page(_call(view), key, limit=1)["value"]) == 1
+    assert page(_call(view), key, limit=escape._MAX_EVAL_RESULT_PAGE_CHARS)["value"] == repr(
+        "x" * (escape._MAX_EVAL_RESULT_CHARS + 1)
+    )
+    escape._EVAL_SPILLS.clear()
+
+
 def test_eval_spill_store_evicts_exactly_the_oldest_when_the_cap_is_exceeded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -218,12 +288,16 @@ def test_eval_spill_store_evicts_oldest_and_drops_oversized_spills(
     # copy, and the key comes back None so no caller chases an unreadable spill. The
     # dropped spill must not occupy a store slot that could evict a readable spill.
     escape._EVAL_SPILLS.clear()
+    readable = evaluate(_call(view), f"result = 'd' * {escape._MAX_EVAL_RESULT_CHARS + 10}")
+    readable_key = readable["result_key"]
+    assert readable_key is not None
     monkeypatch.setattr(escape, "_MAX_EVAL_SPILL_CHARS", 8)
     dropped = evaluate(_call(view), f"result = 'c' * {escape._MAX_EVAL_RESULT_CHARS + 10}")
     assert dropped["result_truncated"] is True
     assert dropped["result_key"] is None
     assert dropped["result_length"] == escape._MAX_EVAL_RESULT_CHARS + 12
-    assert escape._EVAL_SPILLS == {}
+    assert list(escape._EVAL_SPILLS) == [readable_key]
+    assert page(_call(view), readable_key)["value"].startswith("'d")
 
 
 def test_eval_spill_keeps_a_spill_exactly_at_the_per_spill_cap() -> None:

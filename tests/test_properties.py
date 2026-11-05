@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from helpers import (
     FakeBinaryView,
+    FakeDerivedString,
     FakeFunction,
     FakeSegment,
     FakeStringReference,
@@ -515,6 +516,45 @@ def test_regex_ignore_case_agrees_with_substring_ignore_case(
     ]
 
 
+@given(
+    ordinary=st.lists(st.text(alphabet="aAbB ", max_size=8), max_size=8),
+    derived=st.lists(st.text(alphabet="aAbB ", max_size=8), max_size=8),
+    pattern=st.text(alphabet="aAbB ", max_size=3),
+    ignore_case=st.booleans(),
+    limit=st.integers(min_value=0, max_value=tools._MAX_LIMIT),
+    offset=st.integers(min_value=0, max_value=20),
+)
+def test_string_refs_filters_mixed_sources_before_paging(
+    ordinary: list[str],
+    derived: list[str],
+    pattern: str,
+    ignore_case: bool,
+    limit: int,
+    offset: int,
+) -> None:
+    view = FakeBinaryView(
+        strings=[
+            FakeStringReference(value, 0x1000 + 16 * index) for index, value in enumerate(ordinary)
+        ],
+        derived_strings=[FakeDerivedString(value) for value in derived],
+    )
+    _, refs = get_tool("rex_string_refs")
+    result = refs(
+        FakeToolCall(view), pattern=pattern, ignore_case=ignore_case, limit=limit, offset=offset
+    )
+
+    values = [(value, False) for value in ordinary] + [(value, True) for value in derived]
+    if ignore_case:
+        matching = [(value, source) for value, source in values if pattern.lower() in value.lower()]
+    else:
+        matching = [(value, source) for value, source in values if pattern in value]
+    expected_page = matching[offset : offset + limit]
+
+    assert [(entry["value"], entry["derived"]) for entry in result["strings"]] == expected_page
+    assert result["total"] == min(len(matching), offset + limit + 1)
+    assert result["truncated"] is (len(matching) > offset + limit)
+
+
 def test_compile_user_regex_adds_no_flags_beyond_ignore_case() -> None:
     assert tools._compile_user_regex("x").flags == re.compile("x").flags
     caseless = tools._compile_user_regex("x", ignore_case=True)
@@ -802,39 +842,55 @@ def test_validated_export_filenames_stay_inside_the_export_root(filename: str) -
 
 
 @given(
-    addresses=st.lists(st.integers(min_value=0x1000, max_value=0x1040), unique=True, max_size=12),
+    symbols=st.lists(
+        st.tuples(
+            st.integers(min_value=0x1000, max_value=0x1040),
+            st.sampled_from(["FunctionSymbol", "DataSymbol"]),
+            st.text(alphabet='ab,\r\n"\u00e9', max_size=12),
+        ),
+        unique_by=lambda symbol: symbol[0],
+        max_size=12,
+    ),
     start=st.integers(min_value=0x1000, max_value=0x1040),
     span=st.integers(min_value=1, max_value=0x41),
     limit=st.integers(min_value=0, max_value=tools._MAX_EXPORT_SYMBOLS),
     offset=st.integers(min_value=0, max_value=2**63),
-    file_format=st.sampled_from(["csv", "json"]),
 )
 def test_export_symbols_writes_the_exact_sorted_window(
-    addresses: list[int], start: int, span: int, limit: int, offset: int, file_format: str
+    symbols: list[tuple[int, str, str]], start: int, span: int, limit: int, offset: int
 ) -> None:
     view = FakeBinaryView(
-        symbols=[FakeSymbol(address, "FunctionSymbol", f"s{address:x}") for address in addresses]
+        symbols=[FakeSymbol(address, symbol_type, name) for address, symbol_type, name in symbols]
     )
     _, export = get_tool("rex_export_symbols")
-    in_range = sorted(address for address in addresses if start <= address < start + span)
+    in_range = sorted(
+        (address, symbol_type, name)
+        for address, symbol_type, name in symbols
+        if start <= address < start + span
+    )
     window = in_range[offset : offset + limit]
+    expected = [
+        {"symbol_address": hex(address), "symbol_type": symbol_type, "name": name}
+        for address, symbol_type, name in window
+    ]
     with tempfile.TemporaryDirectory() as directory, pytest.MonkeyPatch.context() as patch:
         patch.setattr(tools, "_EXPORT_ROOT", Path(directory) / "exports")
-        result = export(
-            FakeToolCall(view),
-            start,
-            start + span,
-            limit=limit,
-            offset=offset,
-            format=file_format,
-            filename="symbols",
-        )
-        content = Path(result["path"]).read_text(encoding="utf-8")
-    if file_format == "csv":
-        written = [row[0] for row in list(csv.reader(io.StringIO(content)))[1:]]
-    else:
-        written = [row["symbol_address"] for row in json.loads(content)]
-    assert written == [hex(address) for address in window]
-    assert result["rows"] == len(window)
-    assert result["total"] == len(in_range)
-    assert result["truncated"] is (len(in_range) > offset + limit)
+        for file_format in ("csv", "json"):
+            result = export(
+                FakeToolCall(view),
+                start,
+                start + span,
+                limit=limit,
+                offset=offset,
+                format=file_format,
+                filename=f"symbols.{file_format}",
+            )
+            content = Path(result["path"]).read_bytes().decode("utf-8")
+            if file_format == "csv":
+                written = list(csv.DictReader(io.StringIO(content, newline="")))
+            else:
+                written = json.loads(content)
+            assert written == expected
+            assert result["rows"] == len(window)
+            assert result["total"] == len(in_range)
+            assert result["truncated"] is (len(in_range) > offset + limit)
