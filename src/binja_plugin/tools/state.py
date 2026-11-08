@@ -85,7 +85,7 @@ def rex_kv_get(call: mcp.ToolCall, key: str) -> dict[str, object]:
 
 @mcp.tool(destructive=True)
 def rex_kv_set(call: mcp.ToolCall, key: str, value: str) -> dict[str, object]:
-    """Store a string in the binary view database as persistent scratch data.
+    """Persist scratch in the binary view database: it survives tool calls and server restarts.
 
     :param key: Key to store under.
     :param value: String value to store.

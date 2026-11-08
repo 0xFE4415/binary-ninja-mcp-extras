@@ -670,10 +670,81 @@ def test_quick_main_resolves_main_from_the_entry_function_symbol() -> None:
         "method": "symbol",
         "main": "0x1000",
         "note": None,
+        "hint": None,
         "function": {"start": "0x1000", "name": "main"},
         "lines": ["int main() {", "    return 0;", "}"],
         "truncated": False,
     }
+
+
+def test_quick_main_hints_when_the_function_ends_in_a_trap() -> None:
+    _, quick = get_tool("rex_quick_main")
+    view = FakeBinaryView(
+        entry_point=0x1000,
+        functions=[
+            FakeFunction(
+                "main", 0x1000, 0x1100, hlil=RenderableText("int main() {\n    breakpoint;\n}")
+            )
+        ],
+    )
+    # Mirror the live core render: the int3 line and its addressed "{ Does not return }"
+    # annotation continuation share one address.
+    view.functions[0].basic_blocks = [
+        FakeBasicBlock(
+            [(0x10F6, "mov     rbx, rax"), (0x10F9, "int3    "), (0x10F9, "{ Does not return }")]
+        )
+    ]
+    result = quick(FakeParsingToolCall(view))
+    assert result["hint"] == (
+        "function ends in int3; if a SIGTRAP-style handler resumes past it, execution "
+        "reaches code outside this function — inspect with rex_disasm_at and "
+        "rex_function_define"
+    )
+    # A terminator that ends the function for real raises no hint.
+    plain = FakeBinaryView(
+        entry_point=0x1000,
+        functions=[
+            FakeFunction(
+                "main", 0x1000, 0x1100, hlil=RenderableText("int main() {\n    return 0;\n}")
+            )
+        ],
+    )
+    plain.functions[0].basic_blocks = [FakeBasicBlock([(0x10F9, "ret")])]
+    assert quick(FakeParsingToolCall(plain))["hint"] is None
+    # A trap earlier in the function is not the terminator: the last addressed line wins.
+    interior = FakeBinaryView(
+        entry_point=0x1000,
+        functions=[
+            FakeFunction(
+                "main", 0x1000, 0x1100, hlil=RenderableText("int main() {\n    return 0;\n}")
+            )
+        ],
+    )
+    interior.functions[0].basic_blocks = [
+        FakeBasicBlock([(0x10F0, "int3"), (0x10F4, "xor     eax, eax"), (0x10F9, "ret")])
+    ]
+    assert quick(FakeParsingToolCall(interior))["hint"] is None
+
+
+def test_quick_main_hints_for_ud2_and_leaves_the_fallback_note_alone() -> None:
+    _, quick = get_tool("rex_quick_main")
+    # No main symbol anywhere: the fallback note stays in `note` while the trap hint
+    # lands in its own field.
+    view = _quick_main_view("void _start() {\n    __libc_start_main(argc, argv);\n}")
+    view.functions[0].basic_blocks = [FakeBasicBlock([(0x10F0, "ud2")])]
+    result = quick(FakeParsingToolCall(view))
+    assert result["method"] == "entry-fallback"
+    assert result["note"] == (
+        "no main symbol and no parsable __libc_start_main pointer in the entry function"
+    )
+    assert result["hint"] == (
+        "function ends in ud2; if a SIGTRAP-style handler resumes past it, execution "
+        "reaches code outside this function — inspect with rex_disasm_at and "
+        "rex_function_define"
+    )
+    # No disassembly at all (nothing analyzed): no hint is possible.
+    unanalyzed = quick(FakeParsingToolCall(_quick_main_view("void _start() {\n    return;\n}")))
+    assert unanalyzed["hint"] is None
 
 
 def test_quick_main_resolves_a_main_symbol_off_the_entry() -> None:
@@ -887,6 +958,7 @@ def test_quick_main_resolves_an_unlifted_main_to_empty_lines() -> None:
         "method": "symbol",
         "main": "0x2000",
         "note": None,
+        "hint": None,
         "function": {"start": "0x2000", "name": "main"},
         "lines": [],
         "truncated": False,

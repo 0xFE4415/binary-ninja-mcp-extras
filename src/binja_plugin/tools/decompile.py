@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from itertools import takewhile
 from typing import Annotated, Any
 
 from binaryninja import mcp
@@ -49,6 +50,15 @@ _MAIN_SYMBOL_NAMES = ("main", "_main")
 _MAIN_LIBC_MARKER = "libc_start_main"
 _MAIN_FALLBACK_NOTE = (
     "no main symbol and no parsable __libc_start_main pointer in the entry function"
+)
+
+# A trap ends the basic block, so analysis stops there: bytes after it belong to no
+# function even though a handler can resume execution past the trap (the same
+# block-ending blind spot _containment_miss_hint names).
+_TRAP_MNEMONICS = frozenset({"int3", "breakpoint", "ud2"})
+_QUICK_MAIN_TRAP_HINT = (
+    "function ends in {mnemonic}; if a SIGTRAP-style handler resumes past it, execution "
+    "reaches code outside this function — inspect with rex_disasm_at and rex_function_define"
 )
 
 # Precompiled once: _argument_address runs per rendered call argument, so the compiled
@@ -157,7 +167,7 @@ def rex_decompile_many(
     functions: list[str],
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
 ) -> dict[str, object]:
-    """Batch decompilation for triage.
+    """Batch HLIL triage; a bad address rejects the whole batch (rex_disasm_many reports per item).
 
     :param functions: 1 to 1024 address expressions, rendered in the order given.
     :param max_lines: HLIL lines rendered per function.
@@ -206,7 +216,7 @@ def rex_disasm_many(
     addresses: list[str],
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DISASM_MANY_LINES)] = 32,
 ) -> dict[str, object]:
-    """Batch address-anchored disassembly windows, e.g. one window per VM handler.
+    """Batch disassembly windows, e.g. one per VM handler; per-item errors, next_offset resumes.
 
     :param addresses: 1 to 64 address expressions; next_offset marks the first not returned.
     :param max_lines: Instructions per address, anchored at the last line at or before it.
@@ -277,7 +287,7 @@ def rex_hlil_grep(
     context_before: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_HLIL_GREP_CONTEXT)] = 0,
     context_after: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_HLIL_GREP_CONTEXT)] = 0,
 ) -> dict[str, object]:
-    """Search rendered HLIL text across functions with a regular expression.
+    """Regex search over rendered HLIL text; find calls and code shapes across the view in one pass.
 
     :param regex: Regular expression applied to every rendered HLIL line.
     :param function_filter: Case-insensitive regex matched against function names.
@@ -345,6 +355,22 @@ def rex_hlil_grep(
     }
 
 
+def _trap_terminator(function: Any) -> str | None:
+    """The trap mnemonic when the function's last addressed instruction is a trap, else None."""
+    lines = _render_function_disassembly(function)
+    if not lines:
+        return None
+    last_address = lines[-1][0]
+    # Lines at the last address include the instruction and its annotation
+    # continuations; only the instruction's mnemonic decides.
+    last_lines = takewhile(lambda line: line[0] == last_address, reversed(lines))
+    for _, text in last_lines:
+        tokens = text.split()
+        if tokens and tokens[0].lower() in _TRAP_MNEMONICS:
+            return tokens[0].lower()
+    return None
+
+
 @mcp.tool(read_only=True)
 def rex_quick_main(
     call: mcp.ToolCall,
@@ -365,11 +391,14 @@ def rex_quick_main(
     main, method, note = _resolve_main(bv, call, functions[0])
     function = main if main is not None else functions[0]
     lines, truncated = _render_hlil_lines(function.hlil, max_lines)
+    mnemonic = _trap_terminator(function)
+    hint = _QUICK_MAIN_TRAP_HINT.format(mnemonic=mnemonic) if mnemonic is not None else None
     return {
         "entry_point": hex(entry_point),
         "method": method,
         "main": hex(main.start) if main is not None else None,
         "note": note,
+        "hint": hint,
         "function": _function_entry(function),
         "lines": lines,
         "truncated": truncated,

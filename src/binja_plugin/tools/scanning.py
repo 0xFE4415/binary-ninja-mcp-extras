@@ -62,7 +62,7 @@ def rex_constant_find(
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> dict[str, object]:
-    """Find functions whose rendered instructions reference an immediate constant value.
+    """Find functions using an immediate constant (a magic value) in rendered IL, not raw bytes.
 
     :param value: Immediate value to search for, compared against displayed constants.
     :param function_filter: Case-insensitive regex matched against function names.
@@ -111,7 +111,9 @@ def rex_constant_find(
         }
         for start, name, addresses in _drop(groups, offset)
     ]
-    return {"truncated": truncated, "functions": functions}
+    # Count seen, like _paginate: exact when the scan completed, so a page past the end
+    # carries the total it undershot; a lower bound once truncated stops the scan early.
+    return {"total": matched, "truncated": truncated, "functions": functions}
 
 
 @mcp.tool(read_only=True)
@@ -148,7 +150,7 @@ def rex_find_functions_by_pattern(
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> dict[str, object]:
-    """Which functions contain a byte pattern.
+    """Which functions contain a byte pattern; hit counts rank use of an instruction encoding.
 
     :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; "??" matches any single byte.
     :param limit: Maximum matching functions to return.
@@ -187,4 +189,6 @@ def rex_find_functions_by_pattern(
         }
         for start, entry in _drop(hits.items(), offset)
     ]
-    return {"truncated": truncated, "functions": functions}
+    # Count seen, like _paginate: exact when the scan completed, so a page past the end
+    # carries the total it undershot; a lower bound once truncated stops the scan early.
+    return {"total": len(hits) + int(truncated), "truncated": truncated, "functions": functions}

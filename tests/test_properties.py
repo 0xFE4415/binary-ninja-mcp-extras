@@ -294,6 +294,8 @@ def test_constant_find_pages_tile_the_full_result(
     page = find(call, value=7, limit=limit, offset=offset)
     assert page["functions"] == everything[offset : offset + limit]
     assert page["truncated"] is (true_total > offset + limit)
+    # The count seen: exact once the scan completed, offset+limit+1 once truncated.
+    assert page["total"] == min(true_total, offset + limit + 1)
 
 
 # --- rex_tag_list paging -------------------------------------------------------------
@@ -689,11 +691,13 @@ def test_find_functions_by_pattern_pages_tile_the_full_result(
                 }
             )
     full = find(call, pattern=pattern, limit=tools._MAX_LIMIT)
-    assert full == {"truncated": False, "functions": expected}
+    assert full == {"total": len(expected), "truncated": False, "functions": expected}
 
     page = find(call, pattern=pattern, limit=limit, offset=offset)
     assert page["functions"] == expected[offset : offset + limit]
     assert page["truncated"] is (len(expected) > offset + limit)
+    # The count seen: exact once the scan completed, offset+limit+1 once truncated.
+    assert page["total"] == min(len(expected), offset + limit + 1)
 
 
 # --- rex_hlil_grep paging ------------------------------------------------------------------

@@ -19,6 +19,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   and `truncated`; the flag also covers rows dropped by its 4 MiB file cap.
   `rex_component_get` pages functions and returns exact `function_count` instead of
   `total`.
+  `rex_function_constraints`, `rex_hlil_statements`, and `rex_mlil_uses` build their full
+  list and return exact `total`/`truncated`. `rex_mlil_uses` resolves the variable one
+  address assigns; a split write defines a high:low pair and the tool reports the high
+  half.
 - For `rex_string_search`, `rex_data_find`, `rx_data_find`, `rex_string_refs`, and
   `rex_uidf_list`, a truncated `total` is a lower bound: scanning stops at the first
   result past the page. `rex_xrefs_to` has the same rule for fetched refs; `rx_multi_find`
@@ -29,12 +33,16 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   address, then pages the combined list with code refs first. Counts cover only fetched
   refs; omitted refs are not necessarily higher addresses, and `truncated` can be false.
 - `rex_constant_find`, `rex_find_functions_by_pattern`, and `rex_hlil_grep` accept
-  `limit`/`offset` and return `truncated`, not `total`. All three stop their scan at the
+  `limit`/`offset` and return `truncated`. All three stop their scan at the
   first result past the page, so `truncated` means exactly "another matching function
-  exists beyond it".
-  `rex_hlil_grep` additionally returns `scan_incomplete`, set when the `max_functions`
-  render budget ran out before the whole view was scanned: nothing was proven about
-  matches past the page, so more may exist even though `truncated` is false. Its
+  exists beyond it". `rex_constant_find` and `rex_find_functions_by_pattern` also return
+  `total`, the count of matching functions seen before the scan stopped: exact once
+  `truncated` is false, so an empty page whose `total` is at or below the `offset` is an
+  out-of-range page, not an empty result set.
+  `rex_hlil_grep` returns no `total`; it additionally returns `scan_incomplete`, set when
+  the `max_functions` render budget ran out before the whole view was scanned: nothing
+  was proven about matches past the page, so more may exist even though `truncated` is
+  false. Its
   `offset`/`next_offset` count functions in the view, not matches; pass the
   cursor back as `offset` and page while either flag is set. `rex_disasm_many`
   also returns `truncated` and a `next_offset` index into the input addresses;
@@ -79,8 +87,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   has legacy `added_count` and `results`; the type-library tools return a `failed` list.
   Other batch responses: `rex_function_define_many` has `defined`, `failed`, `pending`,
   `waited_ms`; `rex_disasm_many` has `windows` and `errors`; `rex_decompile_many` has
-  `functions`. `rex_uidf_set_many` reports per-item `results`, counts, one
-  `analysis_complete` state, and the final HLIL `lines`.
+  `functions`, and any address that fails to resolve rejects the whole batch before any
+  render (its per-item alternative is `rex_disasm_many`). `rex_uidf_set_many` reports
+  per-item `results`, counts, one `analysis_complete` state, and the final HLIL `lines`.
 
 ### Parameters
 
@@ -94,3 +103,29 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
 - `rx_multi_find` accepts 1-64 patterns: an empty list returns `invalid_params`, a longer
   one `too_many_patterns`. Each entry is capped at 8,192 characters like `rex_data_find`'s
   `pattern`, and an over-cap entry returns `pattern_too_large` naming its index.
+
+### Winning strategies
+
+Usage strategies that do not fit a tool's one-line description.
+
+- The UIDF fold: informing an MLIL value reanalyzes the function, dataflow propagates
+  the value into dependent loads and compares, and statically decided branches are
+  eliminated from HLIL (the core `set_user_var_value` docs warn of exactly this). The
+  highest-leverage target is the base pointer of a key/table load, informed as
+  `ConstantPointerValue`: one value resolves every `base[index]` load in the family, so
+  whole families of per-byte key checks fold away instead of being informed one compare
+  at a time. Find the targets with `rex_function_constraints`, which names the variable
+  or `base+offset` load behind each constant branch comparison, then inform the family
+  with `rex_uidf_set_many` (one reanalysis, not one per value).
+- `rex_constant_find` matches constants in rendered IL tokens, never raw bytes: use it
+  to enumerate every function touching a magic value; when the value lives in data
+  rather than code, use `rex_data_find` or `rx_multi_find` instead.
+- `rex_call_paths` with `direction=callers` from a sink answers "who can reach this"
+  without hand-walking xrefs; `direction=callees` from a source answers "what can this
+  reach". Both directions are bounded by `max_depth` and `max_paths`.
+- `rex_struct_from_access` only sees offset accesses analysis has already recorded, so
+  run it after the dereferencing code is analyzed; it registers the inferred struct
+  under an auto type id.
+- `rex_kv_set` stores under the `rex/` metadata prefix with the core's persistent-flag
+  default, so values serialize into the BNDB snapshot and survive reload; use it as
+  cross-call scratch for findings a later phase would otherwise re-derive.

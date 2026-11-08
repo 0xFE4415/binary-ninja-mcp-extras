@@ -23,6 +23,7 @@ from binaryninja.variable import Variable
 from binja_plugin.tools import (
     _MAX_DECOMPILE_LINES,
     _MAX_LIMIT,
+    _MAX_NAME_CANDIDATES,
     _function_entry,
     _paginate,
     _render_hlil_lines,
@@ -204,7 +205,9 @@ def _collect_mlil_definitions(
     mlil = target.mlil
     if mlil is None:
         raise mcp.ToolError(
-            "no_mlil", f"function {_truncate(target.name)} has no MediumLevelIL yet"
+            "no_mlil",
+            f"function {_truncate(target.name)} has no MediumLevelIL yet; "
+            "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry",
         )
     matches = [
         (variable, definition)
@@ -213,10 +216,25 @@ def _collect_mlil_definitions(
         for definition in mlil.get_var_definitions(variable)
     ]
     if not matches:
+        if any(variable.name == name for variable in target.vars):
+            raise mcp.ToolError(
+                "no_variable",
+                f"MLIL variable '{_truncate(name)}' in {_truncate(target.name)} has no "
+                "MediumLevelIL definition sites",
+            )
+        names = sorted({variable.name for variable in target.vars})
+        shown = ", ".join(_truncate(candidate, 64) for candidate in names[:_MAX_NAME_CANDIDATES])
+        more = (
+            f" (+{len(names) - _MAX_NAME_CANDIDATES} more)"
+            if len(names) > _MAX_NAME_CANDIDATES
+            else ""
+        )
         raise mcp.ToolError(
             "no_variable",
             f"no MLIL variable named '{_truncate(name)}' in {_truncate(target.name)}; "
-            "variable names come from bn_variable_list",
+            f"variables: {shown}{more}; use bn_variable_list for the full list. "
+            "Register-allocated parameters are named by their register (for example r14), "
+            "not by their argument name",
         )
     return matches
 
@@ -274,7 +292,7 @@ def rex_uidf_set(
     state: ValueState = "ConstantValue",
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
 ) -> dict[str, object]:
-    """Inform a value for an MLIL variable at one definition site; returns the settled HLIL.
+    """Inform an MLIL value; a key-table base pointer as ConstantPointerValue folds its byte checks.
 
     :param function: Address expression inside the target function.
     :param variable: MLIL variable name, as listed by bn_variable_list.
@@ -315,7 +333,7 @@ def rex_uidf_set_many(
     items: list[Annotated[Any, mcp.Schema(_UIDF_ITEMS_SCHEMA)]],
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
 ) -> dict[str, object]:
-    """Inform multiple MLIL values, report item errors, and reanalyze once.
+    """Inform several MLIL values in one reanalysis: a byte-check family's operands all at once.
 
     :param function: Address expression inside the target function.
     :param items: 1 to 128 objects with variable, value, optional def_address and state.

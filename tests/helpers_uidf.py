@@ -6,7 +6,7 @@ A leaf module by design: helpers imports it, so it must not import helpers back.
 from __future__ import annotations
 
 import enum
-from typing import override
+from typing import Any, override
 
 
 class FakeRegisterValueType(enum.IntEnum):
@@ -34,7 +34,10 @@ class FakeRegisterValueType(enum.IntEnum):
 
 
 class FakeVariable:
-    """Mirrors binaryninja.variable.Variable for the name-based surface rex_uidf_* reads."""
+    """Mirrors binaryninja.variable.Variable for the name and storage surface the tools read."""
+
+    storage: int = 0
+    source_type: Any = None
 
     def __init__(self, name: str) -> None:
         self.name = name

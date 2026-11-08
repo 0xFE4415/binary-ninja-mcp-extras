@@ -187,6 +187,7 @@ def test_data_find_skips_segments_marked_unreadable(monkeypatch: pytest.MonkeyPa
     )
     _, by_function = get_tool("rex_find_functions_by_pattern")
     assert by_function(_call(functioned), "eb0e") == {
+        "total": 1,
         "truncated": False,
         "functions": [
             {
@@ -265,6 +266,7 @@ def test_constant_find_reports_functions_from_the_constant_search() -> None:
     _, find = get_tool("rex_constant_find")
     result = find(_call(view), value=0x31337)
     assert result == {
+        "total": 2,
         "truncated": False,
         "functions": [
             {
@@ -288,7 +290,7 @@ def test_constant_find_skips_lines_outside_functions() -> None:
     view = _constant_view()
     view.constant_references.append((7, 0x9000, None))
     _, find = get_tool("rex_constant_find")
-    assert find(_call(view), value=7) == {"truncated": False, "functions": []}
+    assert find(_call(view), value=7) == {"total": 0, "truncated": False, "functions": []}
 
 
 def test_constant_find_caps_matches_per_function() -> None:
@@ -300,6 +302,7 @@ def test_constant_find_caps_matches_per_function() -> None:
     _, find = get_tool("rex_constant_find")
     result = find(_call(view), value=7)
     assert result == {
+        "total": 1,
         "truncated": False,
         "functions": [
             {
@@ -318,6 +321,7 @@ def test_constant_find_caps_matches_per_function() -> None:
         constant_references=[(7, 0x1000 + index, exact) for index in range(6)],
     )
     assert find(_call(six_view), value=7) == {
+        "total": 1,
         "truncated": False,
         "functions": [
             {
@@ -334,7 +338,7 @@ def test_constant_find_zero_limit_returns_nothing() -> None:
     function = FakeFunction("f", 0x1000, 0x1010)
     view = FakeBinaryView(functions=[function], constant_references=[(1, 0x1008, function)])
     _, find = get_tool("rex_constant_find")
-    assert find(_call(view), value=1, limit=0) == {"truncated": True, "functions": []}
+    assert find(_call(view), value=1, limit=0) == {"total": 1, "truncated": True, "functions": []}
 
 
 def test_constant_find_offset_and_limit() -> None:
@@ -353,7 +357,10 @@ def test_constant_find_offset_and_limit() -> None:
     # case-mismatched positive, not just a same-case one.
     caseless = find(_call(view), value=0x31337, function_filter="^HANDLER$")
     assert [entry["name"] for entry in caseless["functions"]] == ["handler"]
+    # A page past the end is detectable, not silent: the empty page carries the exact
+    # total, which sits below the requested offset.
     assert find(_call(view), value=0x31337, limit=5, offset=5) == {
+        "total": 2,
         "truncated": False,
         "functions": [],
     }
@@ -372,6 +379,8 @@ def test_constant_find_stops_the_scan_at_the_limit() -> None:
     result = find(_call(view), value=1, limit=2)
     assert result["truncated"] is True
     assert len(result["functions"]) == 2
+    # The count seen includes the lookahead match that proved truncation.
+    assert result["total"] == 3
     # The window holds 2 functions and the next match proves more exist; the scan
     # must have stopped there instead of running to the end of the view.
     assert view.constant_scan_yields == 3
@@ -424,6 +433,7 @@ def test_constant_find_caps_limit_and_truncates_names() -> None:
     result = find(_call(view), value=1, limit=tools._MAX_LIMIT)
     assert len(result["functions"]) == tools._MAX_LIMIT
     assert result["truncated"] is True
+    assert result["total"] == tools._MAX_LIMIT + 1
     assert result["functions"][0]["name"].endswith("chars truncated]")
 
 
@@ -475,7 +485,7 @@ def test_search_tools_report_empty_results_on_an_empty_view() -> None:
     _, find = get_tool("rex_data_find")
     assert find(_call(view), pattern="90") == {"total": 0, "truncated": False, "matches": []}
     _, constant_find = get_tool("rex_constant_find")
-    assert constant_find(_call(view), value=1) == {"truncated": False, "functions": []}
+    assert constant_find(_call(view), value=1) == {"total": 0, "truncated": False, "functions": []}
     _, tag_list = get_tool("rex_tag_list")
     assert tag_list(_call(view)) == {"total": 0, "truncated": False, "tags": []}
     _, containing = get_tool("rex_function_containing")
@@ -510,6 +520,7 @@ def test_find_functions_by_pattern_reports_containing_functions() -> None:
     # Functions come back in first-match order; the 0x9000 match is inside no function
     # and shows up in no entry.
     assert result == {
+        "total": 2,
         "truncated": False,
         "functions": [
             {
@@ -541,6 +552,7 @@ def test_find_functions_by_pattern_caps_examples_at_five() -> None:
     # The count stays true while the example list is capped at the first 5 addresses;
     # the truncation flag says the example list was clipped.
     assert result == {
+        "total": 1,
         "truncated": False,
         "functions": [
             {
@@ -559,6 +571,7 @@ def test_find_functions_by_pattern_caps_examples_at_five() -> None:
         functions=[FakeFunction("g", 0x2000, 0x2100)],
     )
     assert find(_call(five_view), "eb0e") == {
+        "total": 1,
         "truncated": False,
         "functions": [
             {
@@ -584,8 +597,10 @@ def test_find_functions_by_pattern_limits_offsets_and_truncates() -> None:
     assert paged["functions"][0]["match_count"] == 1
     # limit=0 pages nothing out; the scan stops at the first matching function past the
     # empty window, so truncated says a further one existed.
-    assert find(_call(view), "eb0e", limit=0) == {"truncated": True, "functions": []}
-    assert find(_call(view), "eb0e", offset=5) == {"truncated": False, "functions": []}
+    assert find(_call(view), "eb0e", limit=0) == {"total": 1, "truncated": True, "functions": []}
+    # A page past the end is detectable, not silent: the empty page carries the exact
+    # total, which sits below the requested offset.
+    assert find(_call(view), "eb0e", offset=5) == {"total": 2, "truncated": False, "functions": []}
     for kwargs, message in (
         ({"limit": -1}, "Invalid integer parameter 'limit': Must be at least 0"),
         (
@@ -613,6 +628,7 @@ def test_find_functions_by_pattern_maps_matches_across_chunk_boundaries(
         functions=[FakeFunction("f", 0x1000, 0x1100)],
     )
     assert find(_call(straddle), "33 eb") == {
+        "total": 1,
         "truncated": False,
         "functions": [
             {
@@ -632,6 +648,7 @@ def test_find_functions_by_pattern_maps_matches_across_chunk_boundaries(
         functions=[FakeFunction("f", 0x1000, 0x1100)],
     )
     assert find(_call(boundary), "33 eb") == {
+        "total": 1,
         "truncated": False,
         "functions": [
             {
@@ -663,19 +680,23 @@ def test_find_functions_by_pattern_rejects_invalid_patterns() -> None:
 def test_find_functions_by_pattern_reports_empty_results_on_empty_views() -> None:
     _, find = get_tool("rex_find_functions_by_pattern")
     # No segments at all: an empty result is valid, not an error.
-    assert find(_call(FakeBinaryView()), "eb0e") == {"truncated": False, "functions": []}
+    assert find(_call(FakeBinaryView()), "eb0e") == {
+        "total": 0,
+        "truncated": False,
+        "functions": [],
+    }
     # Pattern bytes exist but no analyzed function covers them: matches are skipped.
     uncovered = FakeBinaryView(
         segments=[FakeSegment(0x1000, 4)], memory={0x1000: b"\xeb\x0e\x90\x90"}
     )
-    assert find(_call(uncovered), "eb0e") == {"truncated": False, "functions": []}
+    assert find(_call(uncovered), "eb0e") == {"total": 0, "truncated": False, "functions": []}
     # An unreadable segment contributes nothing.
     unreadable = FakeBinaryView(
         segments=[FakeSegment(0x9000, 4)],
         memory={0x1000: b"\xeb\x0e"},
         functions=[FakeFunction("f", 0x1000, 0x1100)],
     )
-    assert find(_call(unreadable), "eb0e") == {"truncated": False, "functions": []}
+    assert find(_call(unreadable), "eb0e") == {"total": 0, "truncated": False, "functions": []}
 
 
 def test_find_functions_by_pattern_uses_the_first_of_overlapping_functions() -> None:
@@ -686,6 +707,7 @@ def test_find_functions_by_pattern_uses_the_first_of_overlapping_functions() -> 
     )
     _, find = get_tool("rex_find_functions_by_pattern")
     assert find(_call(view), "eb0e") == {
+        "total": 1,
         "truncated": False,
         "functions": [
             {
@@ -716,6 +738,8 @@ def test_find_functions_by_pattern_stops_scanning_past_the_window(
     result = find(_call(view), "eb0e", limit=1)
     assert result["truncated"] is True
     assert [entry["name"] for entry in result["functions"]] == ["f0"]
+    # The count seen includes the lookahead function that proved truncation.
+    assert result["total"] == 2
     # The second function's match proves truncation; no later chunk is read or looked up.
     assert view.lookup_addresses == [0x1000, 0x1010]
     assert view.read_addresses == [0x1000, 0x1010]

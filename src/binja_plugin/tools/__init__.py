@@ -28,6 +28,10 @@ _MAX_CHARS = 512
 # are invoked directly.
 _MAX_LIMIT = 500
 
+# Candidate variable names an error message may echo before it switches to a "+N more"
+# suffix: bounded so one misspelled name can never flood the MCP response.
+_MAX_NAME_CANDIDATES = 40
+
 # rex_disasm_at window sizes: bounded so one call can never request an unbounded
 # instruction render, whatever the containing function's size.
 _MAX_DISASM_CONTEXT = 4096
@@ -129,9 +133,17 @@ def _containment_miss_hint(bv: BinaryView, address: int) -> str:
     """
     if not bv.is_valid_offset(address):
         return "the address is not mapped by any segment"
-    previous_start = bv.get_previous_function_start_before(address)
-    previous = bv.get_function_at(previous_start)
-    if previous is None or previous.highest_address + 1 != address:
+    # Overlapping function ranges (mis-split code) can hide the owner of address - 1 behind
+    # a larger neighbor, so check every function that contains the preceding byte.
+    previous = next(
+        (
+            candidate
+            for candidate in bv.get_functions_containing(address - 1)
+            if candidate.highest_address + 1 == address
+        ),
+        None,
+    )
+    if previous is None:
         return ""
     return (
         f"the address is immediately past the end of {_truncate(previous.name)} at "
@@ -388,6 +400,12 @@ from .components import (
     rex_component_get,
 )
 from .data import rex_data_read, rex_relocation_at, rex_xrefs_to
+from .dataflow import (
+    rex_function_constraints,
+    rex_hlil_statements,
+    rex_mlil_uses,
+    rex_parameter_variables,
+)
 from .decompile import (
     _MAX_DECOMPILE_LINES,
     _MAX_HLIL_GREP_CONTEXT,
