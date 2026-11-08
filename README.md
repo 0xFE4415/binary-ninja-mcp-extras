@@ -36,15 +36,17 @@ clients that connected earlier must reconnect to see the registered tools.
 Point an MCP client at the server with a binary open. The plugin's tools appear next
 to the `bn_*` ones, and a first session usually runs the same arc:
 
-1. `rex_quick_main` for fast contact: entry point, `main`, and `main`'s HLIL in one
+1. `rex_help` for discovery: the tool categories, each with a "use when" line. Open one
+   with `rex_help(category=...)`, or one tool's parameters with `rex_help(tool_name=...)`.
+2. `rex_quick_main` for fast contact: entry point, `main`, and `main`'s HLIL in one
    call.
-2. Search. `rex_string_search` for strings, `rex_data_find` or `rx_multi_find` for
+3. Search. `rex_string_search` for strings, `rex_data_find` or `rx_multi_find` for
    byte patterns, `rex_hlil_grep` for code shape, and `rex_constant_find` for magic
    numbers.
-3. Zoom in with `rex_disasm_at` or `rex_decompile_many`.
-4. Record what you concluded with `rex_annotate_many`, and hand yourself a summary
+4. Zoom in with `rex_disasm_at` or `rex_decompile_many`.
+5. Record what you concluded with `rex_annotate_many`, and hand yourself a summary
    with `rex_report_show`.
-5. Undo a batch with `rex_undo`.
+6. Undo a batch with `rex_undo`.
 
 ## Tool reference
 
@@ -86,7 +88,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_report_show` | Render a markdown report with `binaryninja://` links into the view. |
 | `rex_kv_get` | Read a stored scratch string from the view's database. |
 | `rex_eval_result` | Page back a spilled oversized `rex_eval_python` stdout or result. |
-| `rex_help` | List the `rex_*` tools, or one tool's parameters. |
+| `rex_help` | List tool categories, one category's tools, or one tool's parameters. |
 
 ### Destructive tools
 

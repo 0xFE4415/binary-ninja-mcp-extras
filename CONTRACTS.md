@@ -78,6 +78,15 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `total`, `truncated`, and `next_offset`; pass the cursor as `offset`. `limit` is
   1-65,536 characters (default 65,536), `offset` is non-negative, and missing/evicted
   keys raise `not_found`.
+- `rex_help` has three views. With no arguments it returns `categories`: one entry per
+  tool module, plus `other` when it has tools, each with `name`, `use_when`, and the `tools`
+  names, and no descriptions.
+  `category` returns `category`, `use_when`, and `tools` with each tool's `name` and
+  `description`; an unknown name raises `unknown_category`. `tool_name` returns that
+  tool's parameters; an unknown name raises `unknown_tool`. Passing both raises
+  `invalid_params`. Every `rex_*` tool appears in exactly one category: the module that
+  defines it, or `other` for a registered tool no category module defines. The index lists
+  `other` only when it has tools; `category=other` is always valid.
 - `rex_data_read` returns `bytes_read` and `complete` (whether all requested bytes were
   read). An unmapped start returns zero bytes. A short read gives the byte count, not
   the locations of unreadable gaps.
@@ -117,6 +126,9 @@ Usage strategies that do not fit a tool's one-line description.
   at a time. Find the targets with `rex_function_constraints`, which names the variable
   or `base+offset` load behind each constant branch comparison, then inform the family
   with `rex_uidf_set_many` (one reanalysis, not one per value).
+- `rex_help` with no arguments is the discovery step: the category index is short and
+  says when each group applies, so read it before choosing a tool, then open one
+  category for descriptions.
 - `rex_constant_find` matches constants in rendered IL tokens, never raw bytes: use it
   to enumerate every function touching a magic value; when the value lives in data
   rather than code, use `rex_data_find` or `rx_multi_find` instead.

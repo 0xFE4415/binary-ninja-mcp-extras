@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ _TOOL_LEVEL_CODES = frozenset(
         "redo_failed",
         "set_failed",
         "undo_failed",
+        "unknown_category",
         "unknown_tool",
     }
 )
@@ -43,28 +45,96 @@ _TOOL_LEVEL_CODES = frozenset(
 _MUTMUT_VARIANT = re.compile(r"__mutmut_\d+$")
 
 
-def _help(tool_name: str = "") -> Any:
+def _help(tool_name: str = "", category: str = "") -> Any:
     _, function = get_tool("rex_help")
-    return function(_call(FakeBinaryView()), tool_name=tool_name)
+    return function(_call(FakeBinaryView()), tool_name=tool_name, category=category)
 
 
-def test_help_lists_every_rex_tool_with_its_purpose() -> None:
-    tools = _help()["tools"]
-    assert [tool["name"] for tool in tools] == sorted(name for name, _, _ in REGISTERED_TOOLS)
-    search = tools[[tool["name"] for tool in tools].index("rex_string_search")]
+def test_help_index_places_every_rex_tool_in_exactly_one_category() -> None:
+    listed = [name for entry in _help()["categories"] for name in entry["tools"]]
+    assert sorted(listed) == sorted(name for name, _, _ in REGISTERED_TOOLS)
+
+
+def test_help_index_entries_carry_only_a_name_a_use_when_line_and_tool_names() -> None:
+    entries = _help()["categories"]
+    assert entries
+    for entry in entries:
+        assert set(entry) == {"name", "use_when", "tools"}
+        assert entry["use_when"]
+        assert all(isinstance(name, str) for name in entry["tools"])
+
+
+def test_help_index_pins_every_use_when_line() -> None:
+    assert {entry["name"]: entry["use_when"] for entry in _help()["categories"]} == {
+        "decompile": (
+            "First contact and reading code: entry point, main, HLIL/disassembly, HLIL grep."
+        ),
+        "strings": "Locate detected strings and the code that references them.",
+        "scanning": "Find a magic constant or byte pattern, and the functions that contain it.",
+        "data": "Read mapped bytes, relocations, or list references to an address.",
+        "functions": (
+            "Define missing functions (code after int3, indirect targets), map call paths."
+        ),
+        "dataflow": "Decide what a branch compares: constraints, HLIL statements, MLIL uses.",
+        "uidf": (
+            "Pin values the decompiler cannot know so obfuscated arithmetic and byte checks fold."
+        ),
+        "types": "Recover structs from access patterns, import or export type libraries.",
+        "annotations": "Record conclusions: batch renames, comments, and types.",
+        "components": "Group functions into named components.",
+        "state": "Scratch key-values, tags, a markdown report, and undo/redo of a batch.",
+        "exports": "Write full disassembly or symbol sweeps to a file instead of the response.",
+        "analysis": "Wait for background analysis, or close the binary.",
+        "escape": (
+            "Last resort when no tool fits: run Python, write memory. Report the gap afterward."
+        ),
+        "help": "Discover the toolbox.",
+    }
+
+
+def test_help_index_keeps_a_category_whose_tools_are_all_unregistered() -> None:
+    saved = list(REGISTERED_TOOLS)
+    REGISTERED_TOOLS[:] = [entry for entry in saved if not entry[0].startswith("rex_uidf_")]
+    try:
+        entries = {entry["name"]: entry for entry in _help()["categories"]}
+    finally:
+        REGISTERED_TOOLS[:] = saved
+    assert entries["uidf"]["tools"] == []
+
+
+def test_help_index_places_the_uidf_tools_in_the_uidf_category() -> None:
+    entries = {entry["name"]: entry for entry in _help()["categories"]}
+    assert entries["uidf"]["tools"] == [
+        "rex_uidf_clear",
+        "rex_uidf_list",
+        "rex_uidf_set",
+        "rex_uidf_set_many",
+    ]
+
+
+def test_help_category_lists_its_tools_with_their_purposes() -> None:
+    listing = _help(category="strings")
+    assert listing["category"] == "strings"
+    assert listing["use_when"] == "Locate detected strings and the code that references them."
+    search = {tool["name"]: tool for tool in listing["tools"]}["rex_string_search"]
     assert search["description"] == (
         "Search the binary's detected strings by substring or regular expression."
     )
+    assert [tool["name"] for tool in listing["tools"]] == [
+        "rex_string_read_at",
+        "rex_string_refs",
+        "rex_string_search",
+    ]
 
 
-def test_help_lists_itself() -> None:
+def test_help_lists_itself_in_the_help_category() -> None:
     assert {
         "name": "rex_help",
         "description": "Describe the plugin's rex_ tools from the mcp registry.",
-    } in _help()["tools"]
+    } in _help(category="help")["tools"]
 
 
-def test_help_excludes_non_rex_registry_entries() -> None:
+def test_help_excludes_non_rex_registry_entries_from_the_index() -> None:
     def bn_builtin(call: object) -> dict[str, object]:
         """A stand-in for a built-in bn_ tool.
 
@@ -75,11 +145,66 @@ def test_help_excludes_non_rex_registry_entries() -> None:
     saved = list(REGISTERED_TOOLS)
     REGISTERED_TOOLS.append(("bn_builtin", {}, bn_builtin))
     try:
-        names = [tool["name"] for tool in _help()["tools"]]
+        listed = [name for entry in _help()["categories"] for name in entry["tools"]]
     finally:
         REGISTERED_TOOLS[:] = saved
-    assert "bn_builtin" not in names
-    assert "rex_string_search" in names
+    assert "bn_builtin" not in listed
+    assert "rex_string_search" in listed
+
+
+def _foreign_tool(call: object) -> dict[str, object]:
+    """A stand-in for a rex_ tool that no category module defines.
+
+    :param call: The tool call.
+    """
+    return {}
+
+
+def test_help_lists_a_rex_tool_no_category_defines_under_other() -> None:
+    saved = list(REGISTERED_TOOLS)
+    REGISTERED_TOOLS.append(("rex_foreign", {}, _foreign_tool))
+    try:
+        entries = {entry["name"]: entry for entry in _help()["categories"]}
+        listing = _help(category="other")
+    finally:
+        REGISTERED_TOOLS[:] = saved
+    assert entries["other"]["tools"] == ["rex_foreign"]
+    assert [tool["name"] for tool in listing["tools"]] == ["rex_foreign"]
+
+
+def test_help_omits_other_from_the_index_when_every_tool_is_categorized() -> None:
+    assert "other" not in [entry["name"] for entry in _help()["categories"]]
+    assert _help(category="other")["tools"] == []
+
+
+def test_help_lists_a_tool_imported_into_another_module_only_under_its_definer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        sys.modules["binja_plugin.tools.strings"],
+        "rex_decompile_many",
+        sys.modules["binja_plugin.tools.decompile"].rex_decompile_many,
+        raising=False,
+    )
+    listed = [name for entry in _help()["categories"] for name in entry["tools"]]
+    assert listed.count("rex_decompile_many") == 1
+    assert "rex_decompile_many" in [tool["name"] for tool in _help(category="decompile")["tools"]]
+    assert "rex_decompile_many" not in [tool["name"] for tool in _help(category="strings")["tools"]]
+
+
+def test_help_fails_on_an_unknown_category_and_lists_the_valid_ones() -> None:
+    with pytest.raises(FakeToolError) as exc:
+        _help(category="nope")
+    assert exc.value.code == "unknown_category"
+    assert "no category named 'nope'" in exc.value.message
+    assert "uidf" in exc.value.message
+
+
+@pytest.mark.parametrize("category", ["strings", "nope"])
+def test_help_rejects_a_tool_name_together_with_any_category(category: str) -> None:
+    with pytest.raises(FakeToolError) as exc:
+        _help("rex_string_search", category=category)
+    assert exc.value.code == "invalid_params"
 
 
 def test_help_details_types_defaults_and_bounds() -> None:
@@ -165,7 +290,15 @@ def test_help_details_non_empty_strings_and_itself() -> None:
         "name": "tool_name",
         "type": "string",
         "required": False,
-        "description": "rex_ tool to describe; empty lists every rex_ tool's name and purpose.",
+        "description": "rex_ tool whose parameters to describe; empty selects the category views.",
+        "error_codes": [],
+        "default": "",
+    }
+    assert own["category"] == {
+        "name": "category",
+        "type": "string",
+        "required": False,
+        "description": "Category whose tools to list with purposes; empty lists the categories.",
         "error_codes": [],
         "default": "",
     }
