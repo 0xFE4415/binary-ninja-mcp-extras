@@ -28,7 +28,6 @@ _CATEGORY_USE_WHEN: dict[str, str] = {
     "escape": "Last resort when no tool fits: run Python, write memory. Report the gap afterward.",
     "help": "Discover the toolbox.",
 }
-_USE_WHEN_BY_CATEGORY = {**_CATEGORY_USE_WHEN, _UNCATEGORIZED: _UNCATEGORIZED_USE_WHEN}
 
 # Error codes the handlers define per parameter, beyond the schema checks the mcp layer
 # applies before a handler runs. The registry records only the JSON Schema, not these —
@@ -89,7 +88,7 @@ def _tools_by_category(registered: dict[str, mcp.Tool]) -> dict[str, list[str]]:
         categories[module_name] = sorted(
             name
             for name, member in vars(module).items()
-            if name in registered and getattr(member, "__module__", None) == module.__name__
+            if name in registered and member.__module__ == module.__name__
         )
     categorized = {name for names in categories.values() for name in names}
     categories[_UNCATEGORIZED] = sorted(set(registered) - categorized)
@@ -107,14 +106,15 @@ def rex_help(call: mcp.ToolCall, tool_name: str = "", category: str = "") -> dic
     if tool_name and category:
         raise mcp.ToolError("invalid_params", "pass either tool_name or category, not both")
     if category:
-        if category not in _USE_WHEN_BY_CATEGORY:
+        if category not in _CATEGORY_USE_WHEN and category != _UNCATEGORIZED:
             raise mcp.ToolError(
                 "unknown_category",
-                f"no category named '{category}'; categories: {', '.join(_USE_WHEN_BY_CATEGORY)}",
+                f"no category named '{category}'; categories: "
+                f"{', '.join([*_CATEGORY_USE_WHEN, _UNCATEGORIZED])}",
             )
         return {
             "category": category,
-            "use_when": _USE_WHEN_BY_CATEGORY[category],
+            "use_when": _CATEGORY_USE_WHEN.get(category, _UNCATEGORIZED_USE_WHEN),
             "tools": [
                 {"name": name, "description": registered[name].description}
                 for name in _tools_by_category(registered)[category]
@@ -122,9 +122,10 @@ def rex_help(call: mcp.ToolCall, tool_name: str = "", category: str = "") -> dic
         }
     if not tool_name:
         categories = _tools_by_category(registered)
+        use_when_by_category = {**_CATEGORY_USE_WHEN, _UNCATEGORIZED: _UNCATEGORIZED_USE_WHEN}
         return {
             "categories": [
-                {"name": name, "use_when": _USE_WHEN_BY_CATEGORY[name], "tools": names}
+                {"name": name, "use_when": use_when_by_category[name], "tools": names}
                 for name, names in categories.items()
                 if names or name != _UNCATEGORIZED
             ]
