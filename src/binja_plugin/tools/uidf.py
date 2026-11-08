@@ -220,7 +220,8 @@ def _collect_mlil_definitions(
             raise mcp.ToolError(
                 "no_variable",
                 f"MLIL variable '{_truncate(name)}' in {_truncate(target.name)} has no "
-                "MediumLevelIL definition sites",
+                "MediumLevelIL definition sites; stack-passed arguments cannot be informed, "
+                "inform the register that loads the value",
             )
         names = sorted({variable.name for variable in target.vars})
         shown = ", ".join(_truncate(candidate, 64) for candidate in names[:_MAX_NAME_CANDIDATES])
