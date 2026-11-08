@@ -20,7 +20,7 @@ from helpers_view import (
 )
 
 import binja_plugin
-from binja_plugin.tools.help import _PARAMETER_ERROR_CODES
+from binja_plugin.tools.help import _CATEGORY_USE_WHEN, _PARAMETER_ERROR_CODES
 from binja_plugin.tools.scanning import _MAX_PATTERN_CHARS
 
 # Error codes the handlers define for the tool as a whole — batch or view-level failures
@@ -170,6 +170,15 @@ def test_help_lists_a_rex_tool_no_category_defines_under_other() -> None:
         REGISTERED_TOOLS[:] = saved
     assert entries["other"]["tools"] == ["rex_foreign"]
     assert [tool["name"] for tool in listing["tools"]] == ["rex_foreign"]
+
+
+def test_every_tool_module_is_a_help_category() -> None:
+    tool_modules = {
+        path.stem
+        for path in (Path(binja_plugin.__file__).parent / "tools").glob("*.py")
+        if path.stem != "__init__"
+    }
+    assert tool_modules == set(_CATEGORY_USE_WHEN)
 
 
 def test_help_omits_other_from_the_index_when_every_tool_is_categorized() -> None:
