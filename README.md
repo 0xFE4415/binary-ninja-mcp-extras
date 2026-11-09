@@ -126,15 +126,21 @@ stay bounded per call:
   Search > For Constant) instead of generating IL for every function. The search is a
   bounded, core-side pass that stops once the requested window is filled; a value that
   occurs rarely or never requires scanning the whole view. Each function echoes at most
-  6 reference addresses and flags clipping via `addresses_truncated`.
+  6 reference addresses and flags clipping via `addresses_truncated`. The core's hits are
+  not address-ordered, so while the result is `truncated` a function's addresses are a
+  lower bound even when `addresses_truncated` is false.
 - `rex_hlil_grep` renders at most `max_functions` functions per call. The first
   render of a function's HLIL costs tens of milliseconds, so on a large database,
   page through the `next_offset` cursor. `truncated` proves a matching function exists
   past the page; `scan_incomplete` says the render budget ran out first — page on
-  while either flag is set.
+  while either flag is set. `skipped_no_hlil` counts the name-matching functions in the
+  scanned range that have no HLIL (analysis skipped or unavailable); they are not in
+  `scanned` and are always reported, 0 when none were skipped.
 - `rex_find_functions_by_pattern` reads memory in chunks and stops as soon as it finds
-  a matching function past the requested window. Functions inside the window still
-  report their full match count; their example addresses cap at 5 with the same
+  a matching function past the requested window. While the result is `truncated`, a
+  function's `match_count` and addresses are lower bounds: matches at higher addresses
+  (for example cold chunks placed after another function) were never scanned. Once
+  `truncated` is false they are exact; example addresses cap at 5 with the same
   `addresses_truncated` flag.
 
 ### Known limits

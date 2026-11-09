@@ -38,11 +38,18 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   exists beyond it". `rex_constant_find` and `rex_find_functions_by_pattern` also return
   `total`, the count of matching functions seen before the scan stopped: exact once
   `truncated` is false, so an empty page whose `total` is at or below the `offset` is an
-  out-of-range page, not an empty result set.
+  out-of-range page, not an empty result set. While `truncated` is true, each returned
+  function's `addresses` (`rex_constant_find`) and `match_count` plus `addresses`
+  (`rex_find_functions_by_pattern`) are lower bounds, because the scan stopped before
+  reaching every hit of functions in the page; `addresses_truncated` only reports the
+  cap on what was seen.
   `rex_hlil_grep` returns no `total`; it additionally returns `scan_incomplete`, set when
   the `max_functions` render budget ran out before the whole view was scanned: nothing
   was proven about matches past the page, so more may exist even though `truncated` is
-  false. Its
+  false. It also always returns an integer `skipped_no_hlil`: the functions in the
+  scanned range that passed `function_filter` but had no HLIL, so were not counted in
+  `scanned` or searched. Filtered-out functions never count, and a function is counted
+  in exactly one page (the one whose range covers it). Its
   `offset`/`next_offset` count functions in the view, not matches; pass the
   cursor back as `offset` and page while either flag is set. `rex_disasm_many`
   also returns `truncated` and a `next_offset` index into the input addresses;

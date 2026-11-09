@@ -310,6 +310,7 @@ def rex_hlil_grep(
     scanned = 0
     truncated = False
     scan_incomplete = False
+    skipped_no_hlil = 0
     next_offset: int | None = None
     # limit=0 pages nothing out, so the window is full from the first scan.
     window_full = limit == 0
@@ -325,6 +326,7 @@ def rex_hlil_grep(
             continue
         hlil = function.hlil
         if hlil is None:
+            skipped_no_hlil += 1
             continue
         scanned += 1
         source_lines = str(hlil).splitlines()
@@ -350,6 +352,7 @@ def rex_hlil_grep(
         "scanned": scanned,
         "truncated": truncated,
         "scan_incomplete": scan_incomplete,
+        "skipped_no_hlil": skipped_no_hlil,
         "functions": matches,
         "next_offset": next_offset,
     }

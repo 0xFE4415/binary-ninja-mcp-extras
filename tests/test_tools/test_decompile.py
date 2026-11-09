@@ -257,6 +257,7 @@ def test_hlil_grep_caps_lines_per_function() -> None:
         "scanned": 1,
         "truncated": False,
         "scan_incomplete": False,
+        "skipped_no_hlil": 0,
         "functions": [
             {
                 "start": "0x1000",
@@ -375,6 +376,7 @@ def test_hlil_grep_limits_and_errors() -> None:
         "scanned": 0,
         "truncated": False,
         "scan_incomplete": True,
+        "skipped_no_hlil": 0,
         "functions": [],
         "next_offset": 0,
     }
@@ -461,6 +463,7 @@ def test_hlil_grep_proves_truncation_past_non_matching_functions() -> None:
         "scanned": 3,
         "truncated": True,
         "scan_incomplete": False,
+        "skipped_no_hlil": 0,
         "functions": [{"start": "0x1000", "name": "a0", "lines": ["call ax"]}],
         "next_offset": 2,
     }
@@ -483,6 +486,7 @@ def test_hlil_grep_offset_and_next_offset() -> None:
         "scanned": 3,
         "truncated": True,
         "scan_incomplete": False,
+        "skipped_no_hlil": 0,
         "functions": [
             {"start": hex(0x1000 + index * 0x10), "name": f"a{index}", "lines": ["call ax"]}
             for index in (1, 2)
@@ -494,6 +498,7 @@ def test_hlil_grep_offset_and_next_offset() -> None:
         "scanned": 1,
         "truncated": False,
         "scan_incomplete": False,
+        "skipped_no_hlil": 0,
         "functions": [{"start": "0x1030", "name": "a3", "lines": ["call ax"]}],
         "next_offset": None,
     }
@@ -502,6 +507,7 @@ def test_hlil_grep_offset_and_next_offset() -> None:
         "scanned": 0,
         "truncated": False,
         "scan_incomplete": False,
+        "skipped_no_hlil": 0,
         "functions": [],
         "next_offset": None,
     }
