@@ -13,8 +13,10 @@ from helpers_view import (
     TYPE_LIBRARIES_ON_DISK,
     FakeArchitecture,
     FakeBinaryView,
+    FakeFunction,
     FakeStructureMember,
     FakeStructureType,
+    FakeSymbol,
     FakeType,
     FakeTypeLibrary,
 )
@@ -214,16 +216,88 @@ def test_type_library_export_writes_types_to_a_bntl(
     ]
 
 
-def test_type_library_export_objects_routes_through_the_object_exporter(
+def test_type_library_export_objects_exports_a_function_by_its_own_type(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    function = FakeFunction("open", 0x1000, 0x1010)
+    function.type = FakeType("open_fn", "int open(char *path, int flags)")
+    view = FakeBinaryView(
+        arch=FakeArchitecture("x86_64"),
+        functions=[function],
+        types={"open": FakeType("open", "struct open_flags")},
+    )
+    _, export = get_tool("rex_type_library_export")
+    result = export(_call(view), "recovered", ["open"], kind="objects", filename="objs.bntl")
+    assert result["exported"] == ["open"]
+    assert result["failed"] == []
+    assert view.exported_objects == [(view.exported_objects[0][0], "open", function.type)]
+    assert view.exported_types == []
+
+
+def test_type_library_export_objects_exports_a_data_variable_by_its_own_type(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    table_type = FakeType("table_t", "int32_t[4]")
+    view = FakeBinaryView(
+        arch=FakeArchitecture("x86_64"),
+        symbols=[FakeSymbol(0x4000, "DataSymbol", "g_table")],
+    )
+    view.data_variable_types = {0x4000: table_type}
+    _, export = get_tool("rex_type_library_export")
+    result = export(_call(view), "recovered", ["g_table"], kind="objects", filename="objs.bntl")
+    assert result["exported"] == ["g_table"]
+    assert view.exported_objects == [(view.exported_objects[0][0], "g_table", table_type)]
+
+
+def test_type_library_export_objects_fails_a_name_that_is_only_a_type(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _use_export_root(monkeypatch, tmp_path)
     view = _typed_view()
     _, export = get_tool("rex_type_library_export")
     result = export(_call(view), "recovered", ["open"], kind="objects", filename="objs.bntl")
-    assert result["exported"] == ["open"]
-    assert view.exported_objects == [(view.exported_objects[0][0], "open", view._types["open"])]
-    assert view.exported_types == []
+    assert result["exported"] == []
+    assert result["failed"] == [
+        {"requested": "open", "reason": "no function or data variable with this name in the view"}
+    ]
+    assert view.exported_objects == []
+
+
+def test_type_library_export_objects_fails_a_symbol_without_a_data_variable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = FakeBinaryView(
+        arch=FakeArchitecture("x86_64"),
+        symbols=[FakeSymbol(0x4000, "DataSymbol", "g_table")],
+    )
+    _, export = get_tool("rex_type_library_export")
+    result = export(_call(view), "recovered", ["g_table"], kind="objects", filename="objs.bntl")
+    assert result["exported"] == []
+    assert result["failed"] == [
+        {
+            "requested": "g_table",
+            "reason": "no function or data variable with this name in the view",
+        }
+    ]
+
+
+def test_type_library_export_types_ignores_functions_of_the_same_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    function = FakeFunction("open", 0x1000, 0x1010)
+    function.type = FakeType("open_fn", "int open()")
+    view = FakeBinaryView(
+        arch=FakeArchitecture("x86_64"),
+        functions=[function],
+        types={"open": FakeType("open", "struct open_flags")},
+    )
+    _, export = get_tool("rex_type_library_export")
+    export(_call(view), "recovered", ["open"], filename="types.bntl")
+    assert [type_obj for _, _, type_obj in view.exported_types] == [view._types["open"]]
 
 
 def test_type_library_export_reports_missing_types(

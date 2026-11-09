@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import enum
 import types
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Generator, Iterator, Mapping
 from typing import Any, override
 
 from helpers_dataflow import FakeMLILInstructions
@@ -221,6 +221,7 @@ class FakeFunction:
         # and get_comment_at answers "" wherever set_comment_at never ran.
         self.comments: dict[int, str] = {}
         self.user_type: object | None = None
+        self.type: FakeType | None = None
         self.user_type_error: Exception | None = None
         self.vars = vars if vars is not None else []
         self.mlil = mlil
@@ -352,6 +353,8 @@ class FakeFileMetadata:
 
 
 class FakeBinaryView:
+    data_variable_types: Mapping[int, FakeType] = types.MappingProxyType({})
+
     def __init__(
         self,
         *,
@@ -676,6 +679,15 @@ class FakeBinaryView:
             return None
         self._types[resolved] = FakeType(name=resolved)
         return FakeType(name=resolved)
+
+    def get_symbols_by_name(self, name: str) -> list[FakeSymbol]:
+        return [symbol for symbol in self._symbols if symbol.name == name]
+
+    def get_data_var_at(self, address: int) -> types.SimpleNamespace | None:
+        """Mirror BinaryView.get_data_var_at: a DataVariable-like with ``type``, or None."""
+        if address not in self.data_variable_types:
+            return None
+        return types.SimpleNamespace(address=address, type=self.data_variable_types[address])
 
     def get_type_by_name(self, name: str) -> FakeType | None:
         return self._types.get(name)

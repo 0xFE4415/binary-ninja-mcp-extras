@@ -35,11 +35,23 @@ _WRITES = _DEFINITIONS + (
     "MLIL_SET_VAR_SPLIT",
     "MLIL_SET_VAR_SPLIT_SSA",
 )
+_CALLS = ("MLIL_CALL", "MLIL_CALL_UNTYPED", "MLIL_SYSCALL", "MLIL_SYSCALL_UNTYPED")
 
 
 def _operation(instruction: Any) -> str:
     name = getattr(instruction.operation, "name", None)
     return name if isinstance(name, str) else str(instruction.operation)
+
+
+def _defined_variable(instruction: Any) -> Any:
+    """The variable an instruction assigns (a call's first output, a split's high half), or None."""
+    operation = _operation(instruction)
+    if operation in _CALLS:
+        return instruction.output[0] if instruction.output else None
+    if operation not in _WRITES:
+        return None
+    dest = getattr(instruction, "dest", None)
+    return dest if dest is not None else instruction.high
 
 
 def _strip_extension(expression: Any) -> Any:
@@ -236,14 +248,14 @@ def rex_mlil_uses(
     defining = [
         instruction
         for instruction in target_mlil.instructions
-        if instruction.address == address and _operation(instruction) in _WRITES
+        if instruction.address == address and _defined_variable(instruction) is not None
     ]
     if not defining:
         sites = sorted(
             {
                 instruction.address
                 for instruction in target_mlil.instructions
-                if _operation(instruction) in _WRITES
+                if _defined_variable(instruction) is not None
             }
         )
         shown = ", ".join(hex(site) for site in sites[:_MAX_DEFINITION_SITES])
@@ -258,10 +270,7 @@ def rex_mlil_uses(
             f"variables are defined at: {shown}{more}; "
             "use rex_hlil_statements or bn_function_il to match an address to its variable",
         )
-    # A split write defines a high:low pair at one site and has no dest; report the high half.
-    variable = getattr(defining[0], "dest", None)
-    if variable is None:
-        variable = defining[0].high
+    variable = _defined_variable(defining[0])
     uses = sorted(target_mlil.get_var_uses(variable), key=lambda use: use.address)
     rows = [
         {

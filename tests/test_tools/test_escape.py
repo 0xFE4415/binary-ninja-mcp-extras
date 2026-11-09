@@ -120,6 +120,25 @@ def test_eval_python_returns_truncated_error_instead_of_raising() -> None:
     assert len(result["error"]) == 512 + len("... [488 chars truncated]")
 
 
+def test_eval_python_reports_system_exit_in_band_with_captured_stdout() -> None:
+    view = _view_with_functions()
+    _, evaluate = get_tool("rex_eval_python")
+    result = evaluate(_call(view), "import sys\nprint('before')\nresult = 1\nsys.exit(3)")
+    assert result["stdout"] == "before\n"
+    assert result["result"] is None
+    assert result["error"] == "3"
+    assert result["error_truncated"] is False
+
+
+def test_eval_python_reports_keyboard_interrupt_in_band_with_captured_stdout() -> None:
+    view = _view_with_functions()
+    _, evaluate = get_tool("rex_eval_python")
+    result = evaluate(_call(view), "print('before')\nraise KeyboardInterrupt('stop')")
+    assert result["stdout"] == "before\n"
+    assert result["result"] is None
+    assert result["error"] == "stop"
+
+
 def test_eval_python_keeps_text_exactly_at_the_echo_cap_unclipped() -> None:
     escape._EVAL_SPILLS.clear()
     view = _view_with_functions()

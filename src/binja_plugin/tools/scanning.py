@@ -80,28 +80,24 @@ def rex_constant_find(
     def keep_scanning(current: int, total: int) -> bool:
         return not abort
 
-    matched = 0
-    current_start: int | None = None
-    current_addresses: list[str] = []
-    groups: list[tuple[int, str, list[str]]] = []
+    groups: dict[int, tuple[str, list[str]]] = {}
     for address, line in bv.find_all_constant(bv.start, bv.end, value, progress_func=keep_scanning):
         function = line.function
         if function is None:
             continue
         if name_matcher is not None and name_matcher.search(function.name) is None:
             continue
-        if function.start != current_start:
-            matched += 1
-            if matched > offset + limit:
+        start = int(function.start)
+        group = groups.get(start)
+        if group is None:
+            if len(groups) >= offset + limit:
                 # One match past the requested window proves more functions exist.
                 truncated = True
                 abort = True
                 break
-            current_start = int(function.start)
-            current_addresses = []
-            groups.append((current_start, _truncate(function.name), current_addresses))
-        if len(current_addresses) <= _MAX_CONSTANT_ADDRESSES:
-            current_addresses.append(hex(address))
+            group = groups[start] = (_truncate(function.name), [])
+        if len(group[1]) <= _MAX_CONSTANT_ADDRESSES:
+            group[1].append(hex(address))
     functions = [
         {
             "start": hex(start),
@@ -109,11 +105,11 @@ def rex_constant_find(
             "addresses": addresses[:_MAX_CONSTANT_ADDRESSES],
             "addresses_truncated": len(addresses) > _MAX_CONSTANT_ADDRESSES,
         }
-        for start, name, addresses in _drop(groups, offset)
+        for start, (name, addresses) in _drop(groups.items(), offset)
     ]
     # Count seen, like _paginate: exact when the scan completed, so a page past the end
     # carries the total it undershot; a lower bound once truncated stops the scan early.
-    return {"total": matched, "truncated": truncated, "functions": functions}
+    return {"total": len(groups) + int(truncated), "truncated": truncated, "functions": functions}
 
 
 @mcp.tool(read_only=True)

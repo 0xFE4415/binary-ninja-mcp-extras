@@ -191,7 +191,7 @@ def rex_function_define_many(
 ) -> _FunctionDefineManyResult:
     """Turn the bytes at many addresses into functions, then optionally wait for analysis.
 
-    :param addresses: 1 to 100 address expressions; the batch fails whole on a bad entry.
+    :param addresses: 1 to 128 address expressions; the batch fails whole on a bad entry.
     :param wait: Poll until every defined function has at least one basic block.
     :param timeout_ms: Bound on the analysis wait when ``wait`` is set.
     """

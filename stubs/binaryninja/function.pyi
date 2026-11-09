@@ -1,6 +1,7 @@
 from typing import Any
 
 from binaryninja.mediumlevelil import MediumLevelILFunction
+from binaryninja.types import Type
 from binaryninja.variable import ArchAndAddr, PossibleValueSet, Variable
 
 
@@ -14,6 +15,7 @@ class Function:
     hlil: Any
     mlil: MediumLevelILFunction | None
     comment: str
+    type: Type
     basic_blocks: Any
     vars: list[Variable]
 

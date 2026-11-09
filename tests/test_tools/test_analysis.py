@@ -215,3 +215,24 @@ def test_binary_close_reports_close_failures() -> None:
         close(_call(view))
     assert exc.value.code == "close_failed"
     assert "wedged" in exc.value.message
+
+
+def test_binary_close_failure_restores_modified_flag() -> None:
+    file_metadata = FakeFileMetadata(filename="/tmp/probe")
+    file_metadata.modified = True
+    file_metadata.close_error = OSError("wedged")
+    view = FakeBinaryView(file=file_metadata)
+    _, close = get_tool("rex_binary_close")
+    with pytest.raises(FakeToolError):
+        close(_call(view))
+    assert file_metadata.modified is True
+
+
+def test_binary_close_failure_keeps_unmodified_flag_false() -> None:
+    file_metadata = FakeFileMetadata(filename="/tmp/probe")
+    file_metadata.close_error = OSError("wedged")
+    view = FakeBinaryView(file=file_metadata)
+    _, close = get_tool("rex_binary_close")
+    with pytest.raises(FakeToolError):
+        close(_call(view))
+    assert file_metadata.modified is False

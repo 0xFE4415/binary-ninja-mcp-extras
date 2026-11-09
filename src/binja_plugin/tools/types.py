@@ -6,6 +6,7 @@ import contextlib
 from typing import Literal
 
 from binaryninja import Type, TypeLibrary, mcp
+from binaryninja.binaryview import BinaryView
 
 from binja_plugin.tools import (
     _MAX_EXPORT_FILE_BYTES,
@@ -81,6 +82,17 @@ def rex_struct_from_access(call: mcp.ToolCall, name: str) -> dict[str, object]:
     }
 
 
+def _object_type_by_name(bv: BinaryView, name: str) -> Type | None:
+    functions = bv.get_functions_by_name(name)
+    if functions:
+        return functions[0].type
+    for symbol in bv.get_symbols_by_name(name):
+        data_variable = bv.get_data_var_at(symbol.address)
+        if data_variable is not None:
+            return data_variable.type
+    return None
+
+
 @mcp.tool(destructive=True)
 def rex_type_library_export(
     call: mcp.ToolCall,
@@ -92,7 +104,7 @@ def rex_type_library_export(
     """Export recovered types or objects into a new .bntl in the export root.
 
     :param library_name: Name for the new type library.
-    :param names: 1 to 64 type names to export from the view.
+    :param names: 1 to 128 type names to export from the view.
     :param kind: Export type definitions ("types") or named objects ("objects").
     :param filename: Plain file name inside the export root; overwritten if it exists.
     """
@@ -117,9 +129,14 @@ def rex_type_library_export(
     exported: list[str] = []
     failed: list[dict[str, str]] = []
     for name in names:
-        type_obj = bv.get_type_by_name(name)
+        if requested == "types":
+            type_obj = bv.get_type_by_name(name)
+            missing_reason = "no type with this name in the view"
+        else:
+            type_obj = _object_type_by_name(bv, name)
+            missing_reason = "no function or data variable with this name in the view"
         if type_obj is None:
-            failed.append({"requested": name, "reason": "no type with this name in the view"})
+            failed.append({"requested": name, "reason": missing_reason})
             continue
         if requested == "types":
             bv.export_type_to_library(library, name, type_obj)
@@ -162,7 +179,7 @@ def rex_type_library_import(call: mcp.ToolCall, path: str, names: list[str]) -> 
     """Import types from a .bntl into the current binary view.
 
     :param path: Filesystem path of the .bntl file to load.
-    :param names: 1 to 64 type names to import from the library.
+    :param names: 1 to 128 type names to import from the library.
     """
     bv = call.binary_view
     _validate_type_names(names)

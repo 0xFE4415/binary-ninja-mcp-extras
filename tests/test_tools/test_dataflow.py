@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from helpers import FakeToolError, _call, get_tool
@@ -267,6 +268,68 @@ def test_uses_resolve_a_split_write_to_its_high_variable() -> None:
     assert result["variable"] == "high"
     assert result["definitions"] == ["0x1020"]
     assert [row["address"] for row in result["uses"]] == ["0x1030"]
+
+
+def _call_uses_view(operation: str, outputs: list[FakeVariable]) -> FakeBinaryView:
+    operands: dict[str, Any] = {} if "SYSCALL" in operation else {"dest": const(0x2000)}
+    call = FakeInstruction(operation, 0x1020, output=outputs, **operands)
+    use = branch(0x1030, compare("MLIL_CMP_NE", var(outputs[0]), const(0x68))) if outputs else None
+    instructions = [call] if use is None else [call, use]
+    mlil = FakeMLILInstructions(
+        instructions=instructions,
+        definitions={output: [call] for output in outputs},
+        uses={outputs[0]: [use]} if use is not None else {},
+    )
+    return FakeBinaryView(functions=[FakeFunction("check", 0x1000, 0x1100, mlil=mlil)])
+
+
+@pytest.mark.parametrize(
+    "operation", ["MLIL_CALL", "MLIL_CALL_UNTYPED", "MLIL_SYSCALL", "MLIL_SYSCALL_UNTYPED"]
+)
+def test_uses_accept_a_call_output_as_the_definition_site(operation: str) -> None:
+    view = _call_uses_view(operation, [FakeVariable("rax")])
+    _, uses = get_tool("rex_mlil_uses")
+    result = uses(_call(view), function=0x1000, address=0x1020)
+    assert result["variable"] == "rax"
+    assert result["definition_site"] == "0x1020"
+    assert result["definitions"] == ["0x1020"]
+    assert [row["address"] for row in result["uses"]] == ["0x1030"]
+
+
+def test_uses_report_the_first_output_of_a_multi_output_call() -> None:
+    view = _call_uses_view("MLIL_CALL", [FakeVariable("rax"), FakeVariable("rcx")])
+    _, uses = get_tool("rex_mlil_uses")
+    result = uses(_call(view), function=0x1000, address=0x1020)
+    assert result["variable"] == "rax"
+
+
+def test_uses_reject_a_call_without_outputs_and_omit_it_from_the_listed_sites() -> None:
+    view = _call_uses_view("MLIL_CALL", [])
+    _, uses = get_tool("rex_mlil_uses")
+    with pytest.raises(FakeToolError) as error:
+        uses(_call(view), function=0x1000, address=0x1020)
+    assert error.value.code == "no_definition"
+    assert error.value.message == (
+        "no MLIL variable definition at 0x1020 in check; "
+        "variables are defined at: ; "
+        "use rex_hlil_statements or bn_function_il to match an address to its variable"
+    )
+
+
+def test_uses_reject_a_tailcall_even_though_it_lists_outputs() -> None:
+    view = _call_uses_view("MLIL_TAILCALL", [FakeVariable("rax")])
+    _, uses = get_tool("rex_mlil_uses")
+    with pytest.raises(FakeToolError) as error:
+        uses(_call(view), function=0x1000, address=0x1020)
+    assert error.value.code == "no_definition"
+
+
+def test_uses_list_a_call_output_site_among_the_defined_variable_sites() -> None:
+    call_view = _call_uses_view("MLIL_CALL", [FakeVariable("rax")])
+    _, uses = get_tool("rex_mlil_uses")
+    with pytest.raises(FakeToolError) as error:
+        uses(_call(call_view), function=0x1000, address=0x1030)
+    assert "variables are defined at: 0x1020;" in error.value.message
 
 
 def test_uses_missing_definition_counts_sites_past_the_listed_ones() -> None:

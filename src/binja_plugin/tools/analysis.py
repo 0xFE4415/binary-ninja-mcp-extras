@@ -82,9 +82,11 @@ def rex_binary_close(call: mcp.ToolCall) -> dict[str, object]:
     file_metadata = call.binary_view.file
     # The UI adapter keys its discard refusal on this flag; clearing it is the
     # programmatic equivalent of choosing "Discard" in the close prompt.
+    was_modified = file_metadata.modified
     file_metadata.modified = False
     try:
         file_metadata.close()
     except Exception as error:
+        file_metadata.modified = was_modified
         raise mcp.ToolError("close_failed", f"could not close the view: {error}") from None
     return {"closed": True, "path": _truncate(file_metadata.filename)}

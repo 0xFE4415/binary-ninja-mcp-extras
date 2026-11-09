@@ -92,6 +92,7 @@ class RelocationInfo:
 
 class CoreSymbol:
     full_name: str
+    address: int
 
 
 class Relocation:
@@ -103,6 +104,11 @@ class Relocation:
     def reloc(self) -> int: ...
     @property
     def symbol(self) -> CoreSymbol | None: ...
+
+
+class DataVariable:
+    address: int
+    type: Type
 
 
 class BinaryView:
@@ -122,6 +128,10 @@ class BinaryView:
     def get_functions_by_name(
         self, name: str, plat: Any = None, ordered_filter: Any = None
     ) -> list[Function]: ...
+    def get_symbols_by_name(
+        self, name: str, namespace: Any = None, ordered_filter: Any = None
+    ) -> list[CoreSymbol]: ...
+    def get_data_var_at(self, addr: int) -> DataVariable | None: ...
     def find_all_constant(
         self,
         start: int,

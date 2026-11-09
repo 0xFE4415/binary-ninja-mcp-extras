@@ -74,7 +74,7 @@ def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
             # repr() inside the try: a raising __repr__ must take the error path below, not
             # escape the handler and drop the captured stdout.
             raw_result = repr(namespace["result"])
-    except Exception as error:
+    except (Exception, SystemExit, KeyboardInterrupt) as error:
         # Keep failures out of the mcp layer's uncapped str(error) ToolError path.
         error_message = str(error)
 

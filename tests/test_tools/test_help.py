@@ -43,6 +43,7 @@ _TOOL_LEVEL_CODES = frozenset(
 )
 
 _MUTMUT_VARIANT = re.compile(r"__mutmut_\d+$")
+_MUTMUT_ORIGINAL = re.compile(r"^x_(.+)__mutmut_orig$")
 
 
 def _help(tool_name: str = "", category: str = "") -> Any:
@@ -219,7 +220,7 @@ def test_help_details_types_defaults_and_bounds() -> None:
         "type": "string",
         "required": False,
         "description": "Substring or regular expression to match; empty matches every string.",
-        "error_codes": [],
+        "error_codes": ["invalid_regex"],
         "default": "",
     }
     assert by_name["limit"] == {
@@ -370,21 +371,124 @@ def test_help_error_code_table_matches_the_handler_sources() -> None:
     assert listed == defined
 
 
+_RAISING_HELPER_CODE_POSITIONS = {
+    "ToolError": 0,
+    "_validate_text": 3,
+    "_require_containing_function": 2,
+    "_raise_containment_miss": 2,
+    "_run_undo_stack_step": 2,
+}
+
+# Codes a handler reaches but reports in-band or without a parameter to own them, so the
+# per-parameter table does not list them.
+_UNLISTED_REACHABLE_CODES = {
+    "rex_disasm_many": {"analysis_pending"},
+    "rex_quick_main": {"no_function"},
+    "rex_uidf_set_many": {
+        "ambiguous_definition",
+        "definition_not_found",
+        "no_mlil",
+        "no_variable",
+    },
+}
+
+
+def _function_bodies() -> dict[str, list[ast.FunctionDef]]:
+    bodies: dict[str, list[ast.FunctionDef]] = {}
+    for path in Path(binja_plugin.__file__).parent.rglob("*.py"):
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.FunctionDef) and _MUTMUT_VARIANT.search(node.name) is None:
+                bodies.setdefault(_MUTMUT_ORIGINAL.sub(r"\1", node.name), []).append(node)
+    return bodies
+
+
+def _callee_name(call: ast.Call) -> str:
+    target = call.func
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return target.id if isinstance(target, ast.Name) else ""
+
+
+def _literal_code(call: ast.Call) -> str | None:
+    position = _RAISING_HELPER_CODE_POSITIONS.get(_callee_name(call))
+    if position is None or len(call.args) <= position:
+        return None
+    argument = call.args[position]
+    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+        return argument.value
+    return None
+
+
+def _reachable_error_codes(tool_name: str) -> set[str]:
+    bodies = _function_bodies()
+    codes: set[str] = set()
+    pending, visited = [tool_name], set[str]()
+    while pending:
+        name = pending.pop()
+        if name in visited:
+            continue
+        visited.add(name)
+        calls = [
+            node
+            for body in bodies.get(name, [])
+            for node in ast.walk(body)
+            if isinstance(node, ast.Call)
+        ]
+        pending.extend(_callee_name(call) for call in calls)
+        codes.update(code for call in calls if (code := _literal_code(call)) is not None)
+    return codes
+
+
+@pytest.mark.parametrize("tool_name", sorted(tool.name for tool in FakeTool.list()))
+def test_help_error_code_table_matches_each_tools_reachable_codes(tool_name: str) -> None:
+    reachable = _reachable_error_codes(tool_name)
+    unlisted = _UNLISTED_REACHABLE_CODES.get(tool_name, set())
+    assert unlisted <= reachable
+    listed = {
+        code
+        for (listed_tool, _), codes in _PARAMETER_ERROR_CODES.items()
+        if listed_tool == tool_name
+        for code in codes
+    }
+    assert listed == reachable - {"invalid_params"} - _TOOL_LEVEL_CODES - unlisted
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "parameter_name", "error_codes"),
+    [
+        ("rex_constant_find", "function_filter", ["invalid_regex"]),
+        ("rex_hlil_grep", "function_filter", ["invalid_regex"]),
+        ("rex_hlil_grep", "regex", ["invalid_regex"]),
+        ("rex_string_refs", "pattern", ["invalid_regex"]),
+        ("rex_function_containing", "addr", ["no_function", "analysis_pending"]),
+        ("rex_component_add_functions", "functions", ["analysis_pending"]),
+        ("rex_uidf_list", "function", ["analysis_pending"]),
+        ("rex_uidf_set_many", "function", ["analysis_pending"]),
+        ("rex_function_define_many", "addresses", []),
+    ],
+)
+def test_help_details_the_error_codes_of_the_parameter_that_raises_them(
+    tool_name: str, parameter_name: str, error_codes: list[str]
+) -> None:
+    parameters = {parameter["name"]: parameter for parameter in _help(tool_name)["parameters"]}
+    assert parameters[parameter_name]["error_codes"] == error_codes
+
+
 def test_help_details_the_dataflow_tool_error_codes() -> None:
     constraints = {
         parameter["name"]: parameter
         for parameter in _help("rex_function_constraints")["parameters"]
     }
-    assert constraints["function"]["error_codes"] == ["no_mlil"]
+    assert constraints["function"]["error_codes"] == ["no_mlil", "analysis_pending"]
     statements = {
         parameter["name"]: parameter for parameter in _help("rex_hlil_statements")["parameters"]
     }
-    assert statements["function"]["error_codes"] == ["no_hlil"]
+    assert statements["function"]["error_codes"] == ["no_hlil", "analysis_pending"]
     uses = {parameter["name"]: parameter for parameter in _help("rex_mlil_uses")["parameters"]}
-    assert uses["function"]["error_codes"] == ["no_mlil"]
+    assert uses["function"]["error_codes"] == ["no_mlil", "analysis_pending"]
     assert uses["address"]["error_codes"] == ["no_definition"]
     parameter = {
         parameter["name"]: parameter for parameter in _help("rex_parameter_variables")["parameters"]
     }
-    assert parameter["function"]["error_codes"] == ["no_mlil"]
+    assert parameter["function"]["error_codes"] == ["no_mlil", "analysis_pending"]
     assert parameter["parameter"]["error_codes"] == ["no_variable"]

@@ -184,7 +184,7 @@ def rex_annotate_many(
 ) -> dict[str, object]:
     """Apply many function annotations in one undoable transaction.
 
-    :param items: 1 to 100 annotation objects; the item schema defines the fields.
+    :param items: 1 to 128 annotation objects; the item schema defines the fields.
     """
     bv = call.binary_view
     if not isinstance(items, list):

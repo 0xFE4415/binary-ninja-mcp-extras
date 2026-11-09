@@ -68,7 +68,7 @@ def rex_component_add_functions(
     """Put functions into a component.
 
     :param path: Absolute component path; '/' selects the root component.
-    :param functions: 1 to 64 address expressions of the functions to add.
+    :param functions: 1 to 128 address expressions of the functions to add.
     """
     bv = call.binary_view
     _validate_component_path("path", path)

@@ -22,7 +22,7 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `rex_function_constraints`, `rex_hlil_statements`, and `rex_mlil_uses` build their full
   list and return exact `total`/`truncated`. `rex_mlil_uses` resolves the variable one
   address assigns; a split write defines a high:low pair and the tool reports the high
-  half.
+  half, and a call defines its first output.
 - For `rex_string_search`, `rex_data_find`, `rx_data_find`, `rex_string_refs`, and
   `rex_uidf_list`, a truncated `total` is a lower bound: scanning stops at the first
   result past the page. `rex_xrefs_to` has the same rule for fetched refs; `rx_multi_find`
@@ -62,8 +62,8 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   apply to the matching `rex_eval_python` fields; `data_truncated` applies to `data` in
   `rex_tag_list`/`rex_tag_set`; `truncated` applies to values in `rex_kv_set`/`rex_kv_get`,
   `rex_report_show.preview`, and `rex_string_read_at.value`.
-  `refs_truncated` means `rex_string_refs` returns at most 20 refs per string;
-  `children_truncated` means `rex_component_get` returns at most 200 children. Other
+  `refs_truncated` means `rex_string_refs` returns at most 64 refs per string;
+  `children_truncated` means `rex_component_get` returns at most 256 children. Other
   `truncated` flags describe tool-specific omissions; for `rex_eval_result`, more text
   remains to page.
 - `rex_eval_python` always returns `stdout`. It is the only tool that reports a whole-call

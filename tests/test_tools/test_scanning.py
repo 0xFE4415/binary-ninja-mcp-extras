@@ -366,6 +366,71 @@ def test_constant_find_offset_and_limit() -> None:
     }
 
 
+def _interleaved_constant_view() -> FakeBinaryView:
+    split = FakeFunction("split", 0x1000, 0x1100)
+    between = FakeFunction("between", 0x1040, 0x1060)
+    return FakeBinaryView(
+        functions=[split, between],
+        constant_references=[
+            (7, 0x1010, split),
+            (7, 0x1050, between),
+            (7, 0x1080, split),
+        ],
+    )
+
+
+def test_constant_find_merges_a_function_split_around_another() -> None:
+    view = _interleaved_constant_view()
+    _, find = get_tool("rex_constant_find")
+    assert find(_call(view), value=7) == {
+        "total": 2,
+        "truncated": False,
+        "functions": [
+            {
+                "start": "0x1000",
+                "name": "split",
+                "addresses": ["0x1010", "0x1080"],
+                "addresses_truncated": False,
+            },
+            {
+                "start": "0x1040",
+                "name": "between",
+                "addresses": ["0x1050"],
+                "addresses_truncated": False,
+            },
+        ],
+    }
+
+
+def test_constant_find_pages_a_split_function_once() -> None:
+    view = _interleaved_constant_view()
+    _, find = get_tool("rex_constant_find")
+    second = find(_call(view), value=7, limit=1, offset=1)
+    assert second["total"] == 2
+    assert second["truncated"] is False
+    assert [entry["name"] for entry in second["functions"]] == ["between"]
+    first = find(_call(view), value=7, limit=1)
+    assert first["total"] == 2
+    assert first["truncated"] is True
+    assert [entry["name"] for entry in first["functions"]] == ["split"]
+
+
+def test_constant_find_merges_one_address_reported_for_overlapping_functions() -> None:
+    first = FakeFunction("first", 0x1000, 0x1100)
+    second = FakeFunction("second", 0x1020, 0x1100)
+    view = FakeBinaryView(
+        functions=[first, second],
+        constant_references=[(7, 0x1030, first), (7, 0x1030, second), (7, 0x1040, first)],
+    )
+    _, find = get_tool("rex_constant_find")
+    result = find(_call(view), value=7)
+    assert result["total"] == 2
+    assert [(entry["name"], entry["addresses"]) for entry in result["functions"]] == [
+        ("first", ["0x1030", "0x1040"]),
+        ("second", ["0x1030"]),
+    ]
+
+
 def test_constant_find_stops_the_scan_at_the_limit() -> None:
     functions = [
         FakeFunction(f"f{index}", 0x1000 + index * 0x10, 0x1010 + index * 0x10)
