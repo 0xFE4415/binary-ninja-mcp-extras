@@ -23,7 +23,6 @@ from binaryninja.variable import Variable
 from binja_plugin.tools import (
     _MAX_DECOMPILE_LINES,
     _MAX_LIMIT,
-    _MAX_NAME_CANDIDATES,
     _function_entry,
     _FunctionEntry,
     _is_json_object,
@@ -34,6 +33,7 @@ from binja_plugin.tools import (
     _require_analyzed_function,
     _ResolvedFunction,
     _truncate,
+    _unknown_variable_error,
     _validate_range,
 )
 
@@ -299,35 +299,22 @@ def _collect_mlil_definitions(
     mlil = target.mlil
     if mlil is None:
         raise _missing_il_error(target, "MediumLevelIL", "no_mlil")
-    matches = [
-        (variable, definition)
-        for variable in target.vars
-        if variable.name == name
-        for definition in mlil.get_var_definitions(variable)
-    ]
-    if not matches:
-        if any(variable.name == name for variable in target.vars):
-            raise mcp.ToolError(
-                "no_variable",
-                f"MLIL variable '{_truncate(name)}' in {_truncate(target.name)} has no "
-                "MediumLevelIL definition sites; stack-passed arguments cannot be informed, "
-                "inform the register that loads the value",
-            )
-        names = sorted({variable.name for variable in target.vars})
-        shown = ", ".join(_truncate(candidate, 64) for candidate in names[:_MAX_NAME_CANDIDATES])
-        more = (
-            f" (+{len(names) - _MAX_NAME_CANDIDATES} more)"
-            if len(names) > _MAX_NAME_CANDIDATES
-            else ""
-        )
+    matches: list[tuple[Variable, MediumLevelILInstruction]] = []
+    for variable in target.vars:
+        if variable.name != name:
+            continue
+        for definition in mlil.get_var_definitions(variable):
+            matches.append((variable, definition))
+    if matches:
+        return matches
+    if any(variable.name == name for variable in target.vars):
         raise mcp.ToolError(
             "no_variable",
-            f"no MLIL variable named '{_truncate(name)}' in {_truncate(target.name)}; "
-            f"variables: {shown}{more}; use bn_variable_list for the full list. "
-            "Register-allocated parameters are named by their register (for example r14), "
-            "not by their argument name",
+            f"MLIL variable '{_truncate(name)}' in {_truncate(target.name)} has no "
+            "MediumLevelIL definition sites; stack-passed arguments cannot be informed, "
+            "inform the register that loads the value",
         )
-    return matches
+    raise _unknown_variable_error(target, name)
 
 
 def _iter_uidf_entries(targets: list[Function]) -> Iterator[_UidfEntry]:

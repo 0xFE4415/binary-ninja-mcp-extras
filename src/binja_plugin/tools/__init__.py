@@ -293,6 +293,21 @@ def _missing_il_error(
     return mcp.ToolError(code, _missing_il_message(function, level))
 
 
+def _unknown_variable_error(function: Function, name: str) -> mcp.ToolError:
+    names = sorted({variable.name for variable in function.vars})
+    shown = ", ".join(_truncate(candidate, 64) for candidate in names[:_MAX_NAME_CANDIDATES])
+    more = (
+        f" (+{len(names) - _MAX_NAME_CANDIDATES} more)" if len(names) > _MAX_NAME_CANDIDATES else ""
+    )
+    return mcp.ToolError(
+        "no_variable",
+        f"no MLIL variable named '{_truncate(name)}' in {_truncate(function.name)}; "
+        f"variables: {shown}{more}; use bn_variable_list for the full list. "
+        "Register-allocated parameters are named by their register (for example r14), "
+        "not by their argument name",
+    )
+
+
 def _require_analyzed_function(bv: BinaryView, address: int) -> _Resolution:
     return _require_containing_function(bv, address, "invalid_params", "analyzed function")
 

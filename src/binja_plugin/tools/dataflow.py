@@ -15,10 +15,10 @@ from binaryninja.enums import VariableSourceType
 
 from binja_plugin.tools import (
     _MAX_LIMIT,
-    _MAX_NAME_CANDIDATES,
     _missing_il_error,
     _require_analyzed_function,
     _truncate,
+    _unknown_variable_error,
     _validate_range,
 )
 
@@ -447,28 +447,15 @@ def rex_parameter_variables(
         raise _missing_il_error(target, "MediumLevelIL", "no_mlil")
     matches = [variable for variable in target.vars if variable.name == parameter]
     if not matches:
-        names = sorted({variable.name for variable in target.vars})
-        shown = ", ".join(_truncate(name, 64) for name in names[:_MAX_NAME_CANDIDATES])
-        more = (
-            f" (+{len(names) - _MAX_NAME_CANDIDATES} more)"
-            if len(names) > _MAX_NAME_CANDIDATES
-            else ""
-        )
-        raise mcp.ToolError(
-            "no_variable",
-            f"no MLIL variable named '{_truncate(parameter)}' in {_truncate(target.name)}; "
-            f"variables: {shown}{more}; use bn_variable_list for the full list. "
-            "Register-allocated parameters are named by their register (for example r14), "
-            "not by their argument name",
-        )
+        raise _unknown_variable_error(target, parameter)
+    definitions: list[str] = []
+    for variable in matches:
+        for definition in target_mlil.get_var_definitions(variable):
+            definitions.append(hex(definition.address))
     return {
         "function": resolution.entry,
         "parameter": _truncate(parameter),
         "storage": [_variable_storage(target.arch, variable) for variable in matches],
-        "definitions": [
-            hex(definition.address)
-            for variable in matches
-            for definition in target_mlil.get_var_definitions(variable)
-        ],
+        "definitions": definitions,
         "carriers": _parameter_carriers(target_mlil, parameter),
     }
