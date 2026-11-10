@@ -385,14 +385,6 @@ def rex_mlil_uses(
     }
 
 
-def _storage_description(variable: Variable) -> dict[str, object]:
-    source = getattr(variable, "source_type", None)
-    return {
-        "source": getattr(source, "name", None) or str(source),
-        "storage": getattr(variable, "storage", None),
-    }
-
-
 def _is_copy_of_parameter(instruction: Any, parameter: str) -> bool:
     if _operation(instruction) not in _DEFINITIONS:
         return False
@@ -457,7 +449,7 @@ def rex_parameter_variables(
     return {
         "function": resolution.entry,
         "parameter": _truncate(parameter),
-        "storage": [_storage_description(variable) for variable in matches],
+        "storage": [_variable_storage(target.arch, variable) for variable in matches],
         "definitions": [
             hex(definition.address)
             for variable in matches

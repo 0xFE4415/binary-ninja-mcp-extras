@@ -37,7 +37,8 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   "composite_parameter", storage}` with the raw core value. `flag` is the architecture's
   flag name, except for a temporary flag (storage with bit 31 set, the variable `condN`),
   which reads `temp flag N` with N the storage minus 0x80000000; the core's own name for it
-  is `flag<storage>`, so nothing is lost. `limit` and `offset` page
+  is `flag<storage>`, so nothing is lost. `rex_parameter_variables`
+  reports the same shapes. `limit` and `offset` page
   each entry's uses, and `variable` keeps every variable with that name, same-named ones
   included (`no_variable` if the instruction defines none).
 - `no_mlil` (`rex_function_constraints`, `rex_mlil_uses`, `rex_parameter_variables`, and the
@@ -253,10 +254,10 @@ present only on some rows.
   one per defined variable: `variable`, `storage`, `type`, `definitions` (a flat list of
   the addresses of every definition the core records for it), `total`, `truncated`, and
   `uses` of `{address, operation, text}`.
-- `rex_parameter_variables`: `function`, `parameter`, `storage` (one `{source, storage}`
-  per matching variable, `source` being the core's `VariableSourceType` name and `storage`
-  the raw core value), `definitions` (a flat list of addresses over all matching
-  variables), and `carriers` of `{variable, address, text}`.
+- `rex_parameter_variables`: `function`, `parameter`, `storage` (one entry per matching
+  variable in the function's variable order, shaped like `rex_mlil_uses`' `storage`),
+  `definitions` (a flat list of addresses over all matching variables), and `carriers` of
+  `{variable, address, text}`.
 - `rex_quick_main`: `entry_point`, `method` (`symbol`, `entry-arg`, or `entry-fallback`),
   `main` (null when unresolved), `note` and `hint` (each null when it has nothing to add),
   `function` (main, else the entry function), `lines`, `truncated`.

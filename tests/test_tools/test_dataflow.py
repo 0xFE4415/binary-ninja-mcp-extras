@@ -984,7 +984,7 @@ def test_parameter_maps_to_the_copies_that_carry_it() -> None:
     view = FakeBinaryView(functions=[function])
     _, parameter = get_tool("rex_parameter_variables")
     result = parameter(_call(view), function=0x1000, parameter="arg4")
-    assert result["storage"] == [{"source": "StackVariableSourceType", "storage": 112}]
+    assert result["storage"] == [{"source": "stack", "stack_offset": 112}]
     assert result["carriers"] == [{"variable": "r14", "address": "0x1438", "text": "r14 = arg4"}]
 
 
@@ -1025,33 +1025,74 @@ def test_parameter_without_mlil_fails_with_no_mlil() -> None:
     assert "run bn_analysis_update_and_wait" in error.value.message
 
 
-class _BareVariable:
-    """Mirrors a register variable: no source_type or storage attribute at all."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-
-def test_parameter_storage_covers_variables_without_source_metadata() -> None:
-    # A variable with no source_type falls back to str(None), and a source type without a
-    # .name attribute still renders as its own string form.
-    bare = _BareVariable("reg9")
-    nameless = FakeVariable("reg9", storage=0)
-    nameless.source_type = 42  # ty: ignore[invalid-assignment]
+def _parameter_view(*variables: FakeVariable, arch: FakeArchitecture | None = None) -> Any:
     function = FakeFunction(
-        "check",
-        0x1000,
-        0x1100,
-        mlil=FakeMLILInstructions([]),
-        vars=[bare, nameless],  # ty: ignore[invalid-argument-type] register vars lack the slots
+        "check", 0x1000, 0x1100, mlil=FakeMLILInstructions([]), vars=list(variables), arch=arch
     )
-    view = FakeBinaryView(functions=[function])
+    return FakeBinaryView(functions=[function])
+
+
+def _parameter_storage(view: FakeBinaryView, name: str) -> list[dict[str, Any]]:
     _, parameter = get_tool("rex_parameter_variables")
-    result = parameter(_call(view), function=0x1000, parameter="reg9")
-    assert result["storage"] == [
-        {"source": "None", "storage": None},
-        {"source": "42", "storage": 0},
+    return parameter(_call(view), function=0x1000, parameter=name)["storage"]
+
+
+@pytest.mark.parametrize(
+    ("variable", "storage"),
+    [
+        (FakeVariable("v", storage=105), {"source": "register", "register": "rdi"}),
+        (_stack_variable("v", 8), {"source": "stack", "stack_offset": 8}),
+        (_stack_variable("v", -8), {"source": "stack", "stack_offset": -8}),
+        (_flag_variable(6), {"source": "flag", "flag": "z"}),
+        (_flag_variable(0x80000000), {"source": "flag", "flag": "temp flag 0"}),
+        (
+            FakeVariable(
+                "v", source_type=FakeVariableSourceType.CompositeReturnValueSourceType, storage=3
+            ),
+            {"source": "composite_return_value", "storage": 3},
+        ),
+        (
+            FakeVariable(
+                "v", source_type=FakeVariableSourceType.CompositeParameterSourceType, storage=4
+            ),
+            {"source": "composite_parameter", "storage": 4},
+        ),
+    ],
+)
+def test_parameter_storage_has_the_shape_mlil_uses_reports(
+    variable: FakeVariable, storage: dict[str, Any]
+) -> None:
+    assert _parameter_storage(_parameter_view(variable), variable.name) == [storage]
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[variable])
+    [report] = _run_uses(_uses_view([call], {variable: [call]}))["variables"]
+    assert report["storage"] == storage
+
+
+def test_parameter_storage_lists_every_same_named_variable_in_function_order() -> None:
+    first = _stack_variable("category", 8)
+    second = FakeVariable("category", storage=105)
+    third = _stack_variable("category", -16)
+    other = FakeVariable("other", storage=104)
+    view = _parameter_view(first, other, second, third)
+    assert _parameter_storage(view, "category") == [
+        {"source": "stack", "stack_offset": 8},
+        {"source": "register", "register": "rdi"},
+        {"source": "stack", "stack_offset": -16},
     ]
+    assert _parameter_storage(view, "other") == [{"source": "register", "register": "rsi"}]
+
+
+def test_parameter_storage_resolves_registers_through_the_function_architecture() -> None:
+    variable = FakeVariable("v", storage=98)
+    view = _parameter_view(variable, arch=FakeArchitecture("arm64", {98: "x0"}, {}))
+    assert _parameter_storage(view, "v") == [{"source": "register", "register": "x0"}]
+
+
+def test_parameter_rejects_a_variable_source_type_the_plugin_does_not_know() -> None:
+    variable = FakeVariable("v")
+    variable.source_type = 99  # ty: ignore[invalid-assignment]
+    with pytest.raises(ValueError, match=r"^unknown variable source type 99$"):
+        _parameter_storage(_parameter_view(variable), "v")
 
 
 def test_parameter_carriers_scan_the_whole_function_and_sort_by_address() -> None:
