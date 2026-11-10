@@ -187,15 +187,15 @@ def rex_type_library_export(
     call: mcp.ToolCall,
     library_name: str,
     names: list[str],
+    filename: str,
     kind: ExportKind = "types",
-    filename: str = "",
 ) -> _TypeLibraryExportResult:
     """Export types or objects into a new .bntl; object entries add address and alternatives.
 
     :param library_name: Name for the new type library.
     :param names: 1 to 128 type names to export from the view.
-    :param kind: "types" or "objects" (function, else typed data, else void, else import slot).
     :param filename: Plain file name inside the export root; overwritten if it exists.
+    :param kind: "types" or "objects" (function, else typed data, else void, else import slot).
     """
     bv = call.binary_view
     # The plugin's per-parameter *_too_large string-cap code family.

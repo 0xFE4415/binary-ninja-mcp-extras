@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import re
 import sys
 from collections.abc import Iterator
@@ -563,6 +564,38 @@ def test_help_lists_exactly_the_codes_an_export_filename_can_raise(tool_name: st
     assert set(parameters["filename"]["error_codes"]) == {
         code for _, code in _EXPORT_FILENAME_CODES
     }
+
+
+_EXPORT_REQUIRED = {
+    "rex_export_disasm": ["address", "filename"],
+    "rex_export_symbols": ["start", "end", "filename"],
+    "rex_type_library_export": ["library_name", "names", "filename"],
+}
+
+
+@pytest.mark.parametrize("tool_name", _EXPORT_FILENAME_TOOLS)
+def test_help_describes_an_export_filename_as_required_without_a_default(tool_name: str) -> None:
+    parameters = {parameter["name"]: parameter for parameter in _help(tool_name)["parameters"]}
+    assert parameters["filename"] == {
+        "name": "filename",
+        "type": "string",
+        "required": True,
+        "description": "Plain file name inside the export root; overwritten if it exists.",
+        "error_codes": ["invalid_params", "path_escape", "export_failed"],
+    }
+
+
+@pytest.mark.parametrize("tool_name", _EXPORT_FILENAME_TOOLS)
+def test_an_export_registers_its_filename_as_required(tool_name: str) -> None:
+    schema = next(tool for tool in FakeTool.list() if tool.name == tool_name).input_schema
+    assert schema["required"] == _EXPORT_REQUIRED[tool_name]
+    assert "default" not in schema["properties"]["filename"]
+
+
+@pytest.mark.parametrize("tool_name", _EXPORT_FILENAME_TOOLS)
+def test_an_export_cannot_be_called_without_a_filename(tool_name: str) -> None:
+    _, tool = get_tool(tool_name)
+    assert inspect.signature(tool).parameters["filename"].default is inspect.Parameter.empty
 
 
 def test_help_lists_invalid_params_only_for_export_filenames() -> None:

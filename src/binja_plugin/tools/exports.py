@@ -74,18 +74,18 @@ def _symbols_json(rows: list[_SymbolRow]) -> str:
 def rex_export_disasm(
     call: mcp.ToolCall,
     address: mcp.Address,
+    filename: str,
     before: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DISASM_CONTEXT)] = 4,
     after: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DISASM_CONTEXT)] = 8,
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_EXPORT_DISASM_LINES)] = 200,
-    filename: str = "",
 ) -> _ExportDisasmResult:
     """Export one analyzed function's disassembly window to a file.
 
     :param address: Address expression inside the target function.
+    :param filename: Plain file name inside the export root; overwritten if it exists.
     :param before: Instructions to include before the anchor.
     :param after: Instructions to include after the anchor.
     :param max_lines: Maximum lines to export.
-    :param filename: Plain file name inside the export root; overwritten if it exists.
     """
     bv = call.binary_view
     before, after = _validate_disasm_window(before, after)
@@ -115,19 +115,19 @@ def rex_export_symbols(
     call: mcp.ToolCall,
     start: Annotated[int, mcp.Minimum(0)],
     end: int,
+    filename: str,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_EXPORT_SYMBOLS)] = 500,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
     format: ExportFormat = "csv",
-    filename: str = "",
 ) -> _ExportSymbolsResult:
     """Export the symbols in an address range to a file.
 
     :param start: Start of the address range, inclusive.
     :param end: End of the address range, exclusive; must be greater than ``start``.
+    :param filename: Plain file name inside the export root; overwritten if it exists.
     :param limit: Maximum symbols to export.
     :param offset: Sorted symbols to skip before the window starts.
     :param format: Output format, "csv" or "json".
-    :param filename: Plain file name inside the export root; overwritten if it exists.
     """
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_EXPORT_SYMBOLS)
