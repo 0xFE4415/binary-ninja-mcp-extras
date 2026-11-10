@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import importlib
+from typing import Final, TypedDict
 
 from binaryninja import mcp
 
-_TOOL_PREFIX = "rex_"
+_TOOL_PREFIX: Final = "rex_"
 
-_UNCATEGORIZED = "other"
-_UNCATEGORIZED_USE_WHEN = "Registered rex_ tools that no category module defines."
+_UNCATEGORIZED: Final = "other"
+_UNCATEGORIZED_USE_WHEN: Final = "Registered rex_ tools that no category module defines."
 
-_CATEGORY_USE_WHEN: dict[str, str] = {
+_CATEGORY_USE_WHEN: Final[dict[str, str]] = {
     "decompile": "First contact and reading code: entry point, main, HLIL/disassembly, HLIL grep.",
     "strings": "Locate detected strings and the code that references them.",
     "scanning": "Find a magic constant or byte pattern, and the functions that contain it.",
@@ -33,7 +34,7 @@ _CATEGORY_USE_WHEN: dict[str, str] = {
 # applies before a handler runs. The registry records only the JSON Schema, not these —
 # they live in the handler bodies — so the map is maintained by hand and pinned against
 # the handler sources by tests/test_tools/test_help.py.
-_PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
+_PARAMETER_ERROR_CODES: Final[dict[tuple[str, str], tuple[str, ...]]] = {
     ("rex_call_paths", "from_addr"): ("no_function", "analysis_pending"),
     ("rex_call_paths", "to_addr"): ("no_function", "analysis_pending"),
     ("rex_component_add_functions", "functions"): ("analysis_pending",),
@@ -90,6 +91,44 @@ _PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
 }
 
 
+_SCHEMA_BOUNDS: Final = (
+    "minimum",
+    "maximum",
+    "default",
+    "enum",
+    "minLength",
+    "maxLength",
+    "items",
+)
+
+
+class _ToolSummary(TypedDict):
+    name: str
+    description: str
+
+
+class _CategoryView(TypedDict):
+    category: str
+    use_when: str
+    tools: list[_ToolSummary]
+
+
+class _CategorySummary(TypedDict):
+    name: str
+    use_when: str
+    tools: list[str]
+
+
+class _CategoriesView(TypedDict):
+    categories: list[_CategorySummary]
+
+
+class _ToolView(TypedDict):
+    name: str
+    description: str
+    parameters: list[dict[str, object]]
+
+
 def _tools_by_category(registered: dict[str, mcp.Tool]) -> dict[str, list[str]]:
     categories: dict[str, list[str]] = {}
     for module_name in _CATEGORY_USE_WHEN:
@@ -104,41 +143,36 @@ def _tools_by_category(registered: dict[str, mcp.Tool]) -> dict[str, list[str]]:
     return categories
 
 
-@mcp.tool(read_only=True)
-def rex_help(call: mcp.ToolCall, tool_name: str = "", category: str = "") -> dict[str, object]:
-    """Describe the plugin's rex_ tools from the mcp registry.
+def _category_view(registered: dict[str, mcp.Tool], category: str) -> _CategoryView:
+    if category not in _CATEGORY_USE_WHEN and category != _UNCATEGORIZED:
+        raise mcp.ToolError(
+            "unknown_category",
+            f"no category named '{category}'; categories: "
+            f"{', '.join([*_CATEGORY_USE_WHEN, _UNCATEGORIZED])}",
+        )
+    return {
+        "category": category,
+        "use_when": _CATEGORY_USE_WHEN.get(category, _UNCATEGORIZED_USE_WHEN),
+        "tools": [
+            {"name": name, "description": registered[name].description}
+            for name in _tools_by_category(registered)[category]
+        ],
+    }
 
-    :param tool_name: rex_ tool whose parameters to describe; empty selects the category views.
-    :param category: Category whose tools to list with purposes; empty lists the categories.
-    """
-    registered = {tool.name: tool for tool in mcp.Tool.list() if tool.name.startswith(_TOOL_PREFIX)}
-    if tool_name and category:
-        raise mcp.ToolError("invalid_params", "pass either tool_name or category, not both")
-    if category:
-        if category not in _CATEGORY_USE_WHEN and category != _UNCATEGORIZED:
-            raise mcp.ToolError(
-                "unknown_category",
-                f"no category named '{category}'; categories: "
-                f"{', '.join([*_CATEGORY_USE_WHEN, _UNCATEGORIZED])}",
-            )
-        return {
-            "category": category,
-            "use_when": _CATEGORY_USE_WHEN.get(category, _UNCATEGORIZED_USE_WHEN),
-            "tools": [
-                {"name": name, "description": registered[name].description}
-                for name in _tools_by_category(registered)[category]
-            ],
-        }
-    if not tool_name:
-        categories = _tools_by_category(registered)
-        use_when_by_category = {**_CATEGORY_USE_WHEN, _UNCATEGORIZED: _UNCATEGORIZED_USE_WHEN}
-        return {
-            "categories": [
-                {"name": name, "use_when": use_when_by_category[name], "tools": names}
-                for name, names in categories.items()
-                if names or name != _UNCATEGORIZED
-            ]
-        }
+
+def _categories_view(registered: dict[str, mcp.Tool]) -> _CategoriesView:
+    categories = _tools_by_category(registered)
+    use_when_by_category = {**_CATEGORY_USE_WHEN, _UNCATEGORIZED: _UNCATEGORIZED_USE_WHEN}
+    return {
+        "categories": [
+            {"name": name, "use_when": use_when_by_category[name], "tools": names}
+            for name, names in categories.items()
+            if names or name != _UNCATEGORIZED
+        ]
+    }
+
+
+def _tool_view(registered: dict[str, mcp.Tool], tool_name: str) -> _ToolView:
     tool = registered.get(tool_name)
     if tool is None:
         raise mcp.ToolError(
@@ -148,25 +182,34 @@ def rex_help(call: mcp.ToolCall, tool_name: str = "", category: str = "") -> dic
         )
     schema = tool.input_schema
     required = schema.get("required", [])
-    parameters = []
-    for parameter_name, parameter_schema in schema["properties"].items():
-        parameter: dict[str, object] = {
+    parameters = [
+        {
             "name": parameter_name,
             "type": parameter_schema["type"],
             "required": parameter_name in required,
             "description": parameter_schema["description"],
             "error_codes": list(_PARAMETER_ERROR_CODES.get((tool_name, parameter_name), ())),
         }
-        for bound in (
-            "minimum",
-            "maximum",
-            "default",
-            "enum",
-            "minLength",
-            "maxLength",
-            "items",
-        ):
-            if bound in parameter_schema:
-                parameter[bound] = parameter_schema[bound]
-        parameters.append(parameter)
+        | {bound: parameter_schema[bound] for bound in _SCHEMA_BOUNDS if bound in parameter_schema}
+        for parameter_name, parameter_schema in schema["properties"].items()
+    ]
     return {"name": tool_name, "description": tool.description, "parameters": parameters}
+
+
+@mcp.tool(read_only=True)
+def rex_help(
+    call: mcp.ToolCall, tool_name: str = "", category: str = ""
+) -> _CategoryView | _CategoriesView | _ToolView:
+    """Describe the plugin's rex_ tools from the mcp registry.
+
+    :param tool_name: rex_ tool whose parameters to describe; empty selects the category views.
+    :param category: Category whose tools to list with purposes; empty lists the categories.
+    """
+    registered = {tool.name: tool for tool in mcp.Tool.list() if tool.name.startswith(_TOOL_PREFIX)}
+    if tool_name and category:
+        raise mcp.ToolError("invalid_params", "pass either tool_name or category, not both")
+    if category:
+        return _category_view(registered, category)
+    if not tool_name:
+        return _categories_view(registered)
+    return _tool_view(registered, tool_name)
