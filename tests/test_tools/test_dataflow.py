@@ -826,15 +826,87 @@ def test_uses_filter_by_exact_name_not_prefix() -> None:
     assert error.value.code == "no_variable"
 
 
+def _no_variable_message(*variables: FakeVariable) -> str:
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=list(variables))
+    view = _uses_view([call], {variable: [call] for variable in variables})
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(view, variable="missing")
+    assert error.value.code == "no_variable"
+    return error.value.message
+
+
+def test_no_variable_tells_same_named_variables_apart_by_storage() -> None:
+    message = _no_variable_message(
+        _stack_variable("category", 8), FakeVariable("category", storage=105)
+    )
+    assert message == (
+        "no variable named 'missing' is defined at 0x1020 in check; "
+        "defined there: category (stack +0x8), category (rdi)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("variable", "text"),
+    [
+        (FakeVariable("v", storage=105), "v (rdi)"),
+        (_stack_variable("v", 8), "v (stack +0x8)"),
+        (_stack_variable("v", -8), "v (stack -0x8)"),
+        (_stack_variable("v", 0), "v (stack +0x0)"),
+        (_stack_variable("v", 0x1F0), "v (stack +0x1f0)"),
+        (_flag_variable(6), "f (z)"),
+        (_flag_variable(0x80000003), "f (temp flag 3)"),
+        (
+            FakeVariable(
+                "v", source_type=FakeVariableSourceType.CompositeReturnValueSourceType, storage=3
+            ),
+            "v (composite_return_value 3)",
+        ),
+        (
+            FakeVariable(
+                "v", source_type=FakeVariableSourceType.CompositeParameterSourceType, storage=4
+            ),
+            "v (composite_parameter 4)",
+        ),
+    ],
+)
+def test_no_variable_renders_each_storage_kind_like_the_report(
+    variable: FakeVariable, text: str
+) -> None:
+    assert _no_variable_message(variable).endswith(f"defined there: {text}")
+
+
+def test_no_variable_bounds_each_listed_name_before_its_storage() -> None:
+    long_variable = FakeVariable("n" * 65, storage=105)
+    message = _no_variable_message(long_variable)
+    assert message.endswith("defined there: " + "n" * 64 + "... [1 chars truncated] (rdi)")
+
+
+def test_no_variable_lists_a_variable_the_core_defines_twice_once() -> None:
+    variable = _stack_variable("category", 8)
+    assert _no_variable_message(variable, variable).endswith("defined there: category (stack +0x8)")
+
+
+def test_no_variable_resolves_register_names_through_the_function_architecture() -> None:
+    variable = FakeVariable("v", storage=98)
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[variable])
+    mlil = FakeMLILInstructions([call], definitions={variable: [call]})
+    function = FakeFunction(
+        "check", 0x1000, 0x1100, mlil=mlil, arch=FakeArchitecture("arm64", {98: "x0"}, {})
+    )
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(FakeBinaryView(functions=[function]), variable="missing")
+    assert error.value.message.endswith("defined there: v (x0)")
+
+
 def test_uses_reject_a_variable_not_defined_at_the_address() -> None:
-    rax, rcx = FakeVariable("rax"), FakeVariable("rcx")
+    rax, rcx = FakeVariable("rax"), FakeVariable("rcx", storage=99)
     call = FakeInstruction("MLIL_CALL", 0x1020, output=[rax, rcx])
     view = _uses_view([call], {rax: [call], rcx: [call]})
     with pytest.raises(FakeToolError) as error:
         _run_uses(view, variable="rdx")
     assert error.value.code == "no_variable"
     assert error.value.message == (
-        "no variable named 'rdx' is defined at 0x1020 in check; defined there: rax, rcx"
+        "no variable named 'rdx' is defined at 0x1020 in check; defined there: rax (rax), rcx (rcx)"
     )
 
 

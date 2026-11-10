@@ -40,7 +40,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   is `flag<storage>`, so nothing is lost. `rex_parameter_variables`
   reports the same shapes. `limit` and `offset` page
   each entry's uses, and `variable` keeps every variable with that name, same-named ones
-  included (`no_variable` if the instruction defines none).
+  included (`no_variable` if the instruction defines none). That error lists the defined
+  variables as `name (storage)`, with the register name, `stack +0x8` or `stack -0x8`, the
+  flag text, or the composite source and raw value as the storage, so same-named variables
+  read apart.
 - `no_mlil` (`rex_function_constraints`, `rex_mlil_uses`, `rex_parameter_variables`, and the
   uidf setters and clearers that resolve a variable name) and `no_hlil`
   (`rex_hlil_statements`) distinguish a skipped function from a pending one. When the core

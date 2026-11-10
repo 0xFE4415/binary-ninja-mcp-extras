@@ -291,6 +291,21 @@ def _variable_storage(architecture: Architecture, variable: Variable) -> _Variab
             raise ValueError(f"unknown variable source type {unknown!r}")
 
 
+def _storage_text(storage: _VariableStorage) -> str:
+    if storage["source"] == "register":
+        return storage["register"]
+    if storage["source"] == "stack":
+        return f"stack {storage['stack_offset']:+#x}"
+    if storage["source"] == "flag":
+        return storage["flag"]
+    return f"{storage['source']} {storage['storage']}"
+
+
+def _variable_text(architecture: Architecture, variable: Variable) -> str:
+    storage = _storage_text(_variable_storage(architecture, variable))
+    return f"{_truncate(variable.name, 64)} ({storage})"
+
+
 def _variable_report(
     architecture: Architecture,
     target_mlil: MediumLevelILFunction,
@@ -369,7 +384,7 @@ def rex_mlil_uses(
     at_address = list(dict.fromkeys(defined_at[address]))
     selected = [defined for defined in at_address if variable in (None, defined.name)]
     if not selected:
-        names = ", ".join(_truncate(defined.name, 64) for defined in at_address)
+        names = ", ".join(_variable_text(target.arch, defined) for defined in at_address)
         raise mcp.ToolError(
             "no_variable",
             f"no variable named '{_truncate(str(variable))}' is defined at {address:#x} "
