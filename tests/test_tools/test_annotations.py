@@ -289,6 +289,25 @@ def test_annotate_many_rejects_oversized_or_mistyped_strings_per_item() -> None:
     assert view.transactions == []
 
 
+def test_annotate_many_reports_the_first_bad_field_in_name_comment_prototype_order() -> None:
+    view = _annotate_view()
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [
+            {"addr": "0x1100", "name": "", "comment": 5, "prototype": ""},
+            {"addr": "0x1100", "comment": 5, "prototype": ""},
+            {"addr": "0x1100", "prototype": ""},
+        ],
+    )
+    errors = [row["error"] for row in result["results"]]
+    assert errors == [
+        "name must be a non-empty string",
+        "comment must be a string",
+        "prototype must be a non-empty string",
+    ]
+
+
 def test_annotate_many_accepts_strings_exactly_at_the_caps() -> None:
     view = _annotate_view()
     main, _helper = view.functions

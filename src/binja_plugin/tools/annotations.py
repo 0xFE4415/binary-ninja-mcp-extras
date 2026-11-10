@@ -97,37 +97,42 @@ def _annotate_function_error(address: int, message: str) -> _AnnotationRow:
     return {"addr": hex(address), "ok": False, "error": message}
 
 
-def _annotate_fields(item: dict[str, object], address: int) -> _AnnotationFields | _AnnotationRow:
-    """The validated optional fields, or the first error among them.
+def _text_field_error(
+    field: str, value: object, max_chars: int, *, allow_empty: bool
+) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not (allow_empty or value):
+        expected = "a string" if allow_empty else "a non-empty string"
+        return f"{field} must be {expected}"
+    if len(value) > max_chars:
+        return f"{field} exceeds {max_chars} characters"
+    return None
 
-    Fields are checked in name, comment, prototype order so a multi-bad item reports
-    the same single error the item would have hit first before the split.
-    """
+
+def _optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _annotate_fields(item: dict[str, object], address: int) -> _AnnotationFields | _AnnotationRow:
+    # Checked in name, comment, prototype order: a multi-bad item reports its first error.
     name = item.get("name")
-    if name is not None:
-        if not isinstance(name, str) or not name:
-            return _annotate_function_error(address, "name must be a non-empty string")
-        if len(name) > _MAX_ANNOTATE_NAME_CHARS:
-            return _annotate_function_error(
-                address, f"name exceeds {_MAX_ANNOTATE_NAME_CHARS} characters"
-            )
     comment = item.get("comment")
-    if comment is not None:
-        if not isinstance(comment, str):
-            return _annotate_function_error(address, "comment must be a string")
-        if len(comment) > _MAX_ANNOTATE_COMMENT_CHARS:
-            return _annotate_function_error(
-                address, f"comment exceeds {_MAX_ANNOTATE_COMMENT_CHARS} characters"
-            )
     prototype = item.get("prototype")
-    if prototype is not None:
-        if not isinstance(prototype, str) or not prototype:
-            return _annotate_function_error(address, "prototype must be a non-empty string")
-        if len(prototype) > _MAX_ANNOTATE_PROTOTYPE_CHARS:
-            return _annotate_function_error(
-                address, f"prototype exceeds {_MAX_ANNOTATE_PROTOTYPE_CHARS} characters"
-            )
-    return _AnnotationFields(name=name, comment=comment, prototype=prototype)
+    error = (
+        _text_field_error("name", name, _MAX_ANNOTATE_NAME_CHARS, allow_empty=False)
+        or _text_field_error("comment", comment, _MAX_ANNOTATE_COMMENT_CHARS, allow_empty=True)
+        or _text_field_error(
+            "prototype", prototype, _MAX_ANNOTATE_PROTOTYPE_CHARS, allow_empty=False
+        )
+    )
+    if error is not None:
+        return _annotate_function_error(address, error)
+    return _AnnotationFields(
+        name=_optional_text(name),
+        comment=_optional_text(comment),
+        prototype=_optional_text(prototype),
+    )
 
 
 def _annotate_apply_plans(bv: BinaryView, staged: list[_AnnotationPlan]) -> None:
