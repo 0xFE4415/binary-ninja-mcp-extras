@@ -563,3 +563,10 @@ def test_help_lists_exactly_the_codes_an_export_filename_can_raise(tool_name: st
     assert set(parameters["filename"]["error_codes"]) == {
         code for _, code in _EXPORT_FILENAME_CODES
     }
+
+
+def test_help_lists_invalid_params_only_for_export_filenames() -> None:
+    listing_invalid_params = {
+        key for key, codes in _PARAMETER_ERROR_CODES.items() if "invalid_params" in codes
+    }
+    assert listing_invalid_params == {(tool, "filename") for tool in _EXPORT_FILENAME_TOOLS}
