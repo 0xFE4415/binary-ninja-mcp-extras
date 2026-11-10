@@ -506,15 +506,12 @@ class FakeBinaryView:
         value: int,
         progress_func: Callable[[int, int], bool] | None = None,
     ) -> Iterator[tuple[int, FakeLinearDisassemblyLine]]:
-        """Yield (address, line) matches in address order, aborting when progress declines."""
-        matches = sorted(
-            (
-                (address, function)
-                for matched_value, address, function in self.constant_references
-                if matched_value == value and start <= address < end
-            ),
-            key=lambda match: match[0],
-        )
+        """Yield (address, line) matches in the order listed, aborting when progress declines."""
+        matches = [
+            (address, function)
+            for matched_value, address, function in self.constant_references
+            if matched_value == value and start <= address < end
+        ]
         try:
             for address, function in matches:
                 self.constant_scan_yields += 1

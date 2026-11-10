@@ -347,6 +347,130 @@ def test_constant_find_caps_matches_per_function() -> None:
     }
 
 
+def test_constant_find_lists_a_repeated_address_once() -> None:
+    function = FakeFunction("sub_413406", 0x413406, 0x413500)
+    view = FakeBinaryView(
+        functions=[function],
+        constant_references=[(0, 0x413406, function)] * 7,
+        start=0x400000,
+        end=0x426950,
+    )
+    _, find = get_tool("rex_constant_find")
+    assert find(_call(view), value=0) == {
+        "total": 1,
+        "truncated": False,
+        "functions": [
+            {
+                "start": "0x413406",
+                "name": "sub_413406",
+                "addresses": ["0x413406"],
+                "addresses_truncated": False,
+            }
+        ],
+    }
+
+
+def test_constant_find_keeps_the_first_occurrence_order_of_repeated_addresses() -> None:
+    function = FakeFunction("sink", 0x3000, 0x3100)
+    view = FakeBinaryView(
+        functions=[function],
+        constant_references=[
+            (7, address, function) for address in (0x3008, 0x3000, 0x3008, 0x3004, 0x3000, 0x3004)
+        ],
+    )
+    _, find = get_tool("rex_constant_find")
+    assert find(_call(view), value=7)["functions"][0]["addresses"] == ["0x3008", "0x3000", "0x3004"]
+
+
+@pytest.mark.parametrize(
+    ("distinct", "repeats", "expected_count", "expected_truncated"),
+    [
+        (5, 1, 5, False),
+        (5, 3, 5, False),
+        (6, 1, 6, False),
+        (6, 2, 6, False),
+        (6, 4, 6, False),
+        (7, 1, 6, True),
+        (7, 2, 6, True),
+        (7, 4, 6, True),
+    ],
+)
+def test_constant_find_caps_distinct_addresses_not_hits(
+    distinct: int, repeats: int, expected_count: int, expected_truncated: bool
+) -> None:
+    function = FakeFunction("sink", 0x3000, 0x3100)
+    view = FakeBinaryView(
+        functions=[function],
+        constant_references=[
+            (7, 0x3000 + index, function) for index in range(distinct) for _ in range(repeats)
+        ],
+    )
+    _, find = get_tool("rex_constant_find")
+    entry = find(_call(view), value=7)["functions"][0]
+    assert entry["addresses"] == [hex(0x3000 + index) for index in range(expected_count)]
+    assert entry["addresses_truncated"] is expected_truncated
+
+
+def test_constant_find_repeats_after_the_cap_do_not_truncate() -> None:
+    function = FakeFunction("sink", 0x3000, 0x3100)
+    view = FakeBinaryView(
+        functions=[function],
+        constant_references=[(7, 0x3000 + index, function) for index in range(6)]
+        + [(7, 0x3000, function), (7, 0x3005, function), (7, 0x3003, function)],
+    )
+    _, find = get_tool("rex_constant_find")
+    entry = find(_call(view), value=7)["functions"][0]
+    assert entry["addresses"] == [hex(0x3000 + index) for index in range(6)]
+    assert entry["addresses_truncated"] is False
+
+
+def test_constant_find_truncates_on_a_new_address_after_repeats_at_the_cap() -> None:
+    function = FakeFunction("sink", 0x3000, 0x3100)
+    view = FakeBinaryView(
+        functions=[function],
+        constant_references=[(7, 0x3000 + index, function) for index in range(6)]
+        + [(7, 0x3000, function), (7, 0x3006, function), (7, 0x3006, function)],
+    )
+    _, find = get_tool("rex_constant_find")
+    entry = find(_call(view), value=7)["functions"][0]
+    assert entry["addresses"] == [hex(0x3000 + index) for index in range(6)]
+    assert entry["addresses_truncated"] is True
+
+
+def test_constant_find_counts_and_pages_functions_not_repeated_hits() -> None:
+    first = FakeFunction("first", 0x1000, 0x1100)
+    second = FakeFunction("second", 0x2000, 0x2100)
+    view = FakeBinaryView(
+        functions=[first, second],
+        constant_references=[(7, 0x1000, first)] * 9 + [(7, 0x2000, second)] * 9,
+    )
+    _, find = get_tool("rex_constant_find")
+    assert find(_call(view), value=7, limit=1) == {
+        "total": 2,
+        "truncated": True,
+        "functions": [
+            {
+                "start": "0x1000",
+                "name": "first",
+                "addresses": ["0x1000"],
+                "addresses_truncated": False,
+            }
+        ],
+    }
+    assert find(_call(view), value=7, limit=1, offset=1) == {
+        "total": 2,
+        "truncated": False,
+        "functions": [
+            {
+                "start": "0x2000",
+                "name": "second",
+                "addresses": ["0x2000"],
+                "addresses_truncated": False,
+            }
+        ],
+    }
+
+
 def test_constant_find_zero_limit_returns_nothing() -> None:
     function = FakeFunction("f", 0x1000, 0x1010)
     view = FakeBinaryView(functions=[function], constant_references=[(1, 0x1008, function)])

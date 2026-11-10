@@ -129,8 +129,9 @@ def rex_constant_find(
                 abort = True
                 break
             group = groups[start] = _FunctionHits(_truncate(function.name))
-        if len(group.addresses) <= _MAX_CONSTANT_ADDRESSES:
-            group.addresses.append(hex(address))
+        address_text = hex(address)
+        if address_text not in group.addresses and len(group.addresses) <= _MAX_CONSTANT_ADDRESSES:
+            group.addresses.append(address_text)
     functions: list[_ConstantFunction] = [
         {
             "start": hex(start),

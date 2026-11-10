@@ -126,7 +126,8 @@ stay bounded per call:
   Search > For Constant) instead of generating IL for every function. The search is a
   bounded, core-side pass that stops once the requested window is filled; a value that
   occurs rarely or never requires scanning the whole view. Each function echoes at most
-  6 reference addresses and flags clipping via `addresses_truncated`. The core's hits are
+  6 distinct reference addresses and flags clipping via `addresses_truncated`, which is
+  true only when a further distinct address exists. The core's hits are
   not address-ordered, and the order of functions in the page and the example addresses
   chosen for each follow that hit order, not address order. While the result is
   `truncated` a function's addresses are a lower bound even when `addresses_truncated`

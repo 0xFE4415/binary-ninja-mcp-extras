@@ -71,8 +71,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `error` code/message); a bad address does not fail other items. Each window includes its
   input `index`.
   Per-function address lists cap the echoed examples and say so per function:
-  `rex_constant_find` returns at most 6 addresses and `rex_find_functions_by_pattern`
-  at most 5, each function carrying an `addresses_truncated` flag.
+  `rex_constant_find` returns at most 6 distinct addresses (the core can report one
+  address several times; each is listed once, at its first occurrence) and
+  `rex_find_functions_by_pattern` at most 5, each function carrying an
+  `addresses_truncated` flag that is true only when a further distinct address exists.
 - Returned strings usually keep 512 characters, then append `... [N chars truncated]`;
   the suffix is additional. Larger caps are `rex_eval_python.stdout` (65,536),
   `result` (16,384), `rex_kv_get.value` (65,536), and `rex_string_read_at.value`
