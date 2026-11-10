@@ -82,13 +82,14 @@ def _detected_string_entry(view: BinaryView, string: StringReference) -> dict[st
 
 def _derived_string_entry(view: BinaryView, string: DerivedString) -> dict[str, object]:
     refs = list(view.get_derived_string_code_refs(string, max_items=_MAX_STRING_REFS + 1))
+    string_location = string.location
     location: dict[str, object] | None = (
         None
-        if string.location is None
+        if string_location is None
         else {
-            "type": string.location.location_type.name,
-            "address": hex(string.location.address),
-            "length": string.location.length,
+            "type": string_location.location_type.name,
+            "address": hex(string_location.address),
+            "length": string_location.length,
         }
     )
     return _string_reference_entry(str(string.value), location, True, refs)
