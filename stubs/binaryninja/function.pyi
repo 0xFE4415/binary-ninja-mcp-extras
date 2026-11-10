@@ -1,8 +1,23 @@
+from collections.abc import Iterable
 from typing import Any
 
+from binaryninja.basicblock import BasicBlock
+from binaryninja.highlevelil import HighLevelILFunction
 from binaryninja.mediumlevelil import MediumLevelILFunction
 from binaryninja.types import Type, TypeBuilder
 from binaryninja.variable import ArchAndAddr, PossibleValueSet, Variable
+
+
+class DisassemblySettings: ...
+
+
+class InstructionTextToken:
+    def __str__(self) -> str: ...
+
+
+class DisassemblyTextLine:
+    tokens: list[InstructionTextToken]
+    address: int | None
 
 
 class Function:
@@ -12,11 +27,11 @@ class Function:
     highest_address: int
     callers: list[Function]
     callees: list[Function]
-    hlil: Any
+    hlil: HighLevelILFunction | None
     mlil: MediumLevelILFunction | None
     comment: str
     type: Type
-    basic_blocks: Any
+    basic_blocks: Iterable[BasicBlock]
     vars: list[Variable]
 
     def set_comment_at(self, addr: int, comment: str) -> None: ...

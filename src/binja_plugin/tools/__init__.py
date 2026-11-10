@@ -276,6 +276,11 @@ def _require_function(bv: BinaryView, address: int) -> Function:
     return _require_containing_function(bv, address, "no_function", "function")
 
 
+class _ItemError(TypedDict):
+    code: str
+    message: str
+
+
 class _FunctionEntry(TypedDict):
     start: str
     name: str
@@ -285,20 +290,19 @@ def _function_entry(function: Function) -> _FunctionEntry:
     return {"start": hex(function.start), "name": _truncate(function.name)}
 
 
-def _render_function_disassembly(function: Any) -> list[tuple[int, str]]:
+def _render_function_disassembly(function: Function) -> list[tuple[int, str]]:
     """Render a function's addressed disassembly lines, sorted by address.
 
-    Shared by rex_disasm_at and rex_export_disasm so both tools see the same render;
-    Any-typed because the stubbed Function type does not model basic_blocks.
+    Shared by rex_disasm_at and rex_export_disasm so both tools see the same render.
     """
-    lines: list[tuple[int, str]] = []
-    for block in function.basic_blocks:
-        for line in block.get_disassembly_text():
-            # Unaddressed continuation lines cannot anchor or be reported by address.
-            if line.address is not None:
-                lines.append((line.address, "".join(map(str, line.tokens))))
-    lines.sort(key=lambda entry: entry[0])
-    return lines
+    # Unaddressed continuation lines cannot anchor or be reported by address.
+    addressed = (
+        (line.address, "".join(map(str, line.tokens)))
+        for block in function.basic_blocks
+        for line in block.get_disassembly_text()
+        if line.address is not None
+    )
+    return sorted(addressed, key=lambda entry: entry[0])
 
 
 def _disasm_window(

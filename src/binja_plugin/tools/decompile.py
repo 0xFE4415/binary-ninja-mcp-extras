@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from itertools import takewhile
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Final, Literal, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -16,6 +16,8 @@ from binja_plugin.tools import (
     _disasm_window,
     _drop,
     _function_entry,
+    _FunctionEntry,
+    _ItemError,
     _name_filter,
     _parse_address_entry,
     _render_function_disassembly,
@@ -26,47 +28,120 @@ from binja_plugin.tools import (
     _validate_range,
 )
 
-_MAX_HLIL_GREP_LIMIT = 200
-_MAX_HLIL_GREP_FUNCTIONS = 5000
+if TYPE_CHECKING:
+    from binaryninja.highlevelil import HighLevelILFunction
+
+_MAX_HLIL_GREP_LIMIT: Final = 200
+_MAX_HLIL_GREP_FUNCTIONS: Final = 5000
 
 # rex_hlil_grep per-match context: bounded so the three-matches-per-function cap keeps
 # the echoed lines per function a few dozen at most.
-_MAX_HLIL_GREP_CONTEXT = 8
+_MAX_HLIL_GREP_CONTEXT: Final = 8
 # rex_decompile_many caps: the batch size bounds one call's decompilation cost, the
 # line cap the echoed text per function.
-_MAX_DECOMPILE_BATCH = 1024
-_MAX_DECOMPILE_LINES = 512
+_MAX_DECOMPILE_BATCH: Final = 1024
+_MAX_DECOMPILE_LINES: Final = 512
 
 # rex_disasm_many caps: the batch size and per-window line cap bound one call's render
 # and echo, and the cross-window budget paginates so one call cannot return an
 # unbounded dump.
-_MAX_DISASM_BATCH = 64
-_MAX_DISASM_MANY_LINES = 512
-_MAX_DISASM_MANY_TOTAL_LINES = 1024
+_MAX_DISASM_BATCH: Final = 64
+_MAX_DISASM_MANY_LINES: Final = 512
+_MAX_DISASM_MANY_TOTAL_LINES: Final = 1024
 
 # rex_quick_main's resolution chain: function symbols first, then the __libc_start_main
 # pointer argument of the entry stub, then an explicitly named entry-function fallback.
-_MAIN_SYMBOL_NAMES = ("main", "_main")
-_MAIN_LIBC_MARKER = "libc_start_main"
-_MAIN_FALLBACK_NOTE = (
+_MAIN_SYMBOL_NAMES: Final = ("main", "_main")
+_MAIN_LIBC_MARKER: Final = "libc_start_main"
+_MAIN_FALLBACK_NOTE: Final = (
     "no main symbol and no parsable __libc_start_main pointer in the entry function"
 )
 
 # A trap ends the basic block, so analysis stops there: bytes after it belong to no
 # function even though a handler can resume execution past the trap (the same
 # block-ending blind spot _containment_miss_hint names).
-_TRAP_MNEMONICS = frozenset({"int3", "breakpoint", "ud2"})
-_QUICK_MAIN_TRAP_HINT = (
+_TRAP_MNEMONICS: Final = frozenset({"int3", "breakpoint", "ud2"})
+_QUICK_MAIN_TRAP_HINT: Final = (
     "function ends in {mnemonic}; if a SIGTRAP-style handler resumes past it, execution "
     "reaches code outside this function — inspect with rex_disasm_at and rex_function_define"
 )
 
 # Precompiled once: _argument_address runs per rendered call argument, so the compiled
 # pattern must not go through the re-module cache on every call.
-_HEX_ADDRESS_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
+_HEX_ADDRESS_PATTERN: Final = re.compile(r"0x[0-9a-fA-F]+")
 
 
-def _render_hlil_lines(hlil: Any, max_lines: int) -> tuple[list[str], bool]:
+class _DecompiledFunction(_FunctionEntry):
+    lines: list[str]
+    truncated: bool
+
+
+class _DecompileManyResult(TypedDict):
+    functions: list[_DecompiledFunction]
+
+
+class _InstructionLine(TypedDict):
+    address: str
+    text: str
+
+
+class _DisasmAtResult(TypedDict):
+    function: _FunctionEntry
+    instructions: list[_InstructionLine]
+    truncated: bool
+
+
+class _DisasmError(TypedDict):
+    index: int
+    address: str
+    error: _ItemError
+
+
+class _DisasmWindow(TypedDict):
+    address: str
+    index: int
+    function: _FunctionEntry
+    instructions: list[_InstructionLine]
+    truncated: bool
+
+
+class _DisasmManyResult(TypedDict):
+    windows: list[_DisasmWindow]
+    errors: list[_DisasmError]
+    truncated: bool
+    next_offset: int | None
+
+
+class _HlilGrepMatch(TypedDict):
+    start: str
+    name: str
+    lines: list[str]
+
+
+class _HlilGrepResult(TypedDict):
+    scanned: int
+    truncated: bool
+    scan_incomplete: bool
+    skipped_no_hlil: int
+    functions: list[_HlilGrepMatch]
+    next_offset: int | None
+
+
+_MainMethod = Literal["symbol", "entry-arg", "entry-fallback"]
+
+
+class _QuickMainResult(TypedDict):
+    entry_point: str
+    method: _MainMethod
+    main: str | None
+    note: str | None
+    hint: str | None
+    function: _FunctionEntry
+    lines: list[str]
+    truncated: bool
+
+
+def _render_hlil_lines(hlil: HighLevelILFunction | None, max_lines: int) -> tuple[list[str], bool]:
     """Render a function's HLIL to at most ``max_lines`` truncated lines."""
     source_lines = str(hlil).splitlines() if hlil is not None else []
     return [_truncate(line) for line in source_lines[:max_lines]], len(source_lines) > max_lines
@@ -127,7 +202,7 @@ def _entry_argument_main(
 
 def _resolve_main(
     bv: BinaryView, call: mcp.ToolCall, entry: Function
-) -> tuple[Function | None, str, str | None]:
+) -> tuple[Function | None, _MainMethod, str | None]:
     """Resolve main: function symbol first, then the entry stub's pointer argument."""
     if entry.name in _MAIN_SYMBOL_NAMES:
         return entry, "symbol", None
@@ -166,7 +241,7 @@ def rex_decompile_many(
     call: mcp.ToolCall,
     functions: list[str],
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
-) -> dict[str, object]:
+) -> _DecompileManyResult:
     """Batch HLIL triage; a bad address rejects the whole batch (rex_disasm_many reports per item).
 
     :param functions: 1 to 1024 address expressions, rendered in the order given.
@@ -175,7 +250,7 @@ def rex_decompile_many(
     bv = call.binary_view
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
     resolved = _resolve_address_batch(call, bv, functions, _MAX_DECOMPILE_BATCH)
-    rendered: list[dict[str, object]] = []
+    rendered: list[_DecompiledFunction] = []
     for function in resolved:
         lines, truncated = _render_hlil_lines(function.hlil, max_lines)
         rendered.append({**_function_entry(function), "lines": lines, "truncated": truncated})
@@ -188,7 +263,7 @@ def rex_disasm_at(
     address: mcp.Address,
     before: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DISASM_CONTEXT)] = 4,
     after: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DISASM_CONTEXT)] = 8,
-) -> dict[str, object]:
+) -> _DisasmAtResult:
     """Address-anchored disassembly window.
 
     :param address: Address expression inside the target function.
@@ -215,7 +290,7 @@ def rex_disasm_many(
     call: mcp.ToolCall,
     addresses: list[str],
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DISASM_MANY_LINES)] = 32,
-) -> dict[str, object]:
+) -> _DisasmManyResult:
     """Batch disassembly windows, e.g. one per VM handler; per-item errors, next_offset resumes.
 
     :param addresses: 1 to 64 address expressions; next_offset marks the first not returned.
@@ -230,8 +305,8 @@ def rex_disasm_many(
             "invalid_params",
             f"addresses must contain between 1 and {_MAX_DISASM_BATCH} address expressions",
         )
-    windows: list[dict[str, object]] = []
-    errors: list[dict[str, object]] = []
+    windows: list[_DisasmWindow] = []
+    errors: list[_DisasmError] = []
     total_lines = 0
     truncated = False
     next_offset: int | None = None
@@ -286,7 +361,7 @@ def rex_hlil_grep(
     offset: Annotated[int, mcp.Minimum(0)] = 0,
     context_before: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_HLIL_GREP_CONTEXT)] = 0,
     context_after: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_HLIL_GREP_CONTEXT)] = 0,
-) -> dict[str, object]:
+) -> _HlilGrepResult:
     """Regex search over rendered HLIL text; find calls and code shapes across the view in one pass.
 
     :param regex: Regular expression applied to every rendered HLIL line.
@@ -306,7 +381,7 @@ def rex_hlil_grep(
     matcher = _compile_user_regex(regex)
     name_matcher = _name_filter(function_filter)
     search = matcher.search
-    matches: list[dict[str, object]] = []
+    matches: list[_HlilGrepMatch] = []
     scanned = 0
     truncated = False
     scan_incomplete = False
@@ -358,7 +433,7 @@ def rex_hlil_grep(
     }
 
 
-def _trap_terminator(function: Any) -> str | None:
+def _trap_terminator(function: Function) -> str | None:
     """The trap mnemonic when the function's last addressed instruction is a trap, else None."""
     lines = _render_function_disassembly(function)
     if not lines:
@@ -378,7 +453,7 @@ def _trap_terminator(function: Any) -> str | None:
 def rex_quick_main(
     call: mcp.ToolCall,
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
-) -> dict[str, object]:
+) -> _QuickMainResult:
     """One-call fast contact: the entry point, main, and main's HLIL.
 
     :param max_lines: HLIL lines to render.

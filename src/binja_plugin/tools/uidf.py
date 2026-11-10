@@ -27,6 +27,7 @@ from binja_plugin.tools import (
     _function_entry,
     _FunctionEntry,
     _is_json_object,
+    _ItemError,
     _paginate,
     _render_hlil_lines,
     _require_analyzed_function,
@@ -94,11 +95,6 @@ ValueState = Literal[
 class _ValueDescription(TypedDict):
     state: str
     rendered: str
-
-
-class _ItemError(TypedDict):
-    code: str
-    message: str
 
 
 class _UidfRow(TypedDict):
