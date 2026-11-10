@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import enum
 import types
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Generator, Iterator, Mapping
 from typing import Any, override
 
 from helpers_dataflow import FakeMLILInstructions
@@ -67,23 +67,113 @@ class RenderableText:
         return self._text
 
 
+class FakeInstructionTextTokenType(enum.IntEnum):
+    """Mirrors the binaryninja.enums.InstructionTextTokenType members the tools and tests use."""
+
+    TextToken = 0
+    InstructionToken = 1
+    OperandSeparatorToken = 2
+    RegisterToken = 3
+    IntegerToken = 4
+    PossibleAddressToken = 5
+    AnnotationToken = 9
+    CodeSymbolToken = 64
+    AddressSeparatorToken = 72
+
+
+class FakeLineToken:
+    """Mirrors an InstructionTextToken: its type and the text it renders."""
+
+    def __init__(self, type: FakeInstructionTextTokenType, text: str = "") -> None:
+        self.type = type
+        self.text = text
+
+
+class FakeLineContents:
+    """Mirrors the DisassemblyTextLine of a LinearDisassemblyLine: its tokens."""
+
+    def __init__(self, tokens: tuple[FakeLineToken, ...]) -> None:
+        self.tokens = list(tokens)
+
+
+_TOKEN_TYPE = FakeInstructionTextTokenType
+
+# The token shapes find_all_constant was observed to yield on a live x86_64 ELF.
+INSTRUCTION_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "cmp"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "eax"),
+    FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", "),
+    FakeLineToken(_TOKEN_TYPE.IntegerToken, "0x0"),
+)
+FUNCTION_HEADER_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "  "),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "int64_t"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, " "),
+    FakeLineToken(_TOKEN_TYPE.CodeSymbolToken, "sub_40a020"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "()"),
+)
+CONTINUATION_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{ Continuation of function "),
+    FakeLineToken(_TOKEN_TYPE.CodeSymbolToken, "sub_412c10"),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, " }"),
+)
+FALLS_THROUGH_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{ Falls through into "),
+    FakeLineToken(_TOKEN_TYPE.CodeSymbolToken, "_fini"),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, " }"),
+)
+CASE_LINE = (FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{Case 0x0}"),)
+ANNOTATED_INSTRUCTION_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "mul"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "rdx"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "  "),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{0x3}"),
+)
+
+FakeConstantReference = (
+    tuple[int, int, "FakeFunction | None"]
+    | tuple[int, int, "FakeFunction | None", tuple[FakeLineToken, ...]]
+)
+
+
 class FakeLinearDisassemblyLine:
     """Mirrors the LinearDisassemblyLine yielded by BinaryView.find_all_constant."""
 
-    def __init__(self, function: FakeFunction | None) -> None:
+    def __init__(
+        self, function: FakeFunction | None, tokens: tuple[FakeLineToken, ...] = INSTRUCTION_LINE
+    ) -> None:
         self.function = function
+        self.contents = FakeLineContents(tokens)
+
+
+class FakeSymbolType(enum.IntEnum):
+    """Mirrors binaryninja.enums.SymbolType."""
+
+    FunctionSymbol = 0
+    ImportAddressSymbol = 1
+    ImportedFunctionSymbol = 2
+    DataSymbol = 3
+    ImportedDataSymbol = 4
+    ExternalSymbol = 5
+    LibraryFunctionSymbol = 6
+    SymbolicFunctionSymbol = 7
+    LocalLabelSymbol = 8
 
 
 class FakeSymbol:
-    """Mirrors the CoreSymbol fields rex_export_symbols reads.
+    """Mirrors the CoreSymbol fields rex_export_symbols and the object export read.
 
-    ``type`` is a namespace with ``name`` like the other fakes, mirroring the enum
-    member the real core hands back.
+    ``type`` is the SymbolType member the real core hands back, looked up by name.
     """
 
     def __init__(self, address: int, type_name: str, name: str) -> None:
         self.address = address
-        self.type = types.SimpleNamespace(name=type_name)
+        self.type = FakeSymbolType[type_name]
         self.name = name
 
 
@@ -147,6 +237,41 @@ class FakeAnalysisState(enum.IntEnum):
     ExtendedAnalyzeState = 6
 
 
+class FakeAnalysisSkipReason(enum.IntEnum):
+    """Mirrors binaryninja.enums.AnalysisSkipReason."""
+
+    NoSkipReason = 0
+    AlwaysSkipReason = 1
+    ExceedFunctionSizeSkipReason = 2
+    ExceedFunctionAnalysisTimeSkipReason = 3
+    ExceedFunctionUpdateCountSkipReason = 4
+    NewAutoFunctionAnalysisSuppressedReason = 5
+    BasicAnalysisSkipReason = 6
+    IntermediateAnalysisSkipReason = 7
+    AnalysisPipelineSuspendedReason = 8
+
+
+SKIP_CAUSES = {
+    FakeAnalysisSkipReason.NoSkipReason: "the core reports no reason",
+    FakeAnalysisSkipReason.AlwaysSkipReason: "its analysis_skip_override always skips it",
+    FakeAnalysisSkipReason.ExceedFunctionSizeSkipReason: (
+        "it exceeds the analysis.limits.maxFunctionSize limit"
+    ),
+    FakeAnalysisSkipReason.ExceedFunctionAnalysisTimeSkipReason: (
+        "its analysis exceeded the analysis.limits.maxFunctionAnalysisTime limit"
+    ),
+    FakeAnalysisSkipReason.ExceedFunctionUpdateCountSkipReason: (
+        "its analysis exceeded the analysis.limits.maxFunctionUpdateCount limit"
+    ),
+    FakeAnalysisSkipReason.NewAutoFunctionAnalysisSuppressedReason: (
+        "analysis of newly found functions is suppressed (analysis.suppressNewAutoFunctionAnalysis)"
+    ),
+    FakeAnalysisSkipReason.BasicAnalysisSkipReason: "analysis.mode is basic",
+    FakeAnalysisSkipReason.IntermediateAnalysisSkipReason: "analysis.mode is intermediate",
+    FakeAnalysisSkipReason.AnalysisPipelineSuspendedReason: "the analysis pipeline is suspended",
+}
+
+
 class FakeAnalysisProgress:
     """Mirrors binaryninja.binaryview.AnalysisProgress.
 
@@ -208,10 +333,18 @@ class FakeFunction:
         callees: list[FakeFunction] | None = None,
         vars: list[FakeVariable] | None = None,
         mlil: FakeMediumLevelIL | FakeMLILInstructions | None = None,
+        arch: FakeArchitecture | None = None,
+        extra_ranges: tuple[tuple[int, int], ...] = (),
+        analysis_skipped: bool = False,
+        analysis_skip_reason: FakeAnalysisSkipReason = FakeAnalysisSkipReason.NoSkipReason,
     ) -> None:
+        self.arch = arch if arch is not None else FakeArchitecture("x86_64")
+        self.analysis_skipped = analysis_skipped
+        self.analysis_skip_reason = analysis_skip_reason
         self.name = name
         self.start = start
         self.end = end
+        self.extra_ranges = extra_ranges
         self.hlil = hlil
         self.callers = callers if callers is not None else []
         self.callees = callees if callees is not None else []
@@ -221,6 +354,7 @@ class FakeFunction:
         # and get_comment_at answers "" wherever set_comment_at never ran.
         self.comments: dict[int, str] = {}
         self.user_type: object | None = None
+        self.type: FakeType | None = None
         self.user_type_error: Exception | None = None
         self.vars = vars if vars is not None else []
         self.mlil = mlil
@@ -237,6 +371,12 @@ class FakeFunction:
         self.clear_all_user_var_values_error: Exception | None = None
         # Empty until "analyzed": the define tools' wait gates on the first block.
         self.basic_blocks: list[FakeBasicBlock] = []
+
+    def contains(self, address: int) -> bool:
+        """Mirror containment for a discontiguous function: its entry range or a block range."""
+        return self.start <= address < self.end or any(
+            low <= address < high for low, high in self.extra_ranges
+        )
 
     @property
     def highest_address(self) -> int:
@@ -351,7 +491,20 @@ class FakeFileMetadata:
             self.undo_entries.append(self.redo_entries.pop())
 
 
+class FakeDataVariable:
+    """Mirrors DataVariable, which is falsy exactly when its type is (zero width, e.g. void)."""
+
+    def __init__(self, address: int, type_obj: FakeType) -> None:
+        self.address = address
+        self.type = type_obj
+
+    def __len__(self) -> int:
+        return len(self.type)
+
+
 class FakeBinaryView:
+    data_variable_types: Mapping[int, FakeType] = types.MappingProxyType({})
+
     def __init__(
         self,
         *,
@@ -362,7 +515,7 @@ class FakeBinaryView:
         memory: dict[int, bytes] | None = None,
         start: int = 0,
         end: int = 0x10000,
-        constant_references: list[tuple[int, int, FakeFunction | None]] | None = None,
+        constant_references: list[FakeConstantReference] | None = None,
         symbols: list[FakeSymbol] | None = None,
         entry_point: int = 0,
         analysis_progress_sequence: list[FakeAnalysisProgress] | None = None,
@@ -477,19 +630,16 @@ class FakeBinaryView:
         value: int,
         progress_func: Callable[[int, int], bool] | None = None,
     ) -> Iterator[tuple[int, FakeLinearDisassemblyLine]]:
-        """Yield (address, line) matches in address order, aborting when progress declines."""
-        matches = sorted(
-            (
-                (address, function)
-                for matched_value, address, function in self.constant_references
-                if matched_value == value and start <= address < end
-            ),
-            key=lambda match: match[0],
-        )
+        """Yield (address, line) matches in the order listed, aborting when progress declines."""
+        matches = [
+            (reference[1], FakeLinearDisassemblyLine(reference[2], *reference[3:]))
+            for reference in self.constant_references
+            if reference[0] == value and start <= reference[1] < end
+        ]
         try:
-            for address, function in matches:
+            for address, line in matches:
                 self.constant_scan_yields += 1
-                yield address, FakeLinearDisassemblyLine(function)
+                yield address, line
         finally:
             # The core keeps scanning — and polling progress — after the caller stops
             # consuming matches, so model the shutdown poll even on an early break.
@@ -514,7 +664,7 @@ class FakeBinaryView:
         return len(data)
 
     def get_functions_containing(self, address: int) -> list[FakeFunction]:
-        return [f for f in self.functions if f.start <= address < f.end]
+        return [f for f in self.functions if f.contains(address)]
 
     def is_valid_offset(self, address: int) -> bool:
         """Mirror BinaryView.is_valid_offset: the address is mapped by the view.
@@ -677,6 +827,15 @@ class FakeBinaryView:
         self._types[resolved] = FakeType(name=resolved)
         return FakeType(name=resolved)
 
+    def get_symbols_by_name(self, name: str) -> list[FakeSymbol]:
+        return [symbol for symbol in self._symbols if symbol.name == name]
+
+    def get_data_var_at(self, address: int) -> FakeDataVariable | None:
+        """Mirror BinaryView.get_data_var_at: a DataVariable-like with ``type``, or None."""
+        if address not in self.data_variable_types:
+            return None
+        return FakeDataVariable(address, self.data_variable_types[address])
+
     def get_type_by_name(self, name: str) -> FakeType | None:
         return self._types.get(name)
 
@@ -793,9 +952,60 @@ class SpyBinaryView(FakeBinaryView):
         return super().get_functions_containing(address)
 
 
+X86_64_REGISTERS = types.MappingProxyType(
+    {
+        98: "rax",
+        99: "rcx",
+        100: "rdx",
+        104: "rsi",
+        105: "rdi",
+        106: "r8",
+        107: "r9",
+        112: "r14",
+        333: "zmm0",
+        2147483678: "temp30",
+    }
+)
+X86_64_FLAGS = types.MappingProxyType({0: "c", 2: "p", 4: "a", 6: "z", 7: "s"})
+
+
 class FakeArchitecture:
-    def __init__(self, name: str) -> None:
+    """Mirrors Architecture: known indexes resolve to names, any other flag to ``flag<index>``."""
+
+    def __init__(
+        self,
+        name: str,
+        registers: Mapping[int, str] = X86_64_REGISTERS,
+        flags: Mapping[int, str] = X86_64_FLAGS,
+    ) -> None:
         self.name = name
+        self._registers = registers
+        self._flags = flags
+
+    def get_reg_name(self, reg: int) -> str:
+        return self._registers[reg]
+
+    def get_flag_name(self, flag: int) -> str:
+        return self._flags.get(flag, f"flag{flag}")
+
+
+class FakeTypeClass(enum.IntEnum):
+    """Mirrors binaryninja.enums.TypeClass."""
+
+    VoidTypeClass = 0
+    BoolTypeClass = 1
+    IntegerTypeClass = 2
+    FloatTypeClass = 3
+    StructureTypeClass = 4
+    EnumerationTypeClass = 5
+    PointerTypeClass = 6
+    ArrayTypeClass = 7
+    FunctionTypeClass = 8
+    VarArgsTypeClass = 9
+    ValueTypeClass = 10
+    NamedTypeReferenceClass = 11
+    WideCharTypeClass = 12
+    FragmentTypeClass = 13
 
 
 class FakeType:
@@ -803,13 +1013,25 @@ class FakeType:
     ``name`` models the deconflicted name of a NamedTypeReference (the documented return
     contract of import_library_type)."""
 
-    def __init__(self, name: str, type_string: str = "") -> None:
+    def __init__(
+        self,
+        name: str,
+        type_string: str = "",
+        width: int = 0,
+        type_class: FakeTypeClass = FakeTypeClass.IntegerTypeClass,
+    ) -> None:
         self.name = name
         self._type_string = type_string
+        self._width = width
+        self.type_class = type_class
 
     @override
     def __str__(self) -> str:
         return self._type_string
+
+    def __len__(self) -> int:
+        """Mirrors Type.__len__, the width: void and function types are falsy on the real core."""
+        return self._width
 
     @staticmethod
     def generate_auto_type_id(source: str, name: str) -> str:

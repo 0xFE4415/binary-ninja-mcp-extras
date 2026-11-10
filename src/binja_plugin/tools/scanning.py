@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Annotated
+from typing import Annotated, TypedDict
 
 from binaryninja import mcp
+from binaryninja.enums import InstructionTextTokenType
 
 from binja_plugin.hexpattern import HexPatternError, compile_hex_pattern
 from binja_plugin.tools import (
@@ -23,18 +24,13 @@ from binja_plugin.tools import (
 # rex_constant_find matches displayed constants, which are at most 64-bit values.
 _MAX_CONSTANT_VALUE = 2**64 - 1
 
-# Raw pattern-string cap for rex_data_find: bounds the regex compile and the per-chunk
-# read inflation (read_size grows with the pattern length) before any of that happens.
+# Bounds the regex compile and the per-chunk read size, which grows with the pattern length.
 _MAX_PATTERN_CHARS = 8192
 
-# rex_find_functions_by_pattern example matches per function: triage wants a handful of
-# hit addresses; rex_data_find already returns full match lists. One extra address is
-# collected so `addresses_truncated` can tell an exact cap from clipped examples.
+# One extra address is collected so `addresses_truncated` tells an exact cap from clipped examples.
 _MAX_FIND_FUNCTIONS_EXAMPLES = 5
 
-# rex_constant_find example reference addresses per function: a hot constant concentrated
-# in one function stays bounded. One extra address is collected so `addresses_truncated`
-# can tell an exact cap from clipped examples.
+# A hot constant in one function stays bounded; one extra address is collected as above.
 _MAX_CONSTANT_ADDRESSES = 6
 
 
@@ -47,7 +43,40 @@ def _compile_pattern(pattern: str) -> tuple[re.Pattern[bytes], int]:
         raise mcp.ToolError("invalid_pattern", str(exc)) from None
 
 
-@dataclass
+class _ConstantFunction(TypedDict):
+    start: str
+    name: str
+    addresses: list[str]
+    addresses_truncated: bool
+
+
+class _ConstantFindResult(TypedDict):
+    total: int
+    truncated: bool
+    functions: list[_ConstantFunction]
+
+
+class _DataFindResult(TypedDict):
+    total: int
+    truncated: bool
+    matches: list[str]
+
+
+class _PatternFunction(TypedDict):
+    start: str
+    name: str
+    match_count: int
+    addresses: list[str]
+    addresses_truncated: bool
+
+
+class _FindFunctionsResult(TypedDict):
+    total: int
+    truncated: bool
+    functions: list[_PatternFunction]
+
+
+@dataclass(slots=True)
 class _FunctionHits:
     name: str
     match_count: int = 0
@@ -61,8 +90,8 @@ def rex_constant_find(
     function_filter: str = "",
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
-) -> dict[str, object]:
-    """Find functions using an immediate constant (a magic value) in rendered IL, not raw bytes.
+) -> _ConstantFindResult:
+    """Find functions using an immediate constant (a magic value) in disassembly, not raw bytes.
 
     :param value: Immediate value to search for, compared against displayed constants.
     :param function_filter: Case-insensitive regex matched against function names.
@@ -80,40 +109,39 @@ def rex_constant_find(
     def keep_scanning(current: int, total: int) -> bool:
         return not abort
 
-    matched = 0
-    current_start: int | None = None
-    current_addresses: list[str] = []
-    groups: list[tuple[int, str, list[str]]] = []
+    groups: dict[int, _FunctionHits] = {}
     for address, line in bv.find_all_constant(bv.start, bv.end, value, progress_func=keep_scanning):
         function = line.function
         if function is None:
             continue
+        tokens = line.contents.tokens
+        if not any(token.type == InstructionTextTokenType.InstructionToken for token in tokens):
+            continue
         if name_matcher is not None and name_matcher.search(function.name) is None:
             continue
-        if function.start != current_start:
-            matched += 1
-            if matched > offset + limit:
+        start = int(function.start)
+        group = groups.get(start)
+        if group is None:
+            if len(groups) >= offset + limit:
                 # One match past the requested window proves more functions exist.
                 truncated = True
                 abort = True
                 break
-            current_start = int(function.start)
-            current_addresses = []
-            groups.append((current_start, _truncate(function.name), current_addresses))
-        if len(current_addresses) <= _MAX_CONSTANT_ADDRESSES:
-            current_addresses.append(hex(address))
-    functions = [
+            group = groups[start] = _FunctionHits(_truncate(function.name))
+        address_text = hex(address)
+        if address_text not in group.addresses and len(group.addresses) <= _MAX_CONSTANT_ADDRESSES:
+            group.addresses.append(address_text)
+    functions: list[_ConstantFunction] = [
         {
             "start": hex(start),
-            "name": name,
-            "addresses": addresses[:_MAX_CONSTANT_ADDRESSES],
-            "addresses_truncated": len(addresses) > _MAX_CONSTANT_ADDRESSES,
+            "name": group.name,
+            "addresses": group.addresses[:_MAX_CONSTANT_ADDRESSES],
+            "addresses_truncated": len(group.addresses) > _MAX_CONSTANT_ADDRESSES,
         }
-        for start, name, addresses in _drop(groups, offset)
+        for start, group in _drop(groups.items(), offset)
     ]
-    # Count seen, like _paginate: exact when the scan completed, so a page past the end
-    # carries the total it undershot; a lower bound once truncated stops the scan early.
-    return {"total": matched, "truncated": truncated, "functions": functions}
+    # Count seen, like _paginate: exact when the scan finished, a lower bound once truncated.
+    return {"total": len(groups) + int(truncated), "truncated": truncated, "functions": functions}
 
 
 @mcp.tool(read_only=True)
@@ -123,10 +151,10 @@ def rex_data_find(
     section: str | None = None,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
-) -> dict[str, object]:
+) -> _DataFindResult:
     """Find all occurrences of a hex byte pattern in mapped memory.
 
-    :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; "??" matches any single byte.
+    :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; each byte is 2 ASCII hex digits or "??".
     :param section: Only search within this section.
     :param limit: Maximum matches to return.
     :param offset: Matches to skip before collecting results.
@@ -149,10 +177,10 @@ def rex_find_functions_by_pattern(
     pattern: str,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
-) -> dict[str, object]:
+) -> _FindFunctionsResult:
     """Which functions contain a byte pattern; hit counts rank use of an instruction encoding.
 
-    :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; "??" matches any single byte.
+    :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; each byte is 2 ASCII hex digits or "??".
     :param limit: Maximum matching functions to return.
     :param offset: Matching functions to skip before collecting results.
     """
@@ -171,15 +199,14 @@ def rex_find_functions_by_pattern(
         entry = hits.get(function.start)
         if entry is None:
             if len(hits) >= offset + limit:
-                # The first matching function past the window proves more exist; stop
-                # the scan there instead of counting the rest.
+                # The first matching function past the window proves more exist; stop scanning.
                 truncated = True
                 break
             entry = hits[function.start] = _FunctionHits(_truncate(function.name))
         entry.match_count += 1
         if len(entry.addresses) <= _MAX_FIND_FUNCTIONS_EXAMPLES:
             entry.addresses.append(hex(address))
-    functions = [
+    functions: list[_PatternFunction] = [
         {
             "start": hex(start),
             "name": entry.name,
@@ -189,6 +216,5 @@ def rex_find_functions_by_pattern(
         }
         for start, entry in _drop(hits.items(), offset)
     ]
-    # Count seen, like _paginate: exact when the scan completed, so a page past the end
-    # carries the total it undershot; a lower bound once truncated stops the scan early.
+    # Count seen, like _paginate: exact when the scan finished, a lower bound once truncated.
     return {"total": len(hits) + int(truncated), "truncated": truncated, "functions": functions}

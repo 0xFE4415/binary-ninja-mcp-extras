@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 from helpers import (
+    NO_ALTERNATIVES,
     FakeToolCall,
     FakeToolError,
     get_tool,
@@ -423,7 +424,14 @@ def test_call_paths_reports_real_edges_within_the_depth_cap(
     path_cap = max_paths
 
     if from_index == to_index:
+        endpoint = {
+            "start": hex(_STARTS[from_index]),
+            "name": f"f{from_index}",
+            **NO_ALTERNATIVES,
+        }
         assert result == {
+            "from_function": endpoint,
+            "to_function": endpoint,
             "reachable": True,
             "paths": [[{"start": hex(_STARTS[from_index]), "name": f"f{from_index}"}]],
             "truncated": False,
@@ -560,8 +568,8 @@ def test_string_refs_filters_mixed_sources_before_paging(
 
 
 def test_compile_user_regex_adds_no_flags_beyond_ignore_case() -> None:
-    assert tools._compile_user_regex("x").flags == re.compile("x").flags
-    caseless = tools._compile_user_regex("x", ignore_case=True)
+    assert tools._compile_user_regex("pattern", "x").flags == re.compile("x").flags
+    caseless = tools._compile_user_regex("pattern", "x", ignore_case=True)
     assert caseless.flags == re.compile("x", re.IGNORECASE).flags
 
 

@@ -6,7 +6,7 @@ A leaf module by design: helpers imports it, so it must not import helpers back.
 from __future__ import annotations
 
 import enum
-from typing import Any, override
+from typing import override
 
 
 class FakeRegisterValueType(enum.IntEnum):
@@ -33,14 +33,45 @@ class FakeRegisterValueType(enum.IntEnum):
     ConstantDataAggregateValue = 32771
 
 
+class FakeVariableSourceType(enum.IntEnum):
+    """Mirrors binaryninja.enums.VariableSourceType."""
+
+    StackVariableSourceType = 0
+    RegisterVariableSourceType = 1
+    FlagVariableSourceType = 2
+    CompositeReturnValueSourceType = 3
+    CompositeParameterSourceType = 4
+
+
+class FakeVariableType:
+    """Mirrors the Type of a Variable: str() renders it."""
+
+    def __init__(self, rendered: str) -> None:
+        self._rendered = rendered
+
+    @override
+    def __str__(self) -> str:
+        return self._rendered
+
+
 class FakeVariable:
-    """Mirrors binaryninja.variable.Variable for the name and storage surface the tools read."""
+    """Mirrors binaryninja.variable.Variable: name, source_type, storage and type.
 
-    storage: int = 0
-    source_type: Any = None
+    The defaults describe a 64-bit integer in register index 98, which is rax on x86_64.
+    """
 
-    def __init__(self, name: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        *,
+        source_type: FakeVariableSourceType = FakeVariableSourceType.RegisterVariableSourceType,
+        storage: int = 98,
+        type_string: str = "int64_t",
+    ) -> None:
         self.name = name
+        self.source_type = source_type
+        self.storage = storage
+        self.type = FakeVariableType(type_string)
 
 
 class FakeMLILDefinition:

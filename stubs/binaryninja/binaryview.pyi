@@ -7,10 +7,11 @@ from binaryninja.enums import (
     DerivedStringLocationType,
     RegisterValueType,
     RelocationType,
+    SymbolType,
 )
 from binaryninja.filemetadata import FileMetadata
-from binaryninja.function import Function
-from binaryninja.types import NamedTypeReferenceType, StructureType, Type
+from binaryninja.function import DisassemblyTextLine, Function
+from binaryninja.types import NamedTypeReferenceType, QualifiedName, StructureType, Type
 from binaryninja.variable import PossibleValueSet
 
 
@@ -18,6 +19,7 @@ class LinearDisassemblyLine:
     """One rendered line of the linear view; function is None for non-function lines."""
 
     function: Function | None
+    contents: DisassemblyTextLine
 
 
 class Section:
@@ -92,6 +94,8 @@ class RelocationInfo:
 
 class CoreSymbol:
     full_name: str
+    address: int
+    type: SymbolType
 
 
 class Relocation:
@@ -103,6 +107,11 @@ class Relocation:
     def reloc(self) -> int: ...
     @property
     def symbol(self) -> CoreSymbol | None: ...
+
+
+class DataVariable:
+    address: int
+    type: Type
 
 
 class BinaryView:
@@ -122,6 +131,10 @@ class BinaryView:
     def get_functions_by_name(
         self, name: str, plat: Any = None, ordered_filter: Any = None
     ) -> list[Function]: ...
+    def get_symbols_by_name(
+        self, name: str, namespace: Any = None, ordered_filter: Any = None
+    ) -> list[CoreSymbol]: ...
+    def get_data_var_at(self, addr: int) -> DataVariable | None: ...
     def find_all_constant(
         self,
         start: int,
@@ -147,7 +160,7 @@ class BinaryView:
     def remove_metadata(self, key: str) -> None: ...
     def parse_type_string(
         self, text: str, import_dependencies: bool = True
-    ) -> tuple[Any, Any]: ...
+    ) -> tuple[Type, QualifiedName]: ...
     def parse_possiblevalueset(
         self, value: str, state: RegisterValueType, here: int = 0
     ) -> PossibleValueSet: ...

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from helpers import (
+    NO_ALTERNATIVES,
     FakeParsingToolCall,
     FakeToolError,
     _call,
@@ -41,7 +42,18 @@ def test_annotate_many_applies_name_comment_and_prototype_in_one_transaction() -
         "failed": 0,
         "failed_count": 0,
         "total": 2,
-        "results": [{"addr": "0x1150", "ok": True}, {"addr": "0x2000", "ok": True}],
+        "results": [
+            {
+                "addr": "0x1150",
+                "ok": True,
+                "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+            },
+            {
+                "addr": "0x2000",
+                "ok": True,
+                "function": {"start": "0x2000", "name": "helper", **NO_ALTERNATIVES},
+            },
+        ],
     }
     assert main.name == "read_config"
     # The comment is an addressed comment at the exact address given, not the
@@ -72,7 +84,11 @@ def test_annotate_many_reports_a_missing_function_per_item() -> None:
         "total": 2,
         "results": [
             {"addr": "0x1800", "ok": False, "error": "no analyzed function contains 0x1800"},
-            {"addr": "0x1100", "ok": True},
+            {
+                "addr": "0x1100",
+                "ok": True,
+                "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+            },
         ],
     }
     # The batch still applies and commits; only the dead item failed.
@@ -273,6 +289,25 @@ def test_annotate_many_rejects_oversized_or_mistyped_strings_per_item() -> None:
     assert view.transactions == []
 
 
+def test_annotate_many_reports_the_first_bad_field_in_name_comment_prototype_order() -> None:
+    view = _annotate_view()
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [
+            {"addr": "0x1100", "name": "", "comment": 5, "prototype": ""},
+            {"addr": "0x1100", "comment": 5, "prototype": ""},
+            {"addr": "0x1100", "prototype": ""},
+        ],
+    )
+    errors = [row["error"] for row in result["results"]]
+    assert errors == [
+        "name must be a non-empty string",
+        "comment must be a string",
+        "prototype must be a non-empty string",
+    ]
+
+
 def test_annotate_many_accepts_strings_exactly_at_the_caps() -> None:
     view = _annotate_view()
     main, _helper = view.functions
@@ -304,7 +339,13 @@ def test_annotate_many_lands_a_comment_at_the_exact_address_given() -> None:
         FakeParsingToolCall(view),
         [{"addr": "0x1150", "comment": "mid-function"}],
     )
-    assert result["results"] == [{"addr": "0x1150", "ok": True}]
+    assert result["results"] == [
+        {
+            "addr": "0x1150",
+            "ok": True,
+            "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+        }
+    ]
     assert main.get_comment_at(0x1150) == "mid-function"
     assert main.get_comment_at(0x1100) == ""
     # The addressed comment never doubles as the function-level comment.
@@ -322,7 +363,18 @@ def test_annotate_many_echoes_the_function_start_for_function_level_fields() -> 
         FakeParsingToolCall(view),
         [{"addr": "0x1150", "name": "renamed"}, {"addr": "0x1150", "prototype": "int main(void)"}],
     )
-    assert result["results"] == [{"addr": "0x1100", "ok": True}, {"addr": "0x1100", "ok": True}]
+    assert result["results"] == [
+        {
+            "addr": "0x1100",
+            "ok": True,
+            "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+        },
+        {
+            "addr": "0x1100",
+            "ok": True,
+            "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+        },
+    ]
     assert main.name == "renamed"
     assert main.user_type == "int main(void)"
 
@@ -400,3 +452,12 @@ def test_annotate_many_lists_all_unknown_fields() -> None:
     assert result["results"] == [
         {"addr": "0x1100", "ok": False, "error": "unknown field(s): hue, tint"}
     ]
+
+
+def test_optional_text_passes_through_strings_and_maps_everything_else_to_none() -> None:
+    assert annotations_tools._optional_text("note") == "note"
+    # An empty comment is a real value: it must survive, not collapse into None.
+    assert annotations_tools._optional_text("") == ""
+    assert annotations_tools._optional_text(None) is None
+    assert annotations_tools._optional_text(123) is None
+    assert annotations_tools._optional_text(["note"]) is None

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import string
+from itertools import batched
 
 
 class HexPatternError(ValueError):
@@ -12,7 +14,8 @@ class HexPatternError(ValueError):
 def parse_hex_pattern(pattern: str) -> list[int | None]:
     """Parse a hex byte pattern into byte values, using None for wildcards.
 
-    Accepts optional whitespace between byte tokens and "AS ?? 05" style wildcards.
+    Accepts optional whitespace between byte tokens and "48 ?? 05" style wildcards;
+    each byte token is exactly two ASCII hex digits or "??".
 
     :param pattern: Hex pattern string, e.g. "48 8b ?? 05".
     :returns: One entry per byte; None marks a wildcard byte.
@@ -23,17 +26,15 @@ def parse_hex_pattern(pattern: str) -> list[int | None]:
         raise HexPatternError("empty hex pattern")
     if len(cleaned) % 2 != 0:
         raise HexPatternError("hex pattern must contain whole bytes")
-    values: list[int | None] = []
-    for index in range(0, len(cleaned), 2):
-        token = cleaned[index : index + 2]
-        if token == "??":
-            values.append(None)
-            continue
-        try:
-            values.append(int(token, 16))
-        except ValueError:
-            raise HexPatternError(f"invalid hex byte token '{token}'") from None
-    return values
+    return [_parse_byte_token("".join(token)) for token in batched(cleaned, 2)]
+
+
+def _parse_byte_token(token: str) -> int | None:
+    if token == "??":
+        return None
+    if not all(character in string.hexdigits for character in token):
+        raise HexPatternError(f"invalid hex byte token '{token}'")
+    return int(token, 16)
 
 
 def compile_hex_pattern(pattern: str) -> tuple[re.Pattern[bytes], int]:

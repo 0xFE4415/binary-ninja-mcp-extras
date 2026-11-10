@@ -10,6 +10,18 @@ from typing import Any, override
 
 from helpers_uidf import FakeVariable
 
+_DEST_WRITES = ("MLIL_SET_VAR", "MLIL_SET_VAR_SSA", "MLIL_FORCE_VER")
+_SPLIT_WRITES = ("MLIL_SET_VAR_SPLIT", "MLIL_SET_VAR_SPLIT_SSA")
+_OUTPUT_WRITES = (
+    "MLIL_CALL",
+    "MLIL_CALL_UNTYPED",
+    "MLIL_SYSCALL",
+    "MLIL_SYSCALL_UNTYPED",
+    "MLIL_TAILCALL",
+    "MLIL_TAILCALL_UNTYPED",
+    "MLIL_INTRINSIC",
+)
+
 
 class FakeOperation:
     """Mirrors MediumLevelILOperation: only .name is read by the tools."""
@@ -27,6 +39,9 @@ class FakeInstruction:
     right: Any = None
     dest: Any = None
     src: Any = None
+    high: Any = None
+    low: Any = None
+    output: Any = ()
 
     def __init__(
         self,
@@ -43,6 +58,18 @@ class FakeInstruction:
         self._text = text
         for name, value in operands.items():
             setattr(self, name, value)
+
+    @property
+    def vars_written(self) -> list[Any]:
+        """Mirrors the real property: SET_VAR_FIELD does not override it and reports nothing."""
+        name = self.operation.name
+        if name in _DEST_WRITES:
+            return [self.dest]
+        if name in _SPLIT_WRITES:
+            return [self.high, self.low]
+        if name in _OUTPUT_WRITES:
+            return list(self.output)
+        return []
 
     @override
     def __str__(self) -> str:
@@ -105,8 +132,15 @@ class FakeMLILInstructions:
         definitions: dict[FakeVariable, list[FakeInstruction]] | None = None,
     ) -> None:
         self.instructions = instructions
+        for position, instruction in enumerate(instructions):
+            instruction.instr_index = position
         self._uses = uses or {}
         self._definitions = definitions or {}
+
+    @property
+    def vars(self) -> list[FakeVariable]:
+        """Every variable with a recorded definition or use, as the core lists them."""
+        return list(dict.fromkeys([*self._definitions, *self._uses]))
 
     def get_var_definitions(self, variable: FakeVariable) -> list[FakeInstruction]:
         return list(self._definitions.get(variable, []))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from helpers import (
+    NO_ALTERNATIVES,
     FakeBasicBlock,
     FakeParsingToolCall,
     FakeToolError,
@@ -30,7 +31,11 @@ def test_function_define_and_undefine() -> None:
     assert len(view.created_functions) == 1
 
     _, undefine = get_tool("rex_function_undefine")
-    assert undefine(_call(view), 0x4000) == {"start": "0x4000", "name": "sub_4000"}
+    assert undefine(_call(view), 0x4000) == {
+        "start": "0x4000",
+        "name": "sub_4000",
+        **NO_ALTERNATIVES,
+    }
     assert len(view.removed_functions) == 1
 
     with pytest.raises(FakeToolError) as exc:
@@ -265,7 +270,7 @@ def test_function_containing_caps_entries_and_truncates_names() -> None:
     result = containing(_call(view), 0x1155)
     assert len(result["functions"]) == functions._MAX_FUNCTION_ENTRIES
     assert result["truncated"] is True
-    assert result["functions"][2]["name"].endswith("chars truncated]")
+    assert result["functions"][0]["name"].endswith("chars truncated]")
     small = FakeBinaryView(functions=[inner, outer])
     assert containing(_call(small), 0x1155)["truncated"] is False
     with pytest.raises(FakeToolError) as exc:
@@ -361,6 +366,8 @@ def test_call_paths_depth_shortcut_and_errors() -> None:
     _, paths = get_tool("rex_call_paths")
     assert paths(_call(view), 0x1100, 0x3000, max_depth=1)["reachable"] is False
     assert paths(_call(view), 0x1100, 0x1100) == {
+        "from_function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+        "to_function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
         "reachable": True,
         "paths": [[{"start": "0x1100", "name": "main"}]],
         "truncated": False,
@@ -418,6 +425,8 @@ def test_call_paths_reports_one_path_per_intermediate_and_sorts_neighbors() -> N
     _, paths = get_tool("rex_call_paths")
     result = paths(_call(view), 0x1100, 0x4000)
     assert result == {
+        "from_function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+        "to_function": {"start": "0x4000", "name": "sink", **NO_ALTERNATIVES},
         "reachable": True,
         "paths": [
             [

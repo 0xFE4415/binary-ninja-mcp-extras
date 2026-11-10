@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import re
 import sys
 from collections.abc import Iterator
@@ -13,14 +14,23 @@ from helpers import (
     FakeTool,
     FakeToolError,
     _call,
+    _disasm_view,
+    _use_export_root,
     get_tool,
 )
 from helpers_view import (
+    FakeArchitecture,
     FakeBinaryView,
+    FakeType,
 )
 
 import binja_plugin
-from binja_plugin.tools.help import _PARAMETER_ERROR_CODES
+from binja_plugin.tools.help import (
+    _CATEGORY_USE_WHEN,
+    _PARAMETER_ERROR_CODES,
+    _UNCATEGORIZED,
+    _UNCATEGORIZED_USE_WHEN,
+)
 from binja_plugin.tools.scanning import _MAX_PATTERN_CHARS
 
 # Error codes the handlers define for the tool as a whole — batch or view-level failures
@@ -43,6 +53,7 @@ _TOOL_LEVEL_CODES = frozenset(
 )
 
 _MUTMUT_VARIANT = re.compile(r"__mutmut_\d+$")
+_MUTMUT_ORIGINAL = re.compile(r"^x_(.+)__mutmut_orig$")
 
 
 def _help(tool_name: str = "", category: str = "") -> Any:
@@ -196,8 +207,8 @@ def test_help_fails_on_an_unknown_category_and_lists_the_valid_ones() -> None:
     with pytest.raises(FakeToolError) as exc:
         _help(category="nope")
     assert exc.value.code == "unknown_category"
-    assert "no category named 'nope'" in exc.value.message
-    assert "uidf" in exc.value.message
+    expected_categories = ", ".join([*_CATEGORY_USE_WHEN, _UNCATEGORIZED])
+    assert exc.value.message == f"no category named 'nope'; categories: {expected_categories}"
 
 
 @pytest.mark.parametrize("category", ["strings", "nope"])
@@ -219,7 +230,7 @@ def test_help_details_types_defaults_and_bounds() -> None:
         "type": "string",
         "required": False,
         "description": "Substring or regular expression to match; empty matches every string.",
-        "error_codes": [],
+        "error_codes": ["invalid_regex"],
         "default": "",
     }
     assert by_name["limit"] == {
@@ -308,8 +319,14 @@ def test_help_fails_on_an_unknown_name_and_lists_the_valid_ones() -> None:
     with pytest.raises(FakeToolError) as exc:
         _help("rex_nope")
     assert exc.value.code == "unknown_tool"
-    assert "no rex_ tool named 'rex_nope'" in exc.value.message
-    assert "rex_string_search" in exc.value.message
+    registered = ", ".join(sorted(tool.name for tool in FakeTool.list()))
+    expected = f"no rex_ tool named 'rex_nope'; registered rex_ tools: {registered}"
+    assert exc.value.message == expected
+
+
+def test_help_uncategorized_category_reports_the_uncategorized_use_when() -> None:
+    listing = _help(category="other")
+    assert listing["use_when"] == _UNCATEGORIZED_USE_WHEN
 
 
 def test_help_error_code_table_keys_are_registered_parameters() -> None:
@@ -343,7 +360,12 @@ def _defined_error_codes() -> set[str]:
     helpers that raise on a handler's behalf: _validate_text's too-large code and
     _require_containing_function's containment code.
     """
-    code_positions = {"ToolError": 0, "_validate_text": 3, "_require_containing_function": 2}
+    code_positions = {
+        "ToolError": 0,
+        "_validate_text": 3,
+        "_require_containing_function": 2,
+        "_missing_il_error": 2,
+    }
     codes: set[str] = set()
     for path in Path(binja_plugin.__file__).parent.rglob("*.py"):
         for node in _walk_definitions(ast.parse(path.read_text(encoding="utf-8"))):
@@ -367,7 +389,113 @@ def _defined_error_codes() -> set[str]:
 def test_help_error_code_table_matches_the_handler_sources() -> None:
     defined = _defined_error_codes() - {"invalid_params"} - _TOOL_LEVEL_CODES
     listed = {code for codes in _PARAMETER_ERROR_CODES.values() for code in codes}
-    assert listed == defined
+    assert listed - {"invalid_params"} == defined
+
+
+_RAISING_HELPER_CODE_POSITIONS = {
+    "ToolError": 0,
+    "_validate_text": 3,
+    "_require_containing_function": 2,
+    "_raise_containment_miss": 2,
+    "_run_undo_stack_step": 2,
+    "_missing_il_error": 2,
+}
+
+# Codes a handler reaches but reports in-band or without a parameter to own them, so the
+# per-parameter table does not list them.
+_UNLISTED_REACHABLE_CODES = {
+    "rex_disasm_many": {"analysis_pending"},
+    "rex_quick_main": {"no_function"},
+    "rex_uidf_set_many": {
+        "ambiguous_definition",
+        "definition_not_found",
+        "no_mlil",
+        "no_variable",
+    },
+}
+
+
+def _function_bodies() -> dict[str, list[ast.FunctionDef]]:
+    bodies: dict[str, list[ast.FunctionDef]] = {}
+    for path in Path(binja_plugin.__file__).parent.rglob("*.py"):
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.FunctionDef) and _MUTMUT_VARIANT.search(node.name) is None:
+                bodies.setdefault(_MUTMUT_ORIGINAL.sub(r"\1", node.name), []).append(node)
+    return bodies
+
+
+def _callee_name(call: ast.Call) -> str:
+    target = call.func
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return target.id if isinstance(target, ast.Name) else ""
+
+
+def _literal_code(call: ast.Call) -> str | None:
+    position = _RAISING_HELPER_CODE_POSITIONS.get(_callee_name(call))
+    if position is None or len(call.args) <= position:
+        return None
+    argument = call.args[position]
+    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+        return argument.value
+    return None
+
+
+def _reachable_error_codes(tool_name: str) -> set[str]:
+    bodies = _function_bodies()
+    codes: set[str] = set()
+    pending, visited = [tool_name], set[str]()
+    while pending:
+        name = pending.pop()
+        if name in visited:
+            continue
+        visited.add(name)
+        calls = [
+            node
+            for body in bodies.get(name, [])
+            for node in ast.walk(body)
+            if isinstance(node, ast.Call)
+        ]
+        pending.extend(_callee_name(call) for call in calls)
+        codes.update(code for call in calls if (code := _literal_code(call)) is not None)
+    return codes
+
+
+@pytest.mark.parametrize("tool_name", sorted(tool.name for tool in FakeTool.list()))
+def test_help_error_code_table_matches_each_tools_reachable_codes(tool_name: str) -> None:
+    reachable = _reachable_error_codes(tool_name)
+    unlisted = _UNLISTED_REACHABLE_CODES.get(tool_name, set())
+    assert unlisted <= reachable
+    listed = {
+        code
+        for (listed_tool, _), codes in _PARAMETER_ERROR_CODES.items()
+        if listed_tool == tool_name
+        for code in codes
+    }
+    assert (
+        listed - {"invalid_params"} == reachable - {"invalid_params"} - _TOOL_LEVEL_CODES - unlisted
+    )
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "parameter_name", "error_codes"),
+    [
+        ("rex_constant_find", "function_filter", ["invalid_regex"]),
+        ("rex_hlil_grep", "function_filter", ["invalid_regex"]),
+        ("rex_hlil_grep", "regex", ["invalid_regex"]),
+        ("rex_string_refs", "pattern", ["invalid_regex"]),
+        ("rex_function_containing", "addr", ["no_function", "analysis_pending"]),
+        ("rex_component_add_functions", "functions", ["analysis_pending"]),
+        ("rex_uidf_list", "function", ["analysis_pending"]),
+        ("rex_uidf_set_many", "function", ["analysis_pending"]),
+        ("rex_function_define_many", "addresses", []),
+    ],
+)
+def test_help_details_the_error_codes_of_the_parameter_that_raises_them(
+    tool_name: str, parameter_name: str, error_codes: list[str]
+) -> None:
+    parameters = {parameter["name"]: parameter for parameter in _help(tool_name)["parameters"]}
+    assert parameters[parameter_name]["error_codes"] == error_codes
 
 
 def test_help_details_the_dataflow_tool_error_codes() -> None:
@@ -375,16 +503,114 @@ def test_help_details_the_dataflow_tool_error_codes() -> None:
         parameter["name"]: parameter
         for parameter in _help("rex_function_constraints")["parameters"]
     }
-    assert constraints["function"]["error_codes"] == ["no_mlil"]
+    assert constraints["function"]["error_codes"] == ["no_mlil", "analysis_pending"]
     statements = {
         parameter["name"]: parameter for parameter in _help("rex_hlil_statements")["parameters"]
     }
-    assert statements["function"]["error_codes"] == ["no_hlil"]
+    assert statements["function"]["error_codes"] == ["no_hlil", "analysis_pending"]
     uses = {parameter["name"]: parameter for parameter in _help("rex_mlil_uses")["parameters"]}
-    assert uses["function"]["error_codes"] == ["no_mlil"]
+    assert uses["function"]["error_codes"] == ["no_mlil", "analysis_pending"]
     assert uses["address"]["error_codes"] == ["no_definition"]
+    assert uses["variable"]["error_codes"] == ["no_variable"]
     parameter = {
         parameter["name"]: parameter for parameter in _help("rex_parameter_variables")["parameters"]
     }
-    assert parameter["function"]["error_codes"] == ["no_mlil"]
+    assert parameter["function"]["error_codes"] == ["no_mlil", "analysis_pending"]
     assert parameter["parameter"]["error_codes"] == ["no_variable"]
+
+
+_EXPORT_FILENAME_CODES = [
+    ("", "invalid_params"),
+    ("/abs/path.txt", "invalid_params"),
+    ("up/../down.txt", "invalid_params"),
+    ("back\\slash.txt", "invalid_params"),
+    ("nul\x00byte.txt", "invalid_params"),
+    ("x" * 256, "invalid_params"),
+    ("link.txt", "path_escape"),
+    ("occupied.txt", "export_failed"),
+]
+
+_EXPORT_FILENAME_TOOLS = ["rex_export_disasm", "rex_export_symbols", "rex_type_library_export"]
+
+
+def _use_export_root_with_traps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    root.mkdir(parents=True)
+    (root / "link.txt").symlink_to(tmp_path / "outside.txt")
+    (root / "occupied.txt").mkdir()
+
+
+def _export_filename_error(tool_name: str, filename: str) -> FakeToolError:
+    _, tool = get_tool(tool_name)
+    arguments: dict[str, Any] = {"filename": filename}
+    if tool_name == "rex_export_disasm":
+        view, arguments["address"] = _disasm_view(), 0x1104
+    elif tool_name == "rex_export_symbols":
+        view, arguments["start"], arguments["end"] = FakeBinaryView(), 0x1000, 0x2000
+    else:
+        view = FakeBinaryView(arch=FakeArchitecture("x86_64"), types={"open": FakeType("open")})
+        arguments["library_name"], arguments["names"] = "recovered", ["open"]
+    with pytest.raises(FakeToolError) as error:
+        tool(_call(view), **arguments)
+    return error.value
+
+
+@pytest.mark.parametrize("tool_name", _EXPORT_FILENAME_TOOLS)
+@pytest.mark.parametrize(("filename", "code"), _EXPORT_FILENAME_CODES)
+def test_an_export_filename_raises_the_code_for_its_failure(
+    tool_name: str, filename: str, code: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root_with_traps(monkeypatch, tmp_path)
+    assert _export_filename_error(tool_name, filename).code == code
+
+
+@pytest.mark.parametrize("tool_name", _EXPORT_FILENAME_TOOLS)
+def test_help_lists_exactly_the_codes_an_export_filename_can_raise(tool_name: str) -> None:
+    parameters = {parameter["name"]: parameter for parameter in _help(tool_name)["parameters"]}
+    assert parameters["filename"]["error_codes"] == [
+        "invalid_params",
+        "path_escape",
+        "export_failed",
+    ]
+    assert set(parameters["filename"]["error_codes"]) == {
+        code for _, code in _EXPORT_FILENAME_CODES
+    }
+
+
+_EXPORT_REQUIRED = {
+    "rex_export_disasm": ["address", "filename"],
+    "rex_export_symbols": ["start", "end", "filename"],
+    "rex_type_library_export": ["library_name", "names", "filename"],
+}
+
+
+@pytest.mark.parametrize("tool_name", _EXPORT_FILENAME_TOOLS)
+def test_help_describes_an_export_filename_as_required_without_a_default(tool_name: str) -> None:
+    parameters = {parameter["name"]: parameter for parameter in _help(tool_name)["parameters"]}
+    assert parameters["filename"] == {
+        "name": "filename",
+        "type": "string",
+        "required": True,
+        "description": "Plain file name inside the export root; overwritten if it exists.",
+        "error_codes": ["invalid_params", "path_escape", "export_failed"],
+    }
+
+
+@pytest.mark.parametrize("tool_name", _EXPORT_FILENAME_TOOLS)
+def test_an_export_registers_its_filename_as_required(tool_name: str) -> None:
+    schema = next(tool for tool in FakeTool.list() if tool.name == tool_name).input_schema
+    assert schema["required"] == _EXPORT_REQUIRED[tool_name]
+    assert "default" not in schema["properties"]["filename"]
+
+
+@pytest.mark.parametrize("tool_name", _EXPORT_FILENAME_TOOLS)
+def test_an_export_cannot_be_called_without_a_filename(tool_name: str) -> None:
+    _, tool = get_tool(tool_name)
+    assert inspect.signature(tool).parameters["filename"].default is inspect.Parameter.empty
+
+
+def test_help_lists_invalid_params_only_for_export_filenames() -> None:
+    listing_invalid_params = {
+        key for key, codes in _PARAMETER_ERROR_CODES.items() if "invalid_params" in codes
+    }
+    assert listing_invalid_params == {(tool, "filename") for tool in _EXPORT_FILENAME_TOOLS}

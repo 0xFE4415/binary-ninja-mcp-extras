@@ -11,10 +11,12 @@ from binaryninja.function import Function
 
 from binja_plugin.tools import (
     _function_entry,
+    _function_order,
     _FunctionEntry,
     _parse_address_batch,
     _raise_containment_miss,
     _require_function,
+    _ResolvedFunction,
     _validate_range,
 )
 
@@ -23,14 +25,14 @@ _MAX_CALL_PATHS = 64
 _MAX_FUNCTION_ENTRIES = 64
 _MAX_DEFINE_BATCH = 128
 
-# The define tools' analysis wait polls in ~100 ms slices like rex_analysis_wait; a
-# defined function counts as analyzed once the engine has produced its first basic
-# block, which is the same gate the decompile and disassembly tools go through.
+# A defined function counts as analyzed once the engine produces its first basic block.
 _DEFINE_WAIT_SLICE_MS = 100
 _MAX_DEFINE_WAIT_MS = 600000
 
 
 class _CallPathsResult(TypedDict):
+    from_function: _ResolvedFunction
+    to_function: _ResolvedFunction
     reachable: bool
     paths: list[list[_FunctionEntry]]
     truncated: bool
@@ -69,11 +71,6 @@ def _pending_functions(functions: list[Function]) -> list[Function]:
 def _settle_analysis(
     functions: list[Function], wait: bool, timeout_ms: int
 ) -> tuple[list[Function], int]:
-    """Return the functions still without a basic block and the elapsed wall time.
-
-    With ``wait`` set, the unanalyzed functions are polled in ~100 ms slices until every
-    one has a block or the deadline passes; without it the state is sampled once.
-    """
     if not wait:
         return _pending_functions(functions), 0
     started = time.monotonic()
@@ -105,16 +102,19 @@ def rex_call_paths(
     bv = call.binary_view
     max_depth = _validate_range("max_depth", max_depth, 1, _MAX_CALL_PATH_DEPTH)
     max_paths = _validate_range("max_paths", max_paths, 1, _MAX_CALL_PATHS)
-    source = _require_function(bv, from_addr)
-    target = _require_function(bv, to_addr)
-    paths: list[list[_FunctionEntry]] = []
+    source_resolution = _require_function(bv, from_addr)
+    target_resolution = _require_function(bv, to_addr)
+    source, target = source_resolution.function, target_resolution.function
     if source.start == target.start:
         return {
+            "from_function": source_resolution.entry,
+            "to_function": target_resolution.entry,
             "reachable": True,
             "paths": [[_function_entry(source)]],
             "truncated": False,
             "explored": 1,
         }
+    paths: list[list[_FunctionEntry]] = []
     queue: deque[tuple[Function, list[Function]]] = deque([(source, [source])])
     visited = {source.start}
     explored = 0
@@ -129,16 +129,16 @@ def rex_call_paths(
             if neighbor.start == target.start:
                 paths.append([_function_entry(item) for item in [*path, neighbor]])
                 if len(paths) >= max_paths:
-                    # One function's call sites can list the target several times; stop
-                    # appending so the result never exceeds max_paths.
+                    # Call sites can list the target several times; stop appending at max_paths.
                     hit_path_cap = True
                     break
             elif neighbor.start not in visited:
                 visited.add(neighbor.start)
                 queue.append((neighbor, [*path, neighbor]))
-    # hit_path_cap is the only truncation signal: paths can never exceed max_paths (the inner
-    # loop breaks first), and reaching max_paths only happens through that same append.
+    # hit_path_cap is the only truncation signal: paths never exceed max_paths.
     return {
+        "from_function": source_resolution.entry,
+        "to_function": target_resolution.entry,
         "reachable": bool(paths),
         "paths": paths,
         "truncated": hit_path_cap,
@@ -152,7 +152,7 @@ def rex_function_containing(call: mcp.ToolCall, addr: mcp.Address) -> _FunctionC
 
     :param addr: Address to look up.
     """
-    functions = call.binary_view.get_functions_containing(addr)
+    functions = sorted(call.binary_view.get_functions_containing(addr), key=_function_order)
     if not functions:
         _raise_containment_miss(call.binary_view, addr, "no_function", "function")
     return {
@@ -191,7 +191,7 @@ def rex_function_define_many(
 ) -> _FunctionDefineManyResult:
     """Turn the bytes at many addresses into functions, then optionally wait for analysis.
 
-    :param addresses: 1 to 100 address expressions; the batch fails whole on a bad entry.
+    :param addresses: 1 to 128 address expressions; the batch fails whole on a bad entry.
     :param wait: Poll until every defined function has at least one basic block.
     :param timeout_ms: Bound on the analysis wait when ``wait`` is set.
     """
@@ -221,11 +221,11 @@ def rex_function_define_many(
 
 
 @mcp.tool(destructive=True)
-def rex_function_undefine(call: mcp.ToolCall, start: mcp.Address) -> _FunctionEntry:
+def rex_function_undefine(call: mcp.ToolCall, start: mcp.Address) -> _ResolvedFunction:
     """Remove the user function covering an address.
 
     :param start: Any address inside the function to remove.
     """
-    function = _require_function(call.binary_view, start)
-    call.binary_view.remove_user_function(function)
-    return _function_entry(function)
+    resolution = _require_function(call.binary_view, start)
+    call.binary_view.remove_user_function(resolution.function)
+    return resolution.entry

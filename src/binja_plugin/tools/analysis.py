@@ -7,7 +7,7 @@ out the analysis engine, discarding the view — rather than its analyzed conten
 from __future__ import annotations
 
 import time
-from typing import Annotated
+from typing import Annotated, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -15,12 +15,39 @@ from binaryninja.enums import AnalysisState
 
 from binja_plugin.tools import _truncate, _validate_range
 
-# rex_analysis_wait: the wait runs on the MCP server thread in ~100 ms slices, so the
-# hold is bounded by timeout_ms plus one slice; the in-flight cap bounds the echoed
-# hotspot list (per-function analysis time doubles as an analysis profiler).
+# The wait runs on the server thread in ~100 ms slices: a call holds it for timeout_ms plus one.
 _MAX_ANALYSIS_WAIT_MS = 600000
 _ANALYSIS_WAIT_SLICE_MS = 100
 _MAX_ANALYSIS_INFLIGHT = 10
+
+
+class _AnalysisProgress(TypedDict):
+    state: str
+    count: int
+    total: int
+
+
+class _InFlightFunction(TypedDict):
+    start: str
+    name: str
+    analysis_time_ms: int
+
+
+class _AnalysisSnapshot(TypedDict):
+    progress: _AnalysisProgress
+    function_count: int
+    in_flight: list[_InFlightFunction]
+    truncated: bool
+
+
+class _AnalysisWaitResult(_AnalysisSnapshot):
+    completed: bool
+    elapsed_ms: int
+
+
+class _BinaryCloseResult(TypedDict):
+    closed: bool
+    path: str
 
 
 def _analysis_is_idle(bv: BinaryView) -> bool:
@@ -28,7 +55,7 @@ def _analysis_is_idle(bv: BinaryView) -> bool:
     return bv.analysis_progress.state == AnalysisState.IdleState
 
 
-def _analysis_snapshot(bv: BinaryView) -> dict[str, object]:
+def _analysis_snapshot(bv: BinaryView) -> _AnalysisSnapshot:
     """Triage-style progress snapshot: engine state plus the in-flight analysis hotspots."""
     progress = bv.analysis_progress
     in_flight = sorted(
@@ -36,8 +63,7 @@ def _analysis_snapshot(bv: BinaryView) -> dict[str, object]:
     )
     return {
         "progress": {
-            # Normalized through AnalysisState() because the API layer hands the state
-            # back as the enum in one struct and as a raw int in the other.
+            # The API layer returns the state as the enum in one struct, a raw int in the other.
             "state": AnalysisState(progress.state).name,
             "count": progress.count,
             "total": progress.total,
@@ -59,7 +85,7 @@ def _analysis_snapshot(bv: BinaryView) -> dict[str, object]:
 def rex_analysis_wait(
     call: mcp.ToolCall,
     timeout_ms: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_ANALYSIS_WAIT_MS)],
-) -> dict[str, object]:
+) -> _AnalysisWaitResult:
     """Bounded wait for background analysis with a progress snapshot at expiry.
 
     :param timeout_ms: Milliseconds to wait; 0 answers a snapshot without waiting.
@@ -77,14 +103,15 @@ def rex_analysis_wait(
 
 
 @mcp.tool(destructive=True)
-def rex_binary_close(call: mcp.ToolCall) -> dict[str, object]:
+def rex_binary_close(call: mcp.ToolCall) -> _BinaryCloseResult:
     """Discard this view's unsaved changes and close it."""
     file_metadata = call.binary_view.file
-    # The UI adapter keys its discard refusal on this flag; clearing it is the
-    # programmatic equivalent of choosing "Discard" in the close prompt.
+    # The UI adapter refuses to discard on this flag; clearing it equals choosing "Discard".
+    was_modified = file_metadata.modified
     file_metadata.modified = False
     try:
         file_metadata.close()
     except Exception as error:
+        file_metadata.modified = was_modified
         raise mcp.ToolError("close_failed", f"could not close the view: {error}") from None
     return {"closed": True, "path": _truncate(file_metadata.filename)}

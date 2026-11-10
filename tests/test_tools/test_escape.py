@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from helpers import FakeToolError, _call, _view_with_functions, get_tool
@@ -102,22 +103,244 @@ def test_eval_python_survives_result_repr_raising() -> None:
     assert result["stdout"] == "before\n"
     assert result["result"] is None
     assert result["result_truncated"] is False
-    assert result["error"] is not None
-    assert "no repr" in result["error"]
+    assert result["error"] == "RuntimeError: no repr"
     assert result["error_truncated"] is False
+    assert result["error_location"] == {"line": 4, "text": "raise RuntimeError('no repr')"}
 
 
-def test_eval_python_returns_truncated_error_instead_of_raising() -> None:
-    view = _view_with_functions()
+def _failing(code: str) -> dict[str, Any]:
     _, evaluate = get_tool("rex_eval_python")
-    result = evaluate(_call(view), "print('before')\nraise ValueError('z' * 1000)")
+    return evaluate(_call(_view_with_functions()), code)
+
+
+@pytest.mark.parametrize(
+    ("code", "error"),
+    [
+        ("d = {}\nd['x']", "KeyError: 'x'"),
+        ("raise ValueError()", "ValueError"),
+        ("raise ValueError('')", "ValueError"),
+        ("raise ValueError('boom')", "ValueError: boom"),
+        ("raise ValueError('a', 'b')", "ValueError: ('a', 'b')"),
+        ("class Custom(Exception):\n    pass\nraise Custom('x')", "Custom: x"),
+        ("import sys\nsys.exit()", "SystemExit: exit status None"),
+        ("import sys\nsys.exit(3)", "SystemExit: exit status 3"),
+        ("import sys\nsys.exit(0)", "SystemExit: exit status 0"),
+        ("import sys\nsys.exit('bye')", "SystemExit: exit status 'bye'"),
+        ("raise KeyboardInterrupt", "KeyboardInterrupt"),
+        ("raise KeyboardInterrupt('stop')", "KeyboardInterrupt: stop"),
+    ],
+)
+def test_eval_python_errors_lead_with_the_exception_type(code: str, error: str) -> None:
+    result = _failing(code)
+    assert result["error"] == error
+    assert result["error_truncated"] is False
+    assert result["result"] is None
+
+
+@pytest.mark.parametrize(
+    ("code", "error"),
+    [
+        (
+            "import json\njson.loads('')",
+            "json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)",
+        ),
+        ("import zipfile\nraise zipfile.BadZipFile('torn')", "zipfile.BadZipFile: torn"),
+        ("raise FileNotFoundError(2, 'No such file')", "FileNotFoundError: [Errno 2] No such file"),
+        (
+            "class Boom(Exception):\n    __module__ = 'binaryninja.binaryview'\nraise Boom('x')",
+            "binaryninja.binaryview.Boom: x",
+        ),
+        (
+            "class Boom(Exception):\n    __module__ = 'binaryninja.binaryview'\nraise Boom()",
+            "binaryninja.binaryview.Boom",
+        ),
+        ("class Boom(Exception):\n    __module__ = '__main__'\nraise Boom('x')", "Boom: x"),
+        ("class Boom(Exception):\n    __module__ = 'builtins'\nraise Boom('x')", "Boom: x"),
+        (
+            "class Boom(Exception):\n    __module__ = '__main__x'\nraise Boom('x')",
+            "__main__x.Boom: x",
+        ),
+        (
+            "class Boom(Exception):\n    __module__ = 'xbuiltins'\nraise Boom('x')",
+            "xbuiltins.Boom: x",
+        ),
+        ("class Boom(Exception):\n    __module__ = 'pkg.mod'\nraise Boom('x')", "pkg.mod.Boom: x"),
+    ],
+)
+def test_eval_python_qualifies_exception_types_outside_builtins_and_main(
+    code: str, error: str
+) -> None:
+    assert _failing(code)["error"] == error
+
+
+@pytest.mark.parametrize(
+    ("code", "error"),
+    [
+        ("class Custom(Exception):\n    pass\nraise Custom('x')", "Custom: x"),
+        ("class Quiet(Exception):\n    pass\nraise Quiet()", "Quiet"),
+        (
+            "def make():\n"
+            "    class Inner(Exception):\n"
+            "        pass\n"
+            "    return Inner\n"
+            "raise make()('n')",
+            "make.<locals>.Inner: n",
+        ),
+        (
+            "class Outer:\n    class Inner(Exception):\n        pass\nraise Outer.Inner('n')",
+            "Outer.Inner: n",
+        ),
+        (
+            "class Outer:\n"
+            "    __module__ = 'pkg.mod'\n"
+            "    class Inner(Exception):\n"
+            "        __module__ = 'pkg.mod'\n"
+            "raise Outer.Inner('n')",
+            "pkg.mod.Outer.Inner: n",
+        ),
+    ],
+)
+def test_eval_python_names_exceptions_defined_in_the_submitted_code(code: str, error: str) -> None:
+    assert _failing(code)["error"] == error
+
+
+def test_eval_python_class_defined_in_the_submitted_code_has_no_module_name() -> None:
+    result = _failing(
+        "class Custom(Exception):\n    pass\nresult = (Custom.__module__, '__name__' in globals())"
+    )
+    assert result["result"] == "('builtins', False)"
+
+
+def test_eval_python_reports_the_outermost_exception_of_a_chain() -> None:
+    code = (
+        "class Cause(Exception):\n"
+        "    __module__ = 'pkg.cause'\n"
+        "    def __str__(self):\n"
+        "        raise RuntimeError('no str')\n"
+        "try:\n"
+        "    raise Cause('inner')\n"
+        "except Cause as cause:\n"
+        "    raise KeyError('outer') from cause"
+    )
+    assert _failing(code)["error"] == "KeyError: 'outer'"
+
+
+def test_eval_python_qualifies_the_type_of_an_unrenderable_message_and_system_exit() -> None:
+    odd_str = _failing(
+        "class Odd(Exception):\n"
+        "    __module__ = 'pkg.mod'\n"
+        "    def __str__(self):\n"
+        "        raise RuntimeError('no str')\n"
+        "raise Odd('x')"
+    )
+    assert odd_str["error"] == "pkg.mod.Odd: <message unavailable>"
+    qualified_exit = _failing("class Exit(SystemExit):\n    __module__ = 'pkg.mod'\nraise Exit(3)")
+    assert qualified_exit["error"] == "pkg.mod.Exit: exit status 3"
+
+
+def test_eval_python_reports_system_exit_in_band_with_captured_stdout() -> None:
+    result = _failing("import sys\nprint('before')\nresult = 1\nsys.exit(3)")
     assert result["stdout"] == "before\n"
     assert result["result"] is None
-    assert result["result_truncated"] is False
-    assert result["error"] is not None
-    assert result["error"].startswith("zzz")
+    assert result["error"] == "SystemExit: exit status 3"
+
+
+def test_eval_python_reports_keyboard_interrupt_in_band_with_captured_stdout() -> None:
+    result = _failing("print('before')\nraise KeyboardInterrupt('stop')")
+    assert result["stdout"] == "before\n"
+    assert result["result"] is None
+    assert result["error"] == "KeyboardInterrupt: stop"
+
+
+def test_eval_python_survives_an_exception_whose_message_cannot_render() -> None:
+    result = _failing(
+        "class Odd(Exception):\n"
+        "    def __str__(self):\n"
+        "        raise RuntimeError('no str')\n"
+        "raise Odd('x')"
+    )
+    assert result["error"] == "Odd: <message unavailable>"
+
+
+def test_eval_python_survives_a_system_exit_code_whose_repr_cannot_render() -> None:
+    result = _failing(
+        "class Odd:\n"
+        "    def __repr__(self):\n"
+        "        raise RuntimeError('no repr')\n"
+        "raise SystemExit(Odd())"
+    )
+    assert result["error"] == "SystemExit: <message unavailable>"
+
+
+@pytest.mark.parametrize(
+    ("message_length", "truncated"),
+    [(499, False), (500, False), (501, True)],
+)
+def test_eval_python_truncates_the_error_at_the_echo_cap(
+    message_length: int, truncated: bool
+) -> None:
+    result = _failing(f"print('before')\nraise ValueError('z' * {message_length})")
+    full = "ValueError: " + "z" * message_length
+    assert result["stdout"] == "before\n"
+    assert result["error_truncated"] is truncated
+    if truncated:
+        assert result["error"] == full[:512] + "... [1 chars truncated]"
+    else:
+        assert result["error"] == full
+
+
+def test_eval_python_truncation_cuts_the_message_never_the_exception_type() -> None:
+    result = _failing("raise ValueError('z' * 1000)")
+    assert result["error"] == "ValueError: " + "z" * 500 + "... [500 chars truncated]"
     assert result["error_truncated"] is True
-    assert len(result["error"]) == 512 + len("... [488 chars truncated]")
+
+
+def test_eval_python_locates_the_failing_line_of_the_callers_code() -> None:
+    result = _failing("print('before')\nd = {}\n    \nd['x']  ")
+    assert result["error_location"] == {"line": 4, "text": "d['x']"}
+
+
+def test_eval_python_locates_the_innermost_line_of_the_callers_code() -> None:
+    result = _failing(
+        "def inner():\n    return int('x')\n\ndef outer():\n    return inner()\n\nouter()"
+    )
+    assert result["error"] == "ValueError: invalid literal for int() with base 10: 'x'"
+    assert result["error_location"] == {"line": 2, "text": "return int('x')"}
+
+
+def test_eval_python_counts_carriage_return_line_breaks() -> None:
+    assert _failing("a = 1\r\nb = 2\rraise ValueError('x')")["error_location"] == {
+        "line": 3,
+        "text": "raise ValueError('x')",
+    }
+
+
+def test_eval_python_counts_only_python_line_breaks() -> None:
+    result = _failing("s = '\u2028\x0c\x1c\x85'\nraise ValueError('x')")
+    assert result["error_location"] == {"line": 2, "text": "raise ValueError('x')"}
+
+
+@pytest.mark.parametrize("text_length", [199, 200, 201])
+def test_eval_python_bounds_the_located_line(text_length: int) -> None:
+    line = "1 / 0  # " + "q" * (text_length - len("1 / 0  # "))
+    expected = line if text_length <= 200 else line[:200] + "... [1 chars truncated]"
+    result = _failing(line)
+    assert result["error"] == "ZeroDivisionError: division by zero"
+    assert result["error_location"] == {"line": 1, "text": expected}
+
+
+def test_eval_python_reports_a_syntax_error_without_a_location() -> None:
+    result = _failing("x = (")
+    assert result["error"] is not None
+    assert result["error"].startswith("SyntaxError: ")
+    assert "<rex_eval_python>, line 1" in result["error"]
+    assert result["error_location"] is None
+
+
+def test_eval_python_has_no_location_on_success() -> None:
+    result = _failing("result = 1")
+    assert result["error"] is None
+    assert result["error_location"] is None
 
 
 def test_eval_python_keeps_text_exactly_at_the_echo_cap_unclipped() -> None:
@@ -312,3 +535,15 @@ def test_eval_spill_keeps_a_spill_exactly_at_the_per_spill_cap() -> None:
     tail = page(_call(view), result["result_key"], offset=escape._MAX_EVAL_SPILL_CHARS - 1)
     assert tail["value"] == "'"
     assert tail["truncated"] is False
+
+
+def test_describe_error_uses_the_fully_qualified_exception_name() -> None:
+    def _nested() -> ValueError:
+        class Hidden(ValueError):
+            pass
+
+        return Hidden("boom")
+
+    error = _nested()
+    expected = f"{type(error).__module__}.{type(error).__qualname__}: boom"
+    assert escape._describe_error(error) == expected

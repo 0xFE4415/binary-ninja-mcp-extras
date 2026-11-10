@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from itertools import chain
-from typing import Annotated, Any, Literal
+from collections.abc import Callable, Iterator
+from functools import partial
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from binaryninja import mcp
 
@@ -19,19 +19,25 @@ from binja_plugin.tools import (
     _validate_range,
 )
 
+if TYPE_CHECKING:
+    from binaryninja.binaryview import (
+        BinaryView,
+        DerivedString,
+        ReferenceSource,
+        StringReference,
+    )
+
 _MAX_STRING_READ_CHARS = 4096
 
-# rex_string_refs: the per-string code-ref echo cap. The core calls themselves are
-# bounded by max_items = cap + 1, so truncation is detected without enumerating past
-# what the response can echo.
+# Core calls use max_items = cap + 1, so truncation is detected without enumerating past the cap.
 _MAX_STRING_REFS = 64
 
-_STRING_TYPES = Literal["AsciiString", "Utf16String", "Utf32String", "Utf8String"]
+StringType = Literal["AsciiString", "Utf16String", "Utf32String", "Utf8String"]
 
 
 def _text_matcher(pattern: str, regex: bool, ignore_case: bool) -> Callable[[str], bool]:
     if regex:
-        compiled = _compile_user_regex(pattern, ignore_case=ignore_case)
+        compiled = _compile_user_regex("pattern", pattern, ignore_case=ignore_case)
         return lambda value: compiled.search(value) is not None
     if ignore_case:
         needle = pattern.lower()
@@ -39,29 +45,15 @@ def _text_matcher(pattern: str, regex: bool, ignore_case: bool) -> Callable[[str
     return lambda value: pattern in value
 
 
-def _string_reference_entry(view: Any, string: Any, derived: bool) -> dict[str, object]:
-    if derived:
-        refs = list(view.get_derived_string_code_refs(string, max_items=_MAX_STRING_REFS + 1))
-        location = string.location
-        location_out = (
-            None
-            if location is None
-            else {
-                "type": location.location_type.name,
-                "address": hex(location.address),
-                "length": location.length,
-            }
-        )
-    else:
-        refs = list(view.get_code_refs(string.start, max_items=_MAX_STRING_REFS + 1))
-        location_out = {
-            "type": string.type.name,
-            "address": hex(string.start),
-            "length": len(string),
-        }
+def _string_reference_entry(
+    value: str,
+    location: dict[str, object] | None,
+    derived: bool,
+    refs: list[ReferenceSource],
+) -> dict[str, object]:
     return {
-        "value": _truncate(str(string.value)),
-        "location": location_out,
+        "value": _truncate(value),
+        "location": location,
         "derived": derived,
         "refs": [
             {
@@ -73,6 +65,31 @@ def _string_reference_entry(view: Any, string: Any, derived: bool) -> dict[str, 
         ],
         "refs_truncated": len(refs) > _MAX_STRING_REFS,
     }
+
+
+def _detected_string_entry(view: BinaryView, string: StringReference) -> dict[str, object]:
+    refs = list(view.get_code_refs(string.start, max_items=_MAX_STRING_REFS + 1))
+    location: dict[str, object] = {
+        "type": string.type.name,
+        "address": hex(string.start),
+        "length": len(string),
+    }
+    return _string_reference_entry(str(string.value), location, False, refs)
+
+
+def _derived_string_entry(view: BinaryView, string: DerivedString) -> dict[str, object]:
+    refs = list(view.get_derived_string_code_refs(string, max_items=_MAX_STRING_REFS + 1))
+    string_location = string.location
+    location: dict[str, object] | None = (
+        None
+        if string_location is None
+        else {
+            "type": string_location.location_type.name,
+            "address": hex(string_location.address),
+            "length": string_location.length,
+        }
+    )
+    return _string_reference_entry(str(string.value), location, True, refs)
 
 
 @mcp.tool(read_only=True)
@@ -97,20 +114,20 @@ def rex_string_refs(
     offset = _validate_range("offset", offset, 0)
     matches_text = _text_matcher(pattern, regex, ignore_case)
 
-    def keep(string: Any) -> bool:
-        # str() on the wrapped value is total: the API layer falls back to charmap
-        # decoding when the bytes are not UTF-8.
+    def keep(string: StringReference | DerivedString) -> bool:
+        # str() is total: the API layer falls back to charmap decoding for non-UTF-8 bytes.
         return matches_text(str(string.value))
 
-    page, total, truncated = _paginate(
-        chain(
-            ((string, False) for string in bv.strings if keep(string)),
-            ((derived, True) for derived in bv.derived_strings if keep(derived)),
-        ),
-        offset,
-        limit,
-    )
-    strings = [_string_reference_entry(bv, string, derived) for string, derived in page]
+    def entry_builders() -> Iterator[Callable[[], dict[str, object]]]:
+        for string in bv.strings:
+            if keep(string):
+                yield partial(_detected_string_entry, bv, string)
+        for derived_string in bv.derived_strings:
+            if keep(derived_string):
+                yield partial(_derived_string_entry, bv, derived_string)
+
+    page, total, truncated = _paginate(entry_builders(), offset, limit)
+    strings = [build_entry() for build_entry in page]
     return {"total": total, "truncated": truncated, "strings": strings}
 
 
@@ -146,7 +163,7 @@ def rex_string_search(
     regex: bool = False,
     ignore_case: bool = False,
     section: str | None = None,
-    string_type: _STRING_TYPES | None = None,
+    string_type: StringType | None = None,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> dict[str, object]:
@@ -166,7 +183,7 @@ def rex_string_search(
     matches_text = _text_matcher(pattern, regex, ignore_case)
     bounds = _resolve_section(bv, section) if section is not None else None
 
-    def keep(string: Any) -> bool:
+    def keep(string: StringReference) -> bool:
         if string_type is not None and string.type.name != string_type:
             return False
         if bounds is not None and not bounds[0] <= string.start < bounds[1]:

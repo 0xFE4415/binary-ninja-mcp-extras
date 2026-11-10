@@ -4,6 +4,7 @@ from typing import override
 
 import pytest
 from helpers import (
+    NO_ALTERNATIVES,
     FakeDisasmFunction,
     FakeParsingToolCall,
     FakeToolError,
@@ -29,7 +30,7 @@ def test_disasm_at_returns_function_and_window() -> None:
     _, disasm = get_tool("rex_disasm_at")
     result = disasm(_call(view), 0x1104)
     assert result == {
-        "function": {"start": "0x1100", "name": "main"},
+        "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
         "instructions": [
             {"address": "0x1100", "text": "push rbp"},
             {"address": "0x1101", "text": "mov rbp, rsp"},
@@ -225,6 +226,24 @@ def test_disasm_at_truncates_names_and_text() -> None:
     assert result["instructions"][0]["text"].endswith("chars truncated]")
 
 
+@pytest.mark.parametrize(
+    ("regex", "function_filter", "parameter", "reason"),
+    [
+        ("[", "", "regex", "unterminated character set at position 0"),
+        ("x", "(", "function_filter", "missing ), unterminated subpattern at position 0"),
+        ("[", "(", "regex", "unterminated character set at position 0"),
+    ],
+)
+def test_hlil_grep_names_the_parameter_with_the_invalid_regex(
+    regex: str, function_filter: str, parameter: str, reason: str
+) -> None:
+    _, grep = get_tool("rex_hlil_grep")
+    with pytest.raises(FakeToolError) as exc:
+        grep(_call(FakeBinaryView()), regex, function_filter=function_filter)
+    assert exc.value.code == "invalid_regex"
+    assert exc.value.message == f"Invalid regular expression parameter '{parameter}': {reason}"
+
+
 def test_hlil_grep_matches_lines() -> None:
     view = _view_with_functions()
     _, grep = get_tool("rex_hlil_grep")
@@ -257,6 +276,7 @@ def test_hlil_grep_caps_lines_per_function() -> None:
         "scanned": 1,
         "truncated": False,
         "scan_incomplete": False,
+        "skipped_no_hlil": 0,
         "functions": [
             {
                 "start": "0x1000",
@@ -375,12 +395,17 @@ def test_hlil_grep_limits_and_errors() -> None:
         "scanned": 0,
         "truncated": False,
         "scan_incomplete": True,
+        "skipped_no_hlil": 0,
         "functions": [],
         "next_offset": 0,
     }
     with pytest.raises(FakeToolError) as exc:
         grep(_call(view), "(")
     assert exc.value.code == "invalid_regex"
+    assert exc.value.message == (
+        "Invalid regular expression parameter 'regex': missing ), unterminated subpattern"
+        " at position 0"
+    )
     # Out-of-range sizes are rejected with the mcp layer's argument-error convention.
     for kwargs, message in (
         ({"limit": -1}, "Invalid integer parameter 'limit': Must be at least 0"),
@@ -461,6 +486,7 @@ def test_hlil_grep_proves_truncation_past_non_matching_functions() -> None:
         "scanned": 3,
         "truncated": True,
         "scan_incomplete": False,
+        "skipped_no_hlil": 0,
         "functions": [{"start": "0x1000", "name": "a0", "lines": ["call ax"]}],
         "next_offset": 2,
     }
@@ -483,6 +509,7 @@ def test_hlil_grep_offset_and_next_offset() -> None:
         "scanned": 3,
         "truncated": True,
         "scan_incomplete": False,
+        "skipped_no_hlil": 0,
         "functions": [
             {"start": hex(0x1000 + index * 0x10), "name": f"a{index}", "lines": ["call ax"]}
             for index in (1, 2)
@@ -494,6 +521,7 @@ def test_hlil_grep_offset_and_next_offset() -> None:
         "scanned": 1,
         "truncated": False,
         "scan_incomplete": False,
+        "skipped_no_hlil": 0,
         "functions": [{"start": "0x1030", "name": "a3", "lines": ["call ax"]}],
         "next_offset": None,
     }
@@ -502,6 +530,7 @@ def test_hlil_grep_offset_and_next_offset() -> None:
         "scanned": 0,
         "truncated": False,
         "scan_incomplete": False,
+        "skipped_no_hlil": 0,
         "functions": [],
         "next_offset": None,
     }
@@ -535,12 +564,14 @@ def test_decompile_many_renders_each_requested_function() -> None:
             {
                 "start": "0x1100",
                 "name": "main",
+                **NO_ALTERNATIVES,
                 "lines": ["void main() {", "    return 0;", "}"],
                 "truncated": False,
             },
             {
                 "start": "0x2000",
                 "name": "handler",
+                **NO_ALTERNATIVES,
                 "lines": ["void handler() {", "    recv(fd, buf, n);", "    return 1;", "}"],
                 "truncated": False,
             },
@@ -560,6 +591,7 @@ def test_decompile_many_truncates_lines_and_echoes() -> None:
             {
                 "start": "0x2000",
                 "name": "handler",
+                **NO_ALTERNATIVES,
                 "lines": ["void handler() {", "    recv(fd, buf, n);"],
                 "truncated": True,
             }
@@ -582,7 +614,9 @@ def test_decompile_many_renders_unlifted_functions_as_empty() -> None:
     view = _decompile_view()
     _, decompile = get_tool("rex_decompile_many")
     assert decompile(FakeParsingToolCall(view), ["0x3000"]) == {
-        "functions": [{"start": "0x3000", "name": "sink", "lines": [], "truncated": False}]
+        "functions": [
+            {"start": "0x3000", "name": "sink", **NO_ALTERNATIVES, "lines": [], "truncated": False}
+        ]
     }
 
 
@@ -671,7 +705,7 @@ def test_quick_main_resolves_main_from_the_entry_function_symbol() -> None:
         "main": "0x1000",
         "note": None,
         "hint": None,
-        "function": {"start": "0x1000", "name": "main"},
+        "function": {"start": "0x1000", "name": "main", **NO_ALTERNATIVES},
         "lines": ["int main() {", "    return 0;", "}"],
         "truncated": False,
     }
@@ -831,7 +865,7 @@ def test_quick_main_falls_back_to_the_entry_function_and_says_so() -> None:
     assert result["note"] == (
         "no main symbol and no parsable __libc_start_main pointer in the entry function"
     )
-    assert result["function"] == {"start": "0x1000", "name": "_start"}
+    assert result["function"] == {"start": "0x1000", "name": "_start", **NO_ALTERNATIVES}
     assert result["lines"] == ["void _start() {", "    char *p = 0;", "}"]
 
 
@@ -900,7 +934,10 @@ def test_quick_main_fallback_notes_cover_the_unresolvable_entries() -> None:
     assert unterminated["note"] == expected_note
     # Entry never lifted: nothing to parse, HLIL comes back empty.
     unlifted = quick(FakeParsingToolCall(_quick_main_view(None)))
-    assert unlifted["note"] == "the entry function has no HLIL yet"
+    assert unlifted["note"] == (
+        "the entry function _start has no HLIL yet; "
+        "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry"
+    )
     assert unlifted["lines"] == []
     assert unlifted["truncated"] is False
 
@@ -959,7 +996,7 @@ def test_quick_main_resolves_an_unlifted_main_to_empty_lines() -> None:
         "main": "0x2000",
         "note": None,
         "hint": None,
-        "function": {"start": "0x2000", "name": "main"},
+        "function": {"start": "0x2000", "name": "main", **NO_ALTERNATIVES},
         "lines": [],
         "truncated": False,
     }
@@ -983,7 +1020,7 @@ def test_disasm_many_renders_one_window_per_address() -> None:
             {
                 "address": "0x1104",
                 "index": 0,
-                "function": {"start": "0x1100", "name": "main"},
+                "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
                 "instructions": [
                     {"address": "0x1104", "text": "sub rsp, 0x20"},
                     {"address": "0x1108", "text": "mov eax, 1"},
@@ -994,7 +1031,7 @@ def test_disasm_many_renders_one_window_per_address() -> None:
             {
                 "address": "0x2000",
                 "index": 1,
-                "function": {"start": "0x2000", "name": "handler"},
+                "function": {"start": "0x2000", "name": "handler", **NO_ALTERNATIVES},
                 "instructions": [
                     {"address": "0x2000", "text": "push rbp"},
                     {"address": "0x2001", "text": "ret"},

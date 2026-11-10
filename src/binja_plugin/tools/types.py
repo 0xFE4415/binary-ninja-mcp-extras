@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Literal
+import enum
+from typing import Literal, NamedTuple, TypedDict
 
 from binaryninja import Type, TypeLibrary, mcp
+from binaryninja.binaryview import BinaryView
+from binaryninja.enums import SymbolType, TypeClass
 
 from binja_plugin.tools import (
     _MAX_EXPORT_FILE_BYTES,
@@ -15,18 +18,75 @@ from binja_plugin.tools import (
     _validate_text,
 )
 
-# Type-library tools: one call moves at most this many type names, and each name is
-# capped before it reaches the type system — QualifiedNames have no core-side length
-# bound and persist in the type database or the .bntl.
+# QualifiedNames have no core-side length bound and persist, so each name is capped.
 _MAX_TYPE_LIBRARY_NAMES = 128
 _MAX_TYPE_NAME_CHARS = 255
-_EXPORT_KINDS = Literal["types", "objects"]
-# rex_struct_from_access echoes at most this many members; the struct is defined in full
-# regardless, the cap bounds only the echoed list.
+ExportKind = Literal["types", "objects"]
 _MAX_STRUCT_MEMBERS = 128
-# Source passed to Type.generate_auto_type_id, so the auto types this tool defines are
-# identifiable in the type system as originating here.
+# Marks the auto types this tool defines as originating here.
 _STRUCT_TYPE_SOURCE = "rex_struct"
+
+
+class _StructMember(TypedDict):
+    offset: int
+    name: str
+    type: str
+
+
+class _StructFromAccessResult(TypedDict):
+    name: str
+    registered: str
+    width: int
+    member_count: int
+    members: list[_StructMember]
+    truncated: bool
+
+
+class _ExportedType(TypedDict):
+    name: str
+    type: str
+
+
+class _ObjectAlternative(TypedDict):
+    address: str
+    type: str
+
+
+class _ExportedObject(TypedDict):
+    name: str
+    type: str
+    address: str
+    alternatives: list[_ObjectAlternative]
+
+
+class _UnresolvedName(TypedDict):
+    requested: str
+    reason: str
+
+
+class _ImportedType(TypedDict):
+    requested: str
+    resolved: str
+
+
+class _TypeLibraryExportResult(TypedDict):
+    path: str
+    bytes_written: int
+    library: str
+    exported: list[_ExportedType | _ExportedObject]
+    failed: list[_UnresolvedName]
+    applied: int
+    failed_count: int
+    total: int
+
+
+class _TypeLibraryImportResult(TypedDict):
+    library: str | None
+    imported: list[_ImportedType]
+    failed: list[_UnresolvedName]
+    applied: int
+    failed_count: int
+    total: int
 
 
 def _validate_type_names(names: list[str]) -> list[str]:
@@ -46,7 +106,7 @@ def _validate_type_names(names: list[str]) -> list[str]:
 
 
 @mcp.tool(destructive=True)
-def rex_struct_from_access(call: mcp.ToolCall, name: str) -> dict[str, object]:
+def rex_struct_from_access(call: mcp.ToolCall, name: str) -> _StructFromAccessResult:
     """Infer a struct from the offset accesses analysis has recorded; analyze the derefs first.
 
     :param name: Name for the new structure.
@@ -81,28 +141,66 @@ def rex_struct_from_access(call: mcp.ToolCall, name: str) -> dict[str, object]:
     }
 
 
+class _ObjectRank(enum.IntEnum):
+    FUNCTION = 0
+    DATA_VARIABLE = 1
+    VOID_DATA_VARIABLE = 2
+    IMPORT_SLOT = 3
+
+
+class _ObjectCandidate(NamedTuple):
+    rank: _ObjectRank
+    address: int
+    type: Type
+
+
+def _object_candidates(bv: BinaryView, name: str) -> list[_ObjectCandidate]:
+    candidates = [
+        _ObjectCandidate(_ObjectRank.FUNCTION, function.start, function.type)
+        for function in bv.get_functions_by_name(name)
+    ]
+    symbols = bv.get_symbols_by_name(name)
+    import_slot_addresses: set[int] = set()
+    for symbol in symbols:
+        if symbol.type == SymbolType.ImportAddressSymbol:
+            import_slot_addresses.add(symbol.address)
+    for address in {symbol.address for symbol in symbols}:
+        data_variable = bv.get_data_var_at(address)
+        if data_variable is None:
+            continue
+        if address in import_slot_addresses:
+            rank = _ObjectRank.IMPORT_SLOT
+        elif data_variable.type.type_class == TypeClass.VoidTypeClass:
+            rank = _ObjectRank.VOID_DATA_VARIABLE
+        else:
+            rank = _ObjectRank.DATA_VARIABLE
+        candidates.append(_ObjectCandidate(rank, address, data_variable.type))
+    # _ObjectCandidate's natural order is (rank, address); same-address candidates
+    # always differ in rank, so the third field never enters a comparison.
+    return sorted(candidates)
+
+
 @mcp.tool(destructive=True)
 def rex_type_library_export(
     call: mcp.ToolCall,
     library_name: str,
     names: list[str],
-    kind: _EXPORT_KINDS = "types",
-    filename: str = "",
-) -> dict[str, object]:
-    """Export recovered types or objects into a new .bntl in the export root.
+    filename: str,
+    kind: ExportKind = "types",
+) -> _TypeLibraryExportResult:
+    """Export types or objects into a new .bntl; object entries add address and alternatives.
 
     :param library_name: Name for the new type library.
-    :param names: 1 to 64 type names to export from the view.
-    :param kind: Export type definitions ("types") or named objects ("objects").
+    :param names: 1 to 128 type names to export from the view.
     :param filename: Plain file name inside the export root; overwritten if it exists.
+    :param kind: "types" or "objects" (function, else typed data, else void, else import slot).
     """
     bv = call.binary_view
     # The plugin's per-parameter *_too_large string-cap code family.
     _validate_text("library_name", library_name, _MAX_TYPE_NAME_CHARS, "library_name_too_large")
     _validate_type_names(names)
     _validate_export_path(filename)
-    # The schema-side Literal and the body-side check below must agree; widening to str
-    # keeps the body check statically reachable for direct handler invocation.
+    # Widened to str so the body check stays reachable by direct calls; match the Literal.
     requested: str = kind
     if requested not in ("types", "objects"):
         raise mcp.ToolError(
@@ -114,18 +212,39 @@ def rex_type_library_export(
             "no_arch", "the binary view has no architecture to create a type library for"
         )
     library = TypeLibrary.new(arch, library_name)
-    exported: list[str] = []
-    failed: list[dict[str, str]] = []
+    exported: list[_ExportedType | _ExportedObject] = []
+    failed: list[_UnresolvedName] = []
     for name in names:
-        type_obj = bv.get_type_by_name(name)
-        if type_obj is None:
-            failed.append({"requested": name, "reason": "no type with this name in the view"})
-            continue
         if requested == "types":
+            type_obj = bv.get_type_by_name(name)
+            if type_obj is None:
+                failed.append({"requested": name, "reason": "no type with this name in the view"})
+                continue
             bv.export_type_to_library(library, name, type_obj)
-        else:
-            bv.export_object_to_library(library, name, type_obj)
-        exported.append(name)
+            exported.append({"name": name, "type": _truncate(str(type_obj))})
+            continue
+        candidates = _object_candidates(bv, name)
+        if not candidates:
+            failed.append(
+                {
+                    "requested": name,
+                    "reason": "no function or data variable with this name in the view",
+                }
+            )
+            continue
+        chosen, *others = candidates
+        bv.export_object_to_library(library, name, chosen.type)
+        exported.append(
+            {
+                "name": name,
+                "type": _truncate(str(chosen.type)),
+                "address": hex(chosen.address),
+                "alternatives": [
+                    {"address": hex(other.address), "type": _truncate(str(other.type))}
+                    for other in others
+                ],
+            }
+        )
     if not library.finalize():
         raise mcp.ToolError(
             "finalize_failed", f"could not finalize type library '{_truncate(library_name)}'"
@@ -149,8 +268,7 @@ def rex_type_library_export(
         "library": _truncate(library_name),
         "exported": exported,
         "failed": failed,
-        # The uniform batch-summary keys (see rex_annotate_many): applied counts the
-        # exported names, failed_count the per-name failures echoed under ``failed``.
+        # applied counts exported entries, failed_count the per-name failures under ``failed``.
         "applied": len(exported),
         "failed_count": len(failed),
         "total": len(names),
@@ -158,11 +276,13 @@ def rex_type_library_export(
 
 
 @mcp.tool(destructive=True)
-def rex_type_library_import(call: mcp.ToolCall, path: str, names: list[str]) -> dict[str, object]:
+def rex_type_library_import(
+    call: mcp.ToolCall, path: str, names: list[str]
+) -> _TypeLibraryImportResult:
     """Import types from a .bntl into the current binary view.
 
     :param path: Filesystem path of the .bntl file to load.
-    :param names: 1 to 64 type names to import from the library.
+    :param names: 1 to 128 type names to import from the library.
     """
     bv = call.binary_view
     _validate_type_names(names)
@@ -172,8 +292,8 @@ def rex_type_library_import(call: mcp.ToolCall, path: str, names: list[str]) -> 
             "library_not_found", f"could not load a type library from '{_truncate(path)}'"
         )
     bv.add_type_library(library)
-    imported: list[dict[str, str]] = []
-    failed: list[dict[str, str]] = []
+    imported: list[_ImportedType] = []
+    failed: list[_UnresolvedName] = []
     for name in names:
         if library.get_named_type(name) is None:
             failed.append({"requested": name, "reason": "not provided by this type library"})
@@ -182,15 +302,13 @@ def rex_type_library_import(call: mcp.ToolCall, path: str, names: list[str]) -> 
         if type_obj is None:
             failed.append({"requested": name, "reason": "not provided by this type library"})
             continue
-        # The return value is a NamedTypeReference whose name is the deconflicted name
-        # the core actually inserted.
+        # The return value is a NamedTypeReference named by the deconflicted name the core inserted.
         imported.append({"requested": name, "resolved": str(type_obj.name)})
     return {
         "library": _truncate(library.name) if library.name is not None else None,
         "imported": imported,
         "failed": failed,
-        # The uniform batch-summary keys (see rex_annotate_many): applied counts the
-        # imported names, failed_count the per-name failures echoed under ``failed``.
+        # applied counts imported names, failed_count the per-name failures under ``failed``.
         "applied": len(imported),
         "failed_count": len(failed),
         "total": len(names),
