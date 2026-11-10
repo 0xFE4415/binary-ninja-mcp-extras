@@ -69,7 +69,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_function_constraints` | Branch comparisons against a constant, with the tested subject. |
 | `rex_mlil_uses` | Every read of each MLIL variable the core defines at an address, with its storage (register, stack offset, flag), type and definitions. |
 | `rex_parameter_variables` | Map a parameter to its storage, MLIL variables, and carrying copies. |
-| `rex_constant_find` | Find functions whose rendered instructions reference a constant value. |
+| `rex_constant_find` | Find functions whose disassembly lines hold a constant value, not raw bytes or IL. |
 | `rex_find_functions_by_pattern` | Map a byte pattern to the functions containing its matches. |
 | `rex_string_refs` | Code refs to detected strings, synthesized included; filters. |
 | `rex_xrefs_to` | Code and data references to an address. |
@@ -122,16 +122,16 @@ scanners. Read the destructive table before you let an agent run those tools.
 On a database with hundreds of thousands of functions, the whole-database searches
 stay bounded per call:
 
-- `rex_constant_find` reuses the core's linear-view constant search (the engine behind
-  Search > For Constant) instead of generating IL for every function. The search is a
-  bounded, core-side pass that stops once the requested window is filled; a value that
-  occurs rarely or never requires scanning the whole view. Each function echoes at most
-  6 distinct reference addresses and flags clipping via `addresses_truncated`, which is
-  true only when a further distinct address exists. The core's hits are
-  not address-ordered, and the order of functions in the page and the example addresses
-  chosen for each follow that hit order, not address order. While the result is
-  `truncated` a function's addresses are a lower bound even when `addresses_truncated`
-  is false.
+- `rex_constant_find` reuses the core's linear-view constant search over disassembly lines
+  (the engine behind Search > For Constant) instead of generating IL for every function.
+  The search is a bounded, core-side pass that stops once the requested window is filled;
+  a value that occurs rarely or never requires scanning the whole view. Each function
+  echoes at most 6 distinct reference addresses and flags clipping via
+  `addresses_truncated`, which is true only when a further distinct address exists. The
+  core's hits are not address-ordered, and the order of functions in the page and the
+  example addresses chosen for each follow that hit order, not address order. While the
+  result is `truncated` a function's addresses are a lower bound even when
+  `addresses_truncated` is false.
 - `rex_hlil_grep` renders at most `max_functions` functions per call. The first
   render of a function's HLIL costs tens of milliseconds, so on a large database,
   page through the `next_offset` cursor. `truncated` proves a matching function exists

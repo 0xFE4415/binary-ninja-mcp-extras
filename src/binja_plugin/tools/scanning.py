@@ -95,7 +95,7 @@ def rex_constant_find(
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> _ConstantFindResult:
-    """Find functions using an immediate constant (a magic value) in rendered IL, not raw bytes.
+    """Find functions using an immediate constant (a magic value) in disassembly, not raw bytes.
 
     :param value: Immediate value to search for, compared against displayed constants.
     :param function_filter: Case-insensitive regex matched against function names.
