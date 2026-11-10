@@ -184,6 +184,8 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   It stages every item, including each row's rendered `value`, before it informs any
   value, so an unexpected error while staging (a value that cannot render) raises for the
   whole call with nothing informed; expected item errors stay per-item rows.
+  `rex_uidf_set` renders its `value` before it informs the variable the same way, so a value
+  that cannot render raises with nothing informed.
 
 ### Response fields
 

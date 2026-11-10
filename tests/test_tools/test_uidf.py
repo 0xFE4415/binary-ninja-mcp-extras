@@ -388,6 +388,32 @@ def test_uidf_set_many_stages_every_description_before_it_mutates(
     assert view.update_analysis_calls == 0
 
 
+def test_uidf_set_renders_the_description_before_it_informs() -> None:
+    view, main = _special_value_view()
+    _, uidf_set = get_tool("rex_uidf_set")
+    with pytest.raises(RuntimeError, match=r"^no str$"):
+        uidf_set(_call(view), 0x1100, "rax_1", "boom")
+    assert main.set_user_var_value_calls == []
+    assert main.user_var_values == {}
+    assert view.update_analysis_calls == 0
+
+
+def test_uidf_set_renders_the_value_exactly_once() -> None:
+    _CountingValue.renders = 0
+    view, main = _special_value_view()
+    _, uidf_set = get_tool("rex_uidf_set")
+    result = uidf_set(_call(view), 0x1100, "rax_1", "count")
+    assert result["value"] == {"state": "ConstantValue", "rendered": "<counted>"}
+    assert _CountingValue.renders == 1
+    main.set_user_var_value_error = Exception("core refused")
+    _CountingValue.renders = 0
+    with pytest.raises(FakeToolError) as error:
+        uidf_set(_call(view), 0x1100, "rax_1", "count")
+    assert error.value.code == "set_failed"
+    assert error.value.message == "could not inform 'rax_1': core refused"
+    assert _CountingValue.renders == 1
+
+
 def test_uidf_set_many_renders_each_value_exactly_once() -> None:
     _CountingValue.renders = 0
     view, main = _special_value_view()

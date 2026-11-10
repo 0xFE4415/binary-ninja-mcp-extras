@@ -398,6 +398,7 @@ def rex_uidf_set(
     target = resolution.function
     site_variable, site = _select_definition_site(target, variable, def_address)
     parsed = _parse_uidf_value(bv, value, state, site)
+    description = _describe_value(parsed)
     try:
         target.set_user_var_value(site_variable, site.address, parsed, after=True)
     except Exception as error:
@@ -411,7 +412,7 @@ def rex_uidf_set(
         "function": resolution.entry,
         "variable": _truncate(variable),
         "definition_site": hex(site.address),
-        "value": _describe_value(parsed),
+        "value": description,
         "analysis_complete": analysis_complete,
         "lines": lines,
         "truncated": truncated,
