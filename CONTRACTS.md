@@ -345,11 +345,15 @@ Usage strategies that do not fit a tool's one-line description.
   says when each group applies, so read it before choosing a tool, then open one
   category for descriptions.
 - `rex_constant_find` matches constants in the core's linear-view disassembly lines (the
-  engine behind Search > For Constant), never IL and never raw bytes: any token whose
-  value equals `value` matches, so `value` 0 also matches lines whose zero-valued tokens
-  are not constants, such as function headers and `{ Continuation of function ... }`
-  annotations. Use it to enumerate every function touching a magic value; when the value
-  lives in data rather than code, use `rex_data_find` or `rx_multi_find` instead.
+  engine behind Search > For Constant), never IL and never raw bytes. A hit counts only on
+  an instruction line, one whose tokens include an instruction token. The core also reports
+  function header lines and the `{ Continuation of function ... }`, `{ Falls through into
+  ... }`, and `{Case ...}` annotation lines; those never count, so `value` 0 no longer
+  matches every function. The core still matches any zero-valued token on an instruction
+  line, so `value` 0 can hit an instruction with no zero operand that carries an annotation
+  such as `{0x3}`; check the disassembly. Use it to enumerate every function touching a
+  magic value; when the value lives in data rather than code, use `rex_data_find` or
+  `rx_multi_find` instead.
 - `rex_call_paths` with `direction=callers` from a sink answers "who can reach this"
   without hand-walking xrefs; `direction=callees` from a source answers "what can this
   reach". Both directions are bounded by `max_depth` and `max_paths`.

@@ -67,11 +67,88 @@ class RenderableText:
         return self._text
 
 
+class FakeInstructionTextTokenType(enum.IntEnum):
+    """Mirrors the binaryninja.enums.InstructionTextTokenType members the tools and tests use."""
+
+    TextToken = 0
+    InstructionToken = 1
+    OperandSeparatorToken = 2
+    RegisterToken = 3
+    IntegerToken = 4
+    PossibleAddressToken = 5
+    AnnotationToken = 9
+    CodeSymbolToken = 64
+    AddressSeparatorToken = 72
+
+
+class FakeLineToken:
+    """Mirrors an InstructionTextToken: its type and the text it renders."""
+
+    def __init__(self, type: FakeInstructionTextTokenType, text: str = "") -> None:
+        self.type = type
+        self.text = text
+
+
+class FakeLineContents:
+    """Mirrors the DisassemblyTextLine of a LinearDisassemblyLine: its tokens."""
+
+    def __init__(self, tokens: tuple[FakeLineToken, ...]) -> None:
+        self.tokens = list(tokens)
+
+
+_TOKEN_TYPE: Final = FakeInstructionTextTokenType
+
+# The token shapes find_all_constant was observed to yield on a live x86_64 ELF.
+INSTRUCTION_LINE: Final = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "cmp"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "eax"),
+    FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", "),
+    FakeLineToken(_TOKEN_TYPE.IntegerToken, "0x0"),
+)
+FUNCTION_HEADER_LINE: Final = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "  "),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "int64_t"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, " "),
+    FakeLineToken(_TOKEN_TYPE.CodeSymbolToken, "sub_40a020"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "()"),
+)
+CONTINUATION_LINE: Final = (
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{ Continuation of function "),
+    FakeLineToken(_TOKEN_TYPE.CodeSymbolToken, "sub_412c10"),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, " }"),
+)
+FALLS_THROUGH_LINE: Final = (
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{ Falls through into "),
+    FakeLineToken(_TOKEN_TYPE.CodeSymbolToken, "_fini"),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, " }"),
+)
+CASE_LINE: Final = (FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{Case 0x0}"),)
+ANNOTATED_INSTRUCTION_LINE: Final = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "mul"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "rdx"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "  "),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{0x3}"),
+)
+
+FakeConstantReference = (
+    tuple[int, int, "FakeFunction | None"]
+    | tuple[int, int, "FakeFunction | None", tuple[FakeLineToken, ...]]
+)
+
+
 class FakeLinearDisassemblyLine:
     """Mirrors the LinearDisassemblyLine yielded by BinaryView.find_all_constant."""
 
-    def __init__(self, function: FakeFunction | None) -> None:
+    def __init__(
+        self, function: FakeFunction | None, tokens: tuple[FakeLineToken, ...] = INSTRUCTION_LINE
+    ) -> None:
         self.function = function
+        self.contents = FakeLineContents(tokens)
 
 
 class FakeSymbolType(enum.IntEnum):
@@ -417,7 +494,7 @@ class FakeBinaryView:
         memory: dict[int, bytes] | None = None,
         start: int = 0,
         end: int = 0x10000,
-        constant_references: list[tuple[int, int, FakeFunction | None]] | None = None,
+        constant_references: list[FakeConstantReference] | None = None,
         symbols: list[FakeSymbol] | None = None,
         entry_point: int = 0,
         analysis_progress_sequence: list[FakeAnalysisProgress] | None = None,
@@ -534,14 +611,14 @@ class FakeBinaryView:
     ) -> Iterator[tuple[int, FakeLinearDisassemblyLine]]:
         """Yield (address, line) matches in the order listed, aborting when progress declines."""
         matches = [
-            (address, function)
-            for matched_value, address, function in self.constant_references
-            if matched_value == value and start <= address < end
+            (reference[1], FakeLinearDisassemblyLine(reference[2], *reference[3:]))
+            for reference in self.constant_references
+            if reference[0] == value and start <= reference[1] < end
         ]
         try:
-            for address, function in matches:
+            for address, line in matches:
                 self.constant_scan_yields += 1
-                yield address, FakeLinearDisassemblyLine(function)
+                yield address, line
         finally:
             # The core keeps scanning — and polling progress — after the caller stops
             # consuming matches, so model the shutdown poll even on an early break.

@@ -3,7 +3,7 @@ from typing import Any
 
 from binaryninja.architecture import Architecture
 from binaryninja.basicblock import BasicBlock
-from binaryninja.enums import AnalysisSkipReason
+from binaryninja.enums import AnalysisSkipReason, InstructionTextTokenType
 from binaryninja.highlevelil import HighLevelILFunction
 from binaryninja.mediumlevelil import MediumLevelILFunction
 from binaryninja.types import Type, TypeBuilder
@@ -14,6 +14,8 @@ class DisassemblySettings: ...
 
 
 class InstructionTextToken:
+    type: InstructionTextTokenType
+
     def __str__(self) -> str: ...
 
 

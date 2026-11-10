@@ -10,7 +10,7 @@ from binaryninja.enums import (
     SymbolType,
 )
 from binaryninja.filemetadata import FileMetadata
-from binaryninja.function import Function
+from binaryninja.function import DisassemblyTextLine, Function
 from binaryninja.types import NamedTypeReferenceType, QualifiedName, StructureType, Type
 from binaryninja.variable import PossibleValueSet
 
@@ -19,6 +19,7 @@ class LinearDisassemblyLine:
     """One rendered line of the linear view; function is None for non-function lines."""
 
     function: Function | None
+    contents: DisassemblyTextLine
 
 
 class Section:

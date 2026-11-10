@@ -24,6 +24,7 @@ from helpers_view import (
     FakeBasicBlock,
     FakeBinaryView,
     FakeFunction,
+    FakeInstructionTextTokenType,
     FakeSymbolType,
     FakeType,
     FakeTypeClass,
@@ -286,6 +287,7 @@ def install_fake_binaryninja() -> None:
     setattr(enums_module, "AnalysisSkipReason", FakeAnalysisSkipReason)
     setattr(enums_module, "RegisterValueType", FakeRegisterValueType)
     setattr(enums_module, "TypeClass", FakeTypeClass)
+    setattr(enums_module, "InstructionTextTokenType", FakeInstructionTextTokenType)
     setattr(enums_module, "SymbolType", FakeSymbolType)
     setattr(enums_module, "VariableSourceType", FakeVariableSourceType)
     setattr(

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, Final, TypedDict
 
 from binaryninja import mcp
+from binaryninja.enums import InstructionTextTokenType
 
 from binja_plugin.hexpattern import HexPatternError, compile_hex_pattern
 from binja_plugin.tools import (
@@ -117,6 +118,9 @@ def rex_constant_find(
     for address, line in bv.find_all_constant(bv.start, bv.end, value, progress_func=keep_scanning):
         function = line.function
         if function is None:
+            continue
+        tokens = line.contents.tokens
+        if not any(token.type == InstructionTextTokenType.InstructionToken for token in tokens):
             continue
         if name_matcher is not None and name_matcher.search(function.name) is None:
             continue

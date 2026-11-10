@@ -69,7 +69,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_function_constraints` | Branch comparisons against a constant, with the tested subject. |
 | `rex_mlil_uses` | Every read of each MLIL variable the core defines at an address; reports the `function`, the `definition_site`, and per variable its `storage` (register, stack offset, flag), `type`, `definitions` (a flat list of addresses) and paged `uses`. |
 | `rex_parameter_variables` | Map a parameter to its storage, MLIL variables, and carrying copies. |
-| `rex_constant_find` | Find functions whose disassembly lines hold a constant value, not raw bytes or IL. |
+| `rex_constant_find` | Find functions whose disassembly instruction lines hold a constant value, not raw bytes or IL. |
 | `rex_find_functions_by_pattern` | Map a byte pattern to the functions containing its matches. |
 | `rex_string_refs` | Code refs to detected strings, synthesized included; filters. |
 | `rex_xrefs_to` | Code and data references to an address. |
@@ -141,7 +141,9 @@ stay bounded per call:
   core's hits are not address-ordered, and the order of functions in the page and the
   example addresses chosen for each follow that hit order, not address order. While the
   result is `truncated` a function's addresses are a lower bound even when
-  `addresses_truncated` is false.
+  `addresses_truncated` is false. Only instruction lines count: function
+  header and annotation lines the core also reports are dropped, so `value` 0 no longer
+  matches every function.
 - `rex_hlil_grep` renders at most `max_functions` functions per call. The first
   render of a function's HLIL costs tens of milliseconds, so on a large database,
   page through the `next_offset` cursor. `truncated` proves a matching function exists

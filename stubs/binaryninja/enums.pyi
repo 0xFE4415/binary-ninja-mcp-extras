@@ -13,6 +13,18 @@ class LowLevelILOperation(IntEnum):
     LLIL_TAILCALL = 58
 
 
+class InstructionTextTokenType(IntEnum):
+    TextToken = 0
+    InstructionToken = 1
+    OperandSeparatorToken = 2
+    RegisterToken = 3
+    IntegerToken = 4
+    PossibleAddressToken = 5
+    AnnotationToken = 9
+    CodeSymbolToken = 64
+    AddressSeparatorToken = 72
+
+
 class AnalysisState(IntEnum):
     InitialState = 0
     HoldState = 1
