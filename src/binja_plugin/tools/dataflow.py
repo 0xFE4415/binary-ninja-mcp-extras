@@ -337,7 +337,7 @@ def _is_copy_of_parameter(instruction: Any, parameter: str) -> bool:
     source = _strip_extension(instruction.src)
     if _operation(source) != "MLIL_VAR":
         return False
-    return str(source.src.name) == parameter
+    return bool(source.src.name == parameter)
 
 
 def _parameter_carriers(
