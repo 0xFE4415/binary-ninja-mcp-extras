@@ -12,38 +12,76 @@ import itertools
 import re
 import traceback
 from collections import OrderedDict
-from typing import Annotated
+from typing import Annotated, Final, NamedTuple, TypedDict
 
 import binaryninja
 from binaryninja import mcp
 
 from binja_plugin.tools import _truncate, _truncate_with_flag, _validate_range
 
-_MAX_EVAL_STDOUT_CHARS = 65536
-_MAX_EVAL_RESULT_CHARS = 16384
-_MAX_EVAL_LOCATION_CHARS = 200
-_EVAL_FILENAME = "<rex_eval_python>"
+_MAX_EVAL_STDOUT_CHARS: Final = 65536
+_MAX_EVAL_RESULT_CHARS: Final = 16384
+_MAX_EVAL_LOCATION_CHARS: Final = 200
+_EVAL_FILENAME: Final = "<rex_eval_python>"
 
 # Spilled oversized echoes: when rex_eval_python's stdout or result is clipped, the full
 # text is kept in process memory (never the view's database) so rex_eval_result can page
 # it back. The store keeps the most recent few spills and dies with the server process;
 # a spill larger than the per-spill cap is not kept at all, and the clipped echo is then
 # the only copy.
-_MAX_EVAL_SPILLS = 8
-_MAX_EVAL_SPILL_CHARS = 4 * 1024 * 1024
-_MAX_EVAL_RESULT_PAGE_CHARS = 65536
-_EVAL_SPILLS: OrderedDict[str, str] = OrderedDict()
-_SPILL_SEQUENCE = itertools.count()
+_MAX_EVAL_SPILLS: Final = 8
+_MAX_EVAL_SPILL_CHARS: Final = 4 * 1024 * 1024
+_MAX_EVAL_RESULT_PAGE_CHARS: Final = 65536
+_EVAL_SPILLS: Final[OrderedDict[str, str]] = OrderedDict()
+_SPILL_SEQUENCE: Final = itertools.count()
 
 
-def _spill_echo(text: str, cap: int, kind: str) -> tuple[str, bool, str | None, int]:
+class _Echo(NamedTuple):
+    text: str
+    truncated: bool
+    spill_key: str | None
+    total_length: int
+
+
+class _ErrorLocation(TypedDict):
+    line: int
+    text: str
+
+
+class _EvalPythonResult(TypedDict):
+    stdout: str
+    stdout_truncated: bool
+    stdout_key: str | None
+    stdout_length: int
+    result: str | None
+    result_truncated: bool
+    result_key: str | None
+    result_length: int
+    error: str | None
+    error_truncated: bool
+    error_location: _ErrorLocation | None
+
+
+class _EvalPage(TypedDict):
+    key: str
+    value: str
+    total: int
+    truncated: bool
+    next_offset: int | None
+
+
+class _MemoryWriteResult(TypedDict):
+    address: str
+    bytes_written: int
+
+
+def _spill_echo(text: str, cap: int, kind: str) -> _Echo:
     """Echo ``text`` clipped to ``cap`` characters, spilling the full text when clipped.
 
-    Returns (echo, truncated, spill_key, total_length). The spill key is set only when
-    the full text is retrievable through rex_eval_result.
+    The spill key is set only when the full text is retrievable through rex_eval_result.
     """
     if len(text) <= cap:
-        return text, False, None, len(text)
+        return _Echo(text, False, None, len(text))
     echo = text[:cap] + f"... [{len(text) - cap} chars truncated]"
     spill_complete = len(text) <= _MAX_EVAL_SPILL_CHARS
     key = f"{kind}-{next(_SPILL_SEQUENCE)}" if spill_complete else None
@@ -53,7 +91,7 @@ def _spill_echo(text: str, cap: int, kind: str) -> tuple[str, bool, str | None, 
         _EVAL_SPILLS[key] = text
         while len(_EVAL_SPILLS) > _MAX_EVAL_SPILLS:
             del _EVAL_SPILLS[next(iter(_EVAL_SPILLS))]
-    return echo, True, key, len(text)
+    return _Echo(echo, True, key, len(text))
 
 
 def _describe_error(error: BaseException) -> str:
@@ -65,7 +103,7 @@ def _describe_error(error: BaseException) -> str:
     return f"{kind}: {detail}" if detail else kind
 
 
-def _error_location(error: BaseException, code: str) -> dict[str, object] | None:
+def _error_location(error: BaseException, code: str) -> _ErrorLocation | None:
     """The innermost line of the caller's own code on the error's traceback, or None."""
     lines = [
         lineno
@@ -79,7 +117,7 @@ def _error_location(error: BaseException, code: str) -> dict[str, object] | None
 
 
 @mcp.tool(destructive=True)
-def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
+def rex_eval_python(call: mcp.ToolCall, code: str) -> _EvalPythonResult:
     """Run Binary Ninja Python; globals: bv, bn, binaryninja, call.
 
     :param code: Python source; assign to ``result`` to return a value.
@@ -93,7 +131,7 @@ def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
     buffer = io.StringIO()
     raw_result: str | None = None
     error_message: str | None = None
-    error_location: dict[str, object] | None = None
+    error_location: _ErrorLocation | None = None
     try:
         with contextlib.redirect_stdout(buffer):
             exec(compile(code, _EVAL_FILENAME, "exec"), namespace)
@@ -139,7 +177,7 @@ def rex_eval_result(
     key: str,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
     limit: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_EVAL_RESULT_PAGE_CHARS)] = 65536,
-) -> dict[str, object]:
+) -> _EvalPage:
     """Read a spilled rex_eval_python stdout or result in pages.
 
     :param key: Spill key reported by rex_eval_python, e.g. ``result-0``.
@@ -163,7 +201,7 @@ def rex_eval_result(
 
 
 @mcp.tool(destructive=True)
-def rex_memory_write(call: mcp.ToolCall, addr: mcp.Address, hex_data: str) -> dict[str, object]:
+def rex_memory_write(call: mcp.ToolCall, addr: mcp.Address, hex_data: str) -> _MemoryWriteResult:
     """Overwrite bytes in the binary view with a hex byte string.
 
     :param addr: Address to write to.
