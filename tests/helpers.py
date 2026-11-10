@@ -23,7 +23,9 @@ from helpers_view import (
     FakeBasicBlock,
     FakeBinaryView,
     FakeFunction,
+    FakeSymbolType,
     FakeType,
+    FakeTypeClass,
     FakeTypeLibrary,
     RenderableText,
 )
@@ -279,6 +281,8 @@ def install_fake_binaryninja() -> None:
     enums_module = types.ModuleType("binaryninja.enums")
     setattr(enums_module, "AnalysisState", FakeAnalysisState)
     setattr(enums_module, "RegisterValueType", FakeRegisterValueType)
+    setattr(enums_module, "TypeClass", FakeTypeClass)
+    setattr(enums_module, "SymbolType", FakeSymbolType)
     setattr(
         enums_module,
         "LowLevelILOperation",

@@ -7,6 +7,7 @@ from binaryninja.enums import (
     DerivedStringLocationType,
     RegisterValueType,
     RelocationType,
+    SymbolType,
 )
 from binaryninja.filemetadata import FileMetadata
 from binaryninja.function import Function
@@ -93,6 +94,7 @@ class RelocationInfo:
 class CoreSymbol:
     full_name: str
     address: int
+    type: SymbolType
 
 
 class Relocation:

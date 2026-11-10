@@ -57,3 +57,32 @@ class RelocationType(IntEnum):
     StandardRelocationType = 3
     IgnoredRelocation = 4
     UnhandledRelocation = 5
+
+
+class TypeClass(IntEnum):
+    VoidTypeClass = 0
+    BoolTypeClass = 1
+    IntegerTypeClass = 2
+    FloatTypeClass = 3
+    StructureTypeClass = 4
+    EnumerationTypeClass = 5
+    PointerTypeClass = 6
+    ArrayTypeClass = 7
+    FunctionTypeClass = 8
+    VarArgsTypeClass = 9
+    ValueTypeClass = 10
+    NamedTypeReferenceClass = 11
+    WideCharTypeClass = 12
+    FragmentTypeClass = 13
+
+
+class SymbolType(IntEnum):
+    FunctionSymbol = 0
+    ImportAddressSymbol = 1
+    ImportedFunctionSymbol = 2
+    DataSymbol = 3
+    ImportedDataSymbol = 4
+    ExternalSymbol = 5
+    LibraryFunctionSymbol = 6
+    SymbolicFunctionSymbol = 7
+    LocalLabelSymbol = 8

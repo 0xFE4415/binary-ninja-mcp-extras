@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Final, Literal, TypedDict
+import enum
+from typing import Final, Literal, NamedTuple, TypedDict
 
 from binaryninja import Type, TypeLibrary, mcp
 from binaryninja.binaryview import BinaryView
+from binaryninja.enums import SymbolType, TypeClass
 
 from binja_plugin.tools import (
     _MAX_EXPORT_FILE_BYTES,
@@ -50,6 +52,18 @@ class _ExportedType(TypedDict):
     type: str
 
 
+class _ObjectAlternative(TypedDict):
+    address: str
+    type: str
+
+
+class _ExportedObject(TypedDict):
+    name: str
+    type: str
+    address: str
+    alternatives: list[_ObjectAlternative]
+
+
 class _UnresolvedName(TypedDict):
     requested: str
     reason: str
@@ -64,7 +78,7 @@ class _TypeLibraryExportResult(TypedDict):
     path: str
     bytes_written: int
     library: str
-    exported: list[_ExportedType]
+    exported: list[_ExportedType | _ExportedObject]
     failed: list[_UnresolvedName]
     applied: int
     failed_count: int
@@ -132,15 +146,40 @@ def rex_struct_from_access(call: mcp.ToolCall, name: str) -> _StructFromAccessRe
     }
 
 
-def _object_type_by_name(bv: BinaryView, name: str) -> Type | None:
-    functions = bv.get_functions_by_name(name)
-    if functions:
-        return functions[0].type
-    for symbol in bv.get_symbols_by_name(name):
-        data_variable = bv.get_data_var_at(symbol.address)
-        if data_variable is not None:
-            return data_variable.type
-    return None
+class _ObjectRank(enum.IntEnum):
+    FUNCTION = 0
+    DATA_VARIABLE = 1
+    VOID_DATA_VARIABLE = 2
+    IMPORT_SLOT = 3
+
+
+class _ObjectCandidate(NamedTuple):
+    rank: _ObjectRank
+    address: int
+    type: Type
+
+
+def _object_candidates(bv: BinaryView, name: str) -> list[_ObjectCandidate]:
+    candidates = [
+        _ObjectCandidate(_ObjectRank.FUNCTION, function.start, function.type)
+        for function in bv.get_functions_by_name(name)
+    ]
+    symbols = bv.get_symbols_by_name(name)
+    import_slot_addresses = {
+        symbol.address for symbol in symbols if symbol.type == SymbolType.ImportAddressSymbol
+    }
+    for address in {symbol.address for symbol in symbols}:
+        data_variable = bv.get_data_var_at(address)
+        if data_variable is None:
+            continue
+        if address in import_slot_addresses:
+            rank = _ObjectRank.IMPORT_SLOT
+        elif data_variable.type.type_class == TypeClass.VoidTypeClass:
+            rank = _ObjectRank.VOID_DATA_VARIABLE
+        else:
+            rank = _ObjectRank.DATA_VARIABLE
+        candidates.append(_ObjectCandidate(rank, address, data_variable.type))
+    return sorted(candidates, key=lambda candidate: (candidate.rank, candidate.address))
 
 
 @mcp.tool(destructive=True)
@@ -151,11 +190,11 @@ def rex_type_library_export(
     kind: ExportKind = "types",
     filename: str = "",
 ) -> _TypeLibraryExportResult:
-    """Export types or objects into a new .bntl; each exported entry reports its rendered type.
+    """Export types or objects into a new .bntl; object entries add address and alternatives.
 
     :param library_name: Name for the new type library.
     :param names: 1 to 128 type names to export from the view.
-    :param kind: "types" or "objects" (functions, data variables; void-typed ones export as void).
+    :param kind: "types" or "objects" (function, else typed data, else void, else import slot).
     :param filename: Plain file name inside the export root; overwritten if it exists.
     """
     bv = call.binary_view
@@ -176,23 +215,39 @@ def rex_type_library_export(
             "no_arch", "the binary view has no architecture to create a type library for"
         )
     library = TypeLibrary.new(arch, library_name)
-    exported: list[_ExportedType] = []
+    exported: list[_ExportedType | _ExportedObject] = []
     failed: list[_UnresolvedName] = []
     for name in names:
         if requested == "types":
             type_obj = bv.get_type_by_name(name)
-            missing_reason = "no type with this name in the view"
-        else:
-            type_obj = _object_type_by_name(bv, name)
-            missing_reason = "no function or data variable with this name in the view"
-        if type_obj is None:
-            failed.append({"requested": name, "reason": missing_reason})
-            continue
-        if requested == "types":
+            if type_obj is None:
+                failed.append({"requested": name, "reason": "no type with this name in the view"})
+                continue
             bv.export_type_to_library(library, name, type_obj)
-        else:
-            bv.export_object_to_library(library, name, type_obj)
-        exported.append({"name": name, "type": _truncate(str(type_obj))})
+            exported.append({"name": name, "type": _truncate(str(type_obj))})
+            continue
+        candidates = _object_candidates(bv, name)
+        if not candidates:
+            failed.append(
+                {
+                    "requested": name,
+                    "reason": "no function or data variable with this name in the view",
+                }
+            )
+            continue
+        chosen, *others = candidates
+        bv.export_object_to_library(library, name, chosen.type)
+        exported.append(
+            {
+                "name": name,
+                "type": _truncate(str(chosen.type)),
+                "address": hex(chosen.address),
+                "alternatives": [
+                    {"address": hex(other.address), "type": _truncate(str(other.type))}
+                    for other in others
+                ],
+            }
+        )
     if not library.finalize():
         raise mcp.ToolError(
             "finalize_failed", f"could not finalize type library '{_truncate(library_name)}'"

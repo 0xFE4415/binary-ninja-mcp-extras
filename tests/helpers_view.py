@@ -74,16 +74,29 @@ class FakeLinearDisassemblyLine:
         self.function = function
 
 
-class FakeSymbol:
-    """Mirrors the CoreSymbol fields rex_export_symbols reads.
+class FakeSymbolType(enum.IntEnum):
+    """Mirrors binaryninja.enums.SymbolType."""
 
-    ``type`` is a namespace with ``name`` like the other fakes, mirroring the enum
-    member the real core hands back.
+    FunctionSymbol = 0
+    ImportAddressSymbol = 1
+    ImportedFunctionSymbol = 2
+    DataSymbol = 3
+    ImportedDataSymbol = 4
+    ExternalSymbol = 5
+    LibraryFunctionSymbol = 6
+    SymbolicFunctionSymbol = 7
+    LocalLabelSymbol = 8
+
+
+class FakeSymbol:
+    """Mirrors the CoreSymbol fields rex_export_symbols and the object export read.
+
+    ``type`` is the SymbolType member the real core hands back, looked up by name.
     """
 
     def __init__(self, address: int, type_name: str, name: str) -> None:
         self.address = address
-        self.type = types.SimpleNamespace(name=type_name)
+        self.type = FakeSymbolType[type_name]
         self.name = name
 
 
@@ -821,15 +834,41 @@ class FakeArchitecture:
         self.name = name
 
 
+class FakeTypeClass(enum.IntEnum):
+    """Mirrors binaryninja.enums.TypeClass."""
+
+    VoidTypeClass = 0
+    BoolTypeClass = 1
+    IntegerTypeClass = 2
+    FloatTypeClass = 3
+    StructureTypeClass = 4
+    EnumerationTypeClass = 5
+    PointerTypeClass = 6
+    ArrayTypeClass = 7
+    FunctionTypeClass = 8
+    VarArgsTypeClass = 9
+    ValueTypeClass = 10
+    NamedTypeReferenceClass = 11
+    WideCharTypeClass = 12
+    FragmentTypeClass = 13
+
+
 class FakeType:
     """Mirrors the Type surface the tools touch: str() is the rendered type string, and
     ``name`` models the deconflicted name of a NamedTypeReference (the documented return
     contract of import_library_type)."""
 
-    def __init__(self, name: str, type_string: str = "", width: int = 0) -> None:
+    def __init__(
+        self,
+        name: str,
+        type_string: str = "",
+        width: int = 0,
+        type_class: FakeTypeClass = FakeTypeClass.IntegerTypeClass,
+    ) -> None:
         self.name = name
         self._type_string = type_string
         self._width = width
+        self.type_class = type_class
 
     @override
     def __str__(self) -> str:

@@ -18,6 +18,7 @@ from helpers_view import (
     FakeStructureType,
     FakeSymbol,
     FakeType,
+    FakeTypeClass,
     FakeTypeLibrary,
 )
 
@@ -232,7 +233,14 @@ def test_type_library_export_objects_exports_a_function_by_its_own_type(
     )
     _, export = get_tool("rex_type_library_export")
     result = export(_call(view), "recovered", ["open"], kind="objects", filename="objs.bntl")
-    assert result["exported"] == [{"name": "open", "type": "int open(char *path, int flags)"}]
+    assert result["exported"] == [
+        {
+            "name": "open",
+            "type": "int open(char *path, int flags)",
+            "address": "0x1000",
+            "alternatives": [],
+        }
+    ]
     assert result["failed"] == []
     assert view.exported_objects == [(view.exported_objects[0][0], "open", function.type)]
     assert view.exported_types == []
@@ -250,7 +258,9 @@ def test_type_library_export_objects_exports_a_data_variable_by_its_own_type(
     view.data_variable_types = {0x4000: table_type}
     _, export = get_tool("rex_type_library_export")
     result = export(_call(view), "recovered", ["g_table"], kind="objects", filename="objs.bntl")
-    assert result["exported"] == [{"name": "g_table", "type": "int32_t[4]"}]
+    assert result["exported"] == [
+        {"name": "g_table", "type": "int32_t[4]", "address": "0x4000", "alternatives": []}
+    ]
     assert view.exported_objects == [(view.exported_objects[0][0], "g_table", table_type)]
 
 
@@ -263,7 +273,7 @@ def _void_object_view() -> FakeBinaryView:
         ],
     )
     view.data_variable_types = {
-        0x40031C: FakeType("void", "void"),
+        0x40031C: FakeType("void", "void", type_class=FakeTypeClass.VoidTypeClass),
         0x4000: FakeType("table_t", "int32_t[4]"),
     }
     return view
@@ -280,7 +290,9 @@ def test_type_library_export_objects_exports_a_void_data_variable_and_reports_vo
         "path": str((root / "v.bntl").resolve()),
         "bytes_written": 4,
         "library": "recovered",
-        "exported": [{"name": "__elf_interp", "type": "void"}],
+        "exported": [
+            {"name": "__elf_interp", "type": "void", "address": "0x40031c", "alternatives": []}
+        ],
         "failed": [],
         "applied": 1,
         "failed_count": 0,
@@ -304,13 +316,405 @@ def test_type_library_export_objects_tells_void_apart_from_typed_objects_in_one_
         filename="v.bntl",
     )
     assert result["exported"] == [
-        {"name": "g_table", "type": "int32_t[4]"},
-        {"name": "__elf_interp", "type": "void"},
+        {"name": "g_table", "type": "int32_t[4]", "address": "0x4000", "alternatives": []},
+        {"name": "__elf_interp", "type": "void", "address": "0x40031c", "alternatives": []},
     ]
     assert result["failed"] == [
         {"requested": "absent", "reason": "no function or data variable with this name in the view"}
     ]
     assert (result["applied"], result["failed_count"], result["total"]) == (2, 1, 3)
+
+
+def _objects_view(
+    *,
+    functions: list[FakeFunction] | None = None,
+    symbols: list[FakeSymbol] | None = None,
+    data_variable_types: dict[int, FakeType] | None = None,
+) -> FakeBinaryView:
+    view = FakeBinaryView(
+        arch=FakeArchitecture("x86_64"), functions=functions or [], symbols=symbols or []
+    )
+    view.data_variable_types = data_variable_types or {}
+    return view
+
+
+def _function(name: str, start: int, type_string: str) -> FakeFunction:
+    function = FakeFunction(name, start, start + 0x10)
+    function.type = FakeType(
+        f"{name}_{start:x}", type_string, type_class=FakeTypeClass.FunctionTypeClass
+    )
+    return function
+
+
+def _export_objects(view: FakeBinaryView, *names: str):
+    _, export = get_tool("rex_type_library_export")
+    return export(_call(view), "recovered", list(names), kind="objects", filename="objs.bntl")
+
+
+def test_type_library_export_objects_prefers_the_function_and_lists_data_variables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    function = _function("setlocale", 0x40ABB0, "char* setlocale(int32_t category)")
+    pointer = FakeType(
+        "ptr", "char* (* const)(int32_t category)", type_class=FakeTypeClass.PointerTypeClass
+    )
+    external = FakeType(
+        "ext", "char*(int32_t category)", type_class=FakeTypeClass.FunctionTypeClass
+    )
+    view = _objects_view(
+        functions=[function],
+        symbols=[
+            FakeSymbol(0x426828, "ExternalSymbol", "setlocale"),
+            FakeSymbol(0x40ABB0, "ImportedFunctionSymbol", "setlocale"),
+            FakeSymbol(0x424E98, "ImportAddressSymbol", "setlocale"),
+        ],
+        data_variable_types={0x424E98: pointer, 0x426828: external},
+    )
+    result = _export_objects(view, "setlocale")
+    assert result["exported"] == [
+        {
+            "name": "setlocale",
+            "type": "char* setlocale(int32_t category)",
+            "address": "0x40abb0",
+            "alternatives": [
+                {"address": "0x426828", "type": "char*(int32_t category)"},
+                {"address": "0x424e98", "type": "char* (* const)(int32_t category)"},
+            ],
+        }
+    ]
+    assert [(name, type_obj) for _, name, type_obj in view.exported_objects] == [
+        ("setlocale", function.type)
+    ]
+
+
+def test_type_library_export_objects_prefers_the_extern_object_over_its_import_slot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    slot = FakeType("slot", "int64_t (* const)()", type_class=FakeTypeClass.PointerTypeClass)
+    extern = FakeType("extern", "void", type_class=FakeTypeClass.VoidTypeClass)
+    view = _objects_view(
+        symbols=[
+            FakeSymbol(0x424F80, "ImportAddressSymbol", "stdout"),
+            FakeSymbol(0x426880, "ExternalSymbol", "stdout"),
+        ],
+        data_variable_types={0x424F80: slot, 0x426880: extern},
+    )
+    result = _export_objects(view, "stdout")
+    assert result["exported"] == [
+        {
+            "name": "stdout",
+            "type": "void",
+            "address": "0x426880",
+            "alternatives": [{"address": "0x424f80", "type": "int64_t (* const)()"}],
+        }
+    ]
+    assert [(name, type_obj) for _, name, type_obj in view.exported_objects] == [("stdout", extern)]
+
+
+def test_type_library_export_objects_exports_the_import_slot_when_it_is_the_only_object(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    slot = FakeType("slot", "int64_t (* const)()", type_class=FakeTypeClass.PointerTypeClass)
+    view = _objects_view(
+        symbols=[FakeSymbol(0x424F80, "ImportAddressSymbol", "stdout")],
+        data_variable_types={0x424F80: slot},
+    )
+    result = _export_objects(view, "stdout")
+    assert result["exported"] == [
+        {"name": "stdout", "type": "int64_t (* const)()", "address": "0x424f80", "alternatives": []}
+    ]
+
+
+@pytest.mark.parametrize("symbol_type", ["DataSymbol", "ExternalSymbol", "ImportedDataSymbol"])
+def test_type_library_export_objects_prefers_a_typed_object_over_a_lower_import_slot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, symbol_type: str
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _objects_view(
+        symbols=[
+            FakeSymbol(0x1000, "ImportAddressSymbol", "environ"),
+            FakeSymbol(0x2000, symbol_type, "environ"),
+        ],
+        data_variable_types={
+            0x1000: FakeType(
+                "slot", "int64_t (* const)()", type_class=FakeTypeClass.PointerTypeClass
+            ),
+            0x2000: FakeType("env", "char**", type_class=FakeTypeClass.PointerTypeClass),
+        },
+    )
+    result = _export_objects(view, "environ")
+    assert result["exported"] == [
+        {
+            "name": "environ",
+            "type": "char**",
+            "address": "0x2000",
+            "alternatives": [{"address": "0x1000", "type": "int64_t (* const)()"}],
+        }
+    ]
+
+
+def test_type_library_export_objects_treats_an_address_with_an_import_symbol_as_a_slot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _objects_view(
+        symbols=[
+            FakeSymbol(0x1000, "DataSymbol", "environ"),
+            FakeSymbol(0x1000, "ImportAddressSymbol", "environ"),
+            FakeSymbol(0x2000, "DataSymbol", "environ"),
+        ],
+        data_variable_types={0x1000: FakeType("a", "int8_t"), 0x2000: FakeType("b", "char**")},
+    )
+    [entry] = _export_objects(view, "environ")["exported"]
+    assert (entry["address"], entry["alternatives"]) == (
+        "0x2000",
+        [{"address": "0x1000", "type": "int8_t"}],
+    )
+
+
+def test_type_library_export_objects_picks_the_lowest_function_and_lists_the_others(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _objects_view(
+        functions=[
+            _function("_start", 0x40D5D0, "void _start(int64_t arg1)"),
+            _function("_start", 0x40D5B0, "void _start()"),
+            _function("_start", 0x40D5C0, "void _start(int64_t arg1, int64_t arg2)"),
+        ]
+    )
+    result = _export_objects(view, "_start")
+    assert result["exported"] == [
+        {
+            "name": "_start",
+            "type": "void _start()",
+            "address": "0x40d5b0",
+            "alternatives": [
+                {"address": "0x40d5c0", "type": "void _start(int64_t arg1, int64_t arg2)"},
+                {"address": "0x40d5d0", "type": "void _start(int64_t arg1)"},
+            ],
+        }
+    ]
+
+
+def test_type_library_export_objects_prefers_a_non_void_data_variable_over_a_void_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    void = FakeType("void", "void", type_class=FakeTypeClass.VoidTypeClass)
+    interp = FakeType("interp", "char[0x1c]", type_class=FakeTypeClass.ArrayTypeClass)
+    view = _objects_view(
+        symbols=[
+            FakeSymbol(0x40031C, "DataSymbol", "__elf_interp"),
+            FakeSymbol(0x40033C, "DataSymbol", "__elf_interp"),
+        ],
+        data_variable_types={0x40031C: void, 0x40033C: interp},
+    )
+    result = _export_objects(view, "__elf_interp")
+    assert result["exported"] == [
+        {
+            "name": "__elf_interp",
+            "type": "char[0x1c]",
+            "address": "0x40033c",
+            "alternatives": [{"address": "0x40031c", "type": "void"}],
+        }
+    ]
+    assert [(name, type_obj) for _, name, type_obj in view.exported_objects] == [
+        ("__elf_interp", interp)
+    ]
+
+
+def test_type_library_export_objects_prefers_non_void_whatever_the_symbol_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _objects_view(
+        symbols=[
+            FakeSymbol(0x40033C, "DataSymbol", "__elf_interp"),
+            FakeSymbol(0x40031C, "DataSymbol", "__elf_interp"),
+        ],
+        data_variable_types={
+            0x40031C: FakeType("void", "void", type_class=FakeTypeClass.VoidTypeClass),
+            0x40033C: FakeType("interp", "char[0x1c]", type_class=FakeTypeClass.ArrayTypeClass),
+        },
+    )
+    entry = _export_objects(view, "__elf_interp")["exported"][0]
+    assert (entry["type"], entry["address"]) == ("char[0x1c]", "0x40033c")
+
+
+def test_type_library_export_objects_exports_visibly_void_when_only_void_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    void = FakeType("void", "void", type_class=FakeTypeClass.VoidTypeClass)
+    view = _objects_view(
+        symbols=[
+            FakeSymbol(0x40032C, "DataSymbol", "__elf_interp"),
+            FakeSymbol(0x40031C, "DataSymbol", "__elf_interp"),
+        ],
+        data_variable_types={0x40031C: void, 0x40032C: void},
+    )
+    result = _export_objects(view, "__elf_interp")
+    assert result["exported"] == [
+        {
+            "name": "__elf_interp",
+            "type": "void",
+            "address": "0x40031c",
+            "alternatives": [{"address": "0x40032c", "type": "void"}],
+        }
+    ]
+    assert result["failed"] == []
+
+
+def test_type_library_export_objects_picks_the_lowest_address_among_non_void_variables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _objects_view(
+        symbols=[
+            FakeSymbol(0x3000, "DataSymbol", "g_value"),
+            FakeSymbol(0x1000, "DataSymbol", "g_value"),
+            FakeSymbol(0x2000, "DataSymbol", "g_value"),
+            FakeSymbol(0x1800, "DataSymbol", "g_other"),
+        ],
+        data_variable_types={
+            0x3000: FakeType("c", "int64_t", type_class=FakeTypeClass.IntegerTypeClass),
+            0x1000: FakeType("a", "int32_t", type_class=FakeTypeClass.IntegerTypeClass),
+            0x2000: FakeType("b", "char[4]", type_class=FakeTypeClass.ArrayTypeClass),
+            0x1800: FakeType("o", "int8_t", type_class=FakeTypeClass.IntegerTypeClass),
+        },
+    )
+    result = _export_objects(view, "g_value")
+    assert result["exported"] == [
+        {
+            "name": "g_value",
+            "type": "int32_t",
+            "address": "0x1000",
+            "alternatives": [
+                {"address": "0x2000", "type": "char[4]"},
+                {"address": "0x3000", "type": "int64_t"},
+            ],
+        }
+    ]
+
+
+def test_type_library_export_objects_lists_the_ranked_alternatives_by_preference(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _objects_view(
+        functions=[_function("f", 0x9000, "void f()")],
+        symbols=[
+            FakeSymbol(0x1000, "DataSymbol", "f"),
+            FakeSymbol(0x2000, "DataSymbol", "f"),
+            FakeSymbol(0x3000, "DataSymbol", "f"),
+            FakeSymbol(0x0500, "ImportAddressSymbol", "f"),
+        ],
+        data_variable_types={
+            0x0500: FakeType("s", "int64_t (* const)()", type_class=FakeTypeClass.PointerTypeClass),
+            0x1000: FakeType("v", "void", type_class=FakeTypeClass.VoidTypeClass),
+            0x2000: FakeType("i", "int32_t", type_class=FakeTypeClass.IntegerTypeClass),
+            0x3000: FakeType("j", "int64_t", type_class=FakeTypeClass.IntegerTypeClass),
+        },
+    )
+    entry = _export_objects(view, "f")["exported"][0]
+    assert entry["address"] == "0x9000"
+    assert [alternative["address"] for alternative in entry["alternatives"]] == [
+        "0x2000",
+        "0x3000",
+        "0x1000",
+        "0x500",
+    ]
+
+
+def test_type_library_export_objects_counts_symbols_sharing_an_address_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _objects_view(
+        symbols=[
+            FakeSymbol(0x4000, "DataSymbol", "g_table"),
+            FakeSymbol(0x4000, "ImportAddressSymbol", "g_table"),
+        ],
+        data_variable_types={0x4000: FakeType("t", "int32_t[4]")},
+    )
+    entry = _export_objects(view, "g_table")["exported"][0]
+    assert entry["alternatives"] == []
+
+
+def test_type_library_export_objects_ignores_symbols_without_a_data_variable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _objects_view(
+        symbols=[
+            FakeSymbol(0x5000, "DataSymbol", "g_table"),
+            FakeSymbol(0x4000, "DataSymbol", "g_table"),
+        ],
+        data_variable_types={0x4000: FakeType("t", "int32_t[4]")},
+    )
+    entry = _export_objects(view, "g_table")["exported"][0]
+    assert (entry["address"], entry["alternatives"]) == ("0x4000", [])
+
+
+def test_type_library_export_objects_chooses_per_name_in_one_batch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _objects_view(
+        functions=[_function("open", 0x1000, "int open()")],
+        symbols=[
+            FakeSymbol(0x4000, "DataSymbol", "g_table"),
+            FakeSymbol(0x4100, "DataSymbol", "g_table"),
+        ],
+        data_variable_types={0x4000: FakeType("t", "int32_t[4]"), 0x4100: FakeType("u", "int8_t")},
+    )
+    result = _export_objects(view, "g_table", "missing", "open")
+    assert [(entry["name"], entry["address"]) for entry in result["exported"]] == [
+        ("g_table", "0x4000"),
+        ("open", "0x1000"),
+    ]
+    assert result["failed"] == [
+        {
+            "requested": "missing",
+            "reason": "no function or data variable with this name in the view",
+        }
+    ]
+    assert [name for _, name, _ in view.exported_objects] == ["g_table", "open"]
+
+
+@pytest.mark.parametrize(
+    ("type_string", "reported"),
+    [
+        ("t" * 512, "t" * 512),
+        ("t" * 513, "t" * 512 + "... [1 chars truncated]"),
+    ],
+)
+def test_type_library_export_objects_bounds_the_alternative_type_strings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, type_string: str, reported: str
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = _objects_view(
+        symbols=[
+            FakeSymbol(0x1000, "DataSymbol", "g_value"),
+            FakeSymbol(0x2000, "DataSymbol", "g_value"),
+        ],
+        data_variable_types={0x1000: FakeType("a", "int32_t"), 0x2000: FakeType("b", type_string)},
+    )
+    entry = _export_objects(view, "g_value")["exported"][0]
+    assert entry["alternatives"] == [{"address": "0x2000", "type": reported}]
+
+
+def test_type_library_export_types_entries_carry_only_name_and_type(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    _, export = get_tool("rex_type_library_export")
+    result = export(_call(_typed_view()), "recovered", ["open"], filename="t.bntl")
+    assert result["exported"] == [{"name": "open", "type": "int open(char *path, int flags)"}]
 
 
 @pytest.mark.parametrize(

@@ -115,10 +115,18 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `rex_type_library_import` return count fields `applied`, `failed_count`, and `total`.
   `rex_annotate_many` also has legacy `failed` and `results`; `rex_component_add_functions`
   has legacy `added_count` and `results`; the type-library tools return a `failed` list.
-  `rex_type_library_export` lists `exported` as `{name, type}` entries, `type` being the
-  rendered type (truncated), so a void-typed data variable, which still exports, shows as
-  `void`. For `kind="objects"`, a name resolves to the first function, else the first
-  symbol with a data variable, so a duplicated symbol name can pick a void variable.
+  `rex_type_library_export` lists `exported` as `{name, type}` entries for `kind="types"`,
+  `type` being the rendered type (truncated). For `kind="objects"` each entry is
+  `{name, type, address, alternatives}`: `address` is the chosen object's hex address and
+  `alternatives` lists the other same-name candidates as `{address, type}`, empty when
+  there are none. A name resolves to a function first, else a data variable whose type
+  is not void, else a void data variable (which still exports and shows as `void`),
+  else a data variable at an import address slot (an `ImportAddressSymbol`, e.g. a GOT
+  entry, whose type describes the slot and not the imported object). Ties within a tier
+  go to the lowest address, and `alternatives` follows the same order (functions,
+  non-void data variables, void data variables, import slots, each by ascending address).
+  Type names are unique in a view, so `kind="types"` entries have no `address` or
+  `alternatives`.
   Other batch responses: `rex_function_define_many` has `defined`, `failed`, `pending`,
   `waited_ms`; `rex_disasm_many` has `windows` and `errors`; `rex_decompile_many` has
   `functions`, and any address that fails to resolve rejects the whole batch before any

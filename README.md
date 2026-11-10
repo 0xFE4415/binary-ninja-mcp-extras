@@ -104,7 +104,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_uidf_clear` | Clear one MLIL variable's informed values, or all of a function's. |
 | `rex_struct_from_access` | Infer a struct from recorded offset accesses and define it. |
 | `rex_type_library_import` | Attach a `.bntl` and import a bounded list of its type names. |
-| `rex_type_library_export` | Export view types or objects into a new `.bntl` in the export root; each exported entry reports its type, void included. |
+| `rex_type_library_export` | Export view types or objects into a new `.bntl` in the export root; each exported entry reports its type; objects also report the chosen `address` and the other same-name `alternatives`. |
 | `rex_component_create` | Create a component, optionally nested under a parent path. |
 | `rex_component_add_functions` | Put resolved functions into a component. |
 | `rex_tag_set` | Attach a GUI-visible tag at an address, creating the tag type on demand. |

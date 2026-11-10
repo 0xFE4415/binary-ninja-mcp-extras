@@ -1,7 +1,11 @@
 from typing import Any
 
+from binaryninja.enums import TypeClass
+
 
 class Type:
+    @property
+    def type_class(self) -> TypeClass: ...
     @staticmethod
     def generate_auto_type_id(source: str, name: Any) -> str: ...
 
