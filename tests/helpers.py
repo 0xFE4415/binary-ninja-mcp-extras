@@ -16,7 +16,7 @@ import pytest
 
 # The UIDF and view fakes live in leaf modules: they hold only self-contained fakes so
 # this module's top-level import of them cannot cycle.
-from helpers_uidf import FakeRegisterValueType
+from helpers_uidf import FakeRegisterValueType, FakeVariableSourceType
 from helpers_view import (
     TYPE_LIBRARIES_ON_DISK,
     FakeAnalysisState,
@@ -283,6 +283,7 @@ def install_fake_binaryninja() -> None:
     setattr(enums_module, "RegisterValueType", FakeRegisterValueType)
     setattr(enums_module, "TypeClass", FakeTypeClass)
     setattr(enums_module, "SymbolType", FakeSymbolType)
+    setattr(enums_module, "VariableSourceType", FakeVariableSourceType)
     setattr(
         enums_module,
         "LowLevelILOperation",

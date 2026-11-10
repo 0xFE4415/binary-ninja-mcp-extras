@@ -27,8 +27,14 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   core defines nothing at (a call without outputs, a store) is `no_definition`. It returns
   `variables`, one entry per defined variable (in `vars_written` order, then any further
   variable the core records, such as a field write's destination), each with its own
-  `definitions`, `total`, `truncated`, and `uses`. `limit` and `offset` page each entry's
-  uses, and `variable` keeps one name (`no_variable` if the instruction does not define it).
+  `storage`, `type`, `definitions`, `total`, `truncated`, and `uses`. Two distinct
+  variables can share a name, so `storage` and `type` (the rendered type, truncated)
+  identify the entry. `storage` is `{source: "register", register}` with the register
+  name from the function's architecture, `{source: "stack", stack_offset}` with the
+  signed core offset, `{source: "flag", flag}`, or `{source: "composite_return_value" |
+  "composite_parameter", storage}` with the raw core value. `limit` and `offset` page
+  each entry's uses, and `variable` keeps every variable with that name, same-named ones
+  included (`no_variable` if the instruction defines none).
 - For `rex_string_search`, `rex_data_find`, `rx_data_find`, `rex_string_refs`, and
   `rex_uidf_list`, a truncated `total` is a lower bound: scanning stops at the first
   result past the page. `rex_xrefs_to` has the same rule for fetched refs; `rx_multi_find`

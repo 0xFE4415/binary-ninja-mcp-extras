@@ -1,6 +1,7 @@
 from collections.abc import Iterable
 from typing import Any
 
+from binaryninja.architecture import Architecture
 from binaryninja.basicblock import BasicBlock
 from binaryninja.highlevelil import HighLevelILFunction
 from binaryninja.mediumlevelil import MediumLevelILFunction
@@ -22,6 +23,7 @@ class DisassemblyTextLine:
 
 class Function:
     name: str
+    arch: Architecture
     start: int
     end: int
     highest_address: int

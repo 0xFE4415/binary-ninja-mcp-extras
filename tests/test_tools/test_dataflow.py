@@ -18,8 +18,8 @@ from helpers_dataflow import (
     sign_extend,
     var,
 )
-from helpers_uidf import FakeVariable
-from helpers_view import FakeBinaryView, FakeFunction
+from helpers_uidf import FakeVariable, FakeVariableSourceType
+from helpers_view import FakeArchitecture, FakeBinaryView, FakeFunction
 
 from binja_plugin.tools import dataflow as dataflow_tools
 
@@ -197,9 +197,11 @@ def _run_uses(view: FakeBinaryView, **arguments: Any) -> dict[str, Any]:
     return uses(_call(view), **arguments)
 
 
-def _no_uses_report(name: str, definitions: list[str]) -> dict[str, Any]:
+def _no_uses_report(name: str, definitions: list[str], register: str = "rax") -> dict[str, Any]:
     return {
         "variable": name,
+        "storage": {"source": "register", "register": register},
+        "type": "int64_t",
         "definitions": definitions,
         "total": 0,
         "truncated": False,
@@ -208,7 +210,12 @@ def _no_uses_report(name: str, definitions: list[str]) -> dict[str, Any]:
 
 
 def _two_use_view() -> FakeBinaryView:
-    arg_40 = FakeVariable("arg_40")
+    arg_40 = FakeVariable(
+        "arg_40",
+        source_type=FakeVariableSourceType.StackVariableSourceType,
+        storage=0x40,
+        type_string="int32_t",
+    )
     use_branch = _read_of(arg_40, 0x1030)
     copy = FakeVariable("tmp")
     use_copy = set_var(0x1040, copy, var(arg_40))
@@ -229,6 +236,8 @@ def test_uses_report_the_exact_response_for_a_single_assignment() -> None:
         "variables": [
             {
                 "variable": "arg_40",
+                "storage": {"source": "stack", "stack_offset": 64},
+                "type": "int32_t",
                 "definitions": ["0x1020"],
                 "total": 2,
                 "truncated": False,
@@ -269,7 +278,7 @@ def test_uses_page_each_variable_and_flag_truncation(
 
 
 def test_uses_page_every_defined_variable_independently() -> None:
-    high, low = FakeVariable("high"), FakeVariable("low")
+    high, low = FakeVariable("high", storage=100), FakeVariable("low", storage=99)
     split = FakeInstruction("MLIL_SET_VAR_SPLIT", 0x1020, high=high, low=low, src=const(1))
     view = _uses_view(
         [split, _read_of(high, 0x1030), _read_of(high, 0x1040), _read_of(low, 0x1050)],
@@ -313,7 +322,7 @@ def test_uses_report_a_field_write_the_core_records_though_vars_written_is_empty
 
 
 def test_uses_report_both_halves_of_a_split_write_high_first() -> None:
-    high, low = FakeVariable("high"), FakeVariable("low")
+    high, low = FakeVariable("high", storage=100), FakeVariable("low", storage=99)
     split = FakeInstruction("MLIL_SET_VAR_SPLIT", 0x1020, high=high, low=low, src=const(1))
     view = _uses_view(
         [split, _read_of(low)],
@@ -321,9 +330,9 @@ def test_uses_report_both_halves_of_a_split_write_high_first() -> None:
         uses={low: [_read_of(low)]},
     )
     assert _run_uses(view)["variables"] == [
-        _no_uses_report("high", ["0x1020"]),
+        _no_uses_report("high", ["0x1020"], register="rdx"),
         {
-            **_no_uses_report("low", ["0x1020"]),
+            **_no_uses_report("low", ["0x1020"], register="rcx"),
             "total": 1,
             "uses": [{"address": "0x1030", "operation": "MLIL_IF", "text": "MLIL_IF"}],
         },
@@ -345,13 +354,15 @@ def test_uses_report_a_call_output_as_the_definition(operation: str) -> None:
 
 @pytest.mark.parametrize("operation", ["MLIL_CALL", "MLIL_TAILCALL", "MLIL_INTRINSIC"])
 def test_uses_report_every_output_of_a_multi_output_instruction(operation: str) -> None:
-    rax, rcx, rdx = FakeVariable("rax"), FakeVariable("rcx"), FakeVariable("rdx")
+    rax = FakeVariable("rax")
+    rcx = FakeVariable("rcx", storage=99)
+    rdx = FakeVariable("rdx", storage=100)
     call = FakeInstruction(operation, 0x1020, output=[rax, rcx, rdx])
     view = _uses_view([call], {rdx: [call], rax: [call], rcx: [call]})
     assert _run_uses(view)["variables"] == [
         _no_uses_report("rax", ["0x1020"]),
-        _no_uses_report("rcx", ["0x1020"]),
-        _no_uses_report("rdx", ["0x1020"]),
+        _no_uses_report("rcx", ["0x1020"], register="rcx"),
+        _no_uses_report("rdx", ["0x1020"], register="rdx"),
     ]
 
 
@@ -364,10 +375,10 @@ def test_uses_accept_a_tailcall_clobber_as_a_definition_site() -> None:
 
 
 def test_uses_report_a_forced_version_as_a_definition() -> None:
-    zmm0 = FakeVariable("zmm0_1")
+    zmm0 = FakeVariable("zmm0_1", storage=333)
     forced = FakeInstruction("MLIL_FORCE_VER", 0x1020, dest=zmm0)
     assert _run_uses(_uses_view([forced], {zmm0: [forced]}))["variables"] == [
-        _no_uses_report("zmm0_1", ["0x1020"])
+        _no_uses_report("zmm0_1", ["0x1020"], register="zmm0")
     ]
 
 
@@ -450,10 +461,190 @@ def test_uses_do_not_attribute_definitions_of_other_instructions() -> None:
 
 
 def test_uses_filter_to_the_named_defined_variable() -> None:
-    rax, rcx = FakeVariable("rax"), FakeVariable("rcx")
+    rax, rcx = FakeVariable("rax"), FakeVariable("rcx", storage=99)
     call = FakeInstruction("MLIL_CALL", 0x1020, output=[rax, rcx])
     view = _uses_view([call], {rax: [call], rcx: [call]})
-    assert _run_uses(view, variable="rcx")["variables"] == [_no_uses_report("rcx", ["0x1020"])]
+    assert _run_uses(view, variable="rcx")["variables"] == [
+        _no_uses_report("rcx", ["0x1020"], register="rcx")
+    ]
+
+
+def _stack_variable(name: str, offset: int, type_string: str = "int32_t") -> FakeVariable:
+    return FakeVariable(
+        name,
+        source_type=FakeVariableSourceType.StackVariableSourceType,
+        storage=offset,
+        type_string=type_string,
+    )
+
+
+def _category_view() -> tuple[FakeBinaryView, list[FakeVariable]]:
+    first = _stack_variable("category", 8)
+    second = _stack_variable("category", 16)
+    register = FakeVariable("category", storage=105, type_string="int32_t")
+    rax = FakeVariable("rax", type_string="char*")
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[first, second, register, rax])
+    view = _uses_view([call], {first: [call], second: [call], register: [call], rax: [call]})
+    return view, [first, second, register, rax]
+
+
+def _category_reports() -> list[dict[str, Any]]:
+    return [
+        {
+            "variable": "category",
+            "storage": {"source": "stack", "stack_offset": 8},
+            "type": "int32_t",
+            "definitions": ["0x1020"],
+            "total": 0,
+            "truncated": False,
+            "uses": [],
+        },
+        {
+            "variable": "category",
+            "storage": {"source": "stack", "stack_offset": 16},
+            "type": "int32_t",
+            "definitions": ["0x1020"],
+            "total": 0,
+            "truncated": False,
+            "uses": [],
+        },
+        {
+            "variable": "category",
+            "storage": {"source": "register", "register": "rdi"},
+            "type": "int32_t",
+            "definitions": ["0x1020"],
+            "total": 0,
+            "truncated": False,
+            "uses": [],
+        },
+    ]
+
+
+def test_uses_tell_same_named_variables_apart_by_storage() -> None:
+    view, _ = _category_view()
+    reports = _run_uses(view)["variables"]
+    assert reports == [
+        *_category_reports(),
+        {**_no_uses_report("rax", ["0x1020"]), "type": "char*"},
+    ]
+
+
+def test_uses_filter_returns_every_same_named_variable_and_no_other() -> None:
+    view, _ = _category_view()
+    assert _run_uses(view, variable="category")["variables"] == _category_reports()
+    assert _run_uses(view, variable="rax")["variables"] == [
+        {**_no_uses_report("rax", ["0x1020"]), "type": "char*"}
+    ]
+
+
+def test_uses_tell_same_named_same_storage_variables_apart_by_type() -> None:
+    narrow = FakeVariable("category", storage=105, type_string="int32_t")
+    wide = FakeVariable("category", storage=105, type_string="int64_t")
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[narrow, wide])
+    view = _uses_view([call], {narrow: [call], wide: [call]})
+    reports = _run_uses(view, variable="category")["variables"]
+    assert [(report["storage"], report["type"]) for report in reports] == [
+        ({"source": "register", "register": "rdi"}, "int32_t"),
+        ({"source": "register", "register": "rdi"}, "int64_t"),
+    ]
+
+
+def test_uses_keep_one_entry_for_a_variable_the_core_lists_twice() -> None:
+    first = _stack_variable("category", 8)
+    second = _stack_variable("category", 16)
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[first, second, first])
+    view = _uses_view([call], {first: [call], second: [call]})
+    assert [report["storage"] for report in _run_uses(view)["variables"]] == [
+        {"source": "stack", "stack_offset": 8},
+        {"source": "stack", "stack_offset": 16},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("variable", "storage"),
+    [
+        (FakeVariable("v", storage=105), {"source": "register", "register": "rdi"}),
+        (FakeVariable("v", storage=2147483678), {"source": "register", "register": "temp30"}),
+        (_stack_variable("v", 8), {"source": "stack", "stack_offset": 8}),
+        (_stack_variable("v", -8), {"source": "stack", "stack_offset": -8}),
+        (_stack_variable("v", 0), {"source": "stack", "stack_offset": 0}),
+        (
+            FakeVariable("v", source_type=FakeVariableSourceType.FlagVariableSourceType, storage=6),
+            {"source": "flag", "flag": "z"},
+        ),
+        (
+            FakeVariable(
+                "v", source_type=FakeVariableSourceType.FlagVariableSourceType, storage=2147483648
+            ),
+            {"source": "flag", "flag": "flag2147483648"},
+        ),
+        (
+            FakeVariable(
+                "v",
+                source_type=FakeVariableSourceType.CompositeReturnValueSourceType,
+                storage=3,
+            ),
+            {"source": "composite_return_value", "storage": 3},
+        ),
+        (
+            FakeVariable(
+                "v", source_type=FakeVariableSourceType.CompositeParameterSourceType, storage=4
+            ),
+            {"source": "composite_parameter", "storage": 4},
+        ),
+    ],
+)
+def test_uses_report_the_storage_of_every_variable_source_type(
+    variable: FakeVariable, storage: dict[str, Any]
+) -> None:
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[variable])
+    [report] = _run_uses(_uses_view([call], {variable: [call]}))["variables"]
+    assert report["storage"] == storage
+    assert set(report) == {
+        "variable",
+        "storage",
+        "type",
+        "definitions",
+        "total",
+        "truncated",
+        "uses",
+    }
+
+
+def test_uses_reject_a_variable_source_type_the_plugin_does_not_know() -> None:
+    variable = FakeVariable("v")
+    variable.source_type = 99  # ty: ignore[invalid-assignment]
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[variable])
+    with pytest.raises(ValueError, match=r"^unknown variable source type 99$"):
+        _run_uses(_uses_view([call], {variable: [call]}))
+
+
+def test_uses_resolve_register_and_flag_names_through_the_function_architecture() -> None:
+    register = FakeVariable("v", storage=98)
+    flag = FakeVariable("f", source_type=FakeVariableSourceType.FlagVariableSourceType, storage=6)
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[register, flag])
+    mlil = FakeMLILInstructions([call], definitions={register: [call], flag: [call]})
+    function_arch = FakeArchitecture("arm64", {98: "x0"}, {6: "zf"})
+    function = FakeFunction("check", 0x1000, 0x1100, mlil=mlil, arch=function_arch)
+    view = FakeBinaryView(
+        functions=[function], arch=FakeArchitecture("x86_64", {98: "view_reg"}, {6: "view_flag"})
+    )
+    reports = _run_uses(view)["variables"]
+    assert [report["storage"] for report in reports] == [
+        {"source": "register", "register": "x0"},
+        {"source": "flag", "flag": "zf"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("length", "rendered"),
+    [(512, "t" * 512), (513, "t" * 512 + "... [1 chars truncated]")],
+)
+def test_uses_bound_the_rendered_variable_type(length: int, rendered: str) -> None:
+    variable = FakeVariable("v", type_string="t" * length)
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[variable])
+    [report] = _run_uses(_uses_view([call], {variable: [call]}))["variables"]
+    assert report["type"] == rendered
 
 
 def test_uses_filter_by_exact_name_not_prefix() -> None:
@@ -609,7 +800,7 @@ def test_uses_without_mlil_fail_with_no_mlil() -> None:
 def test_parameter_maps_to_the_copies_that_carry_it() -> None:
     arg4 = FakeVariable("arg4")
     arg4.storage = 112
-    arg4.source_type = type("Source", (), {"name": "StackVariableSourceType"})()
+    arg4.source_type = FakeVariableSourceType.StackVariableSourceType
     r14 = FakeVariable("r14")
     mlil = FakeMLILInstructions(
         instructions=[
@@ -675,8 +866,8 @@ def test_parameter_storage_covers_variables_without_source_metadata() -> None:
     # A variable with no source_type falls back to str(None), and a source type without a
     # .name attribute still renders as its own string form.
     bare = _BareVariable("reg9")
-    nameless = FakeVariable("reg9")
-    nameless.source_type = 42
+    nameless = FakeVariable("reg9", storage=0)
+    nameless.source_type = 42  # ty: ignore[invalid-assignment]
     function = FakeFunction(
         "check",
         0x1000,

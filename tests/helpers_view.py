@@ -10,7 +10,7 @@ import contextlib
 import enum
 import types
 from collections.abc import Callable, Generator, Iterator, Mapping
-from typing import Any, override
+from typing import Any, Final, override
 
 from helpers_dataflow import FakeMLILInstructions
 from helpers_uidf import (
@@ -221,7 +221,9 @@ class FakeFunction:
         callees: list[FakeFunction] | None = None,
         vars: list[FakeVariable] | None = None,
         mlil: FakeMediumLevelIL | FakeMLILInstructions | None = None,
+        arch: FakeArchitecture | None = None,
     ) -> None:
+        self.arch = arch if arch is not None else FakeArchitecture("x86_64")
         self.name = name
         self.start = start
         self.end = end
@@ -829,9 +831,43 @@ class SpyBinaryView(FakeBinaryView):
         return super().get_functions_containing(address)
 
 
+X86_64_REGISTERS: Final = types.MappingProxyType(
+    {
+        98: "rax",
+        99: "rcx",
+        100: "rdx",
+        104: "rsi",
+        105: "rdi",
+        106: "r8",
+        107: "r9",
+        112: "r14",
+        333: "zmm0",
+        2147483678: "temp30",
+    }
+)
+X86_64_FLAGS: Final = types.MappingProxyType(
+    {0: "c", 2: "p", 4: "a", 6: "z", 7: "s", 2147483648: "flag2147483648"}
+)
+
+
 class FakeArchitecture:
-    def __init__(self, name: str) -> None:
+    """Mirrors Architecture: register and flag indexes the core knows resolve to names."""
+
+    def __init__(
+        self,
+        name: str,
+        registers: Mapping[int, str] = X86_64_REGISTERS,
+        flags: Mapping[int, str] = X86_64_FLAGS,
+    ) -> None:
         self.name = name
+        self._registers = registers
+        self._flags = flags
+
+    def get_reg_name(self, reg: int) -> str:
+        return self._registers[reg]
+
+    def get_flag_name(self, flag: int) -> str:
+        return self._flags[flag]
 
 
 class FakeTypeClass(enum.IntEnum):

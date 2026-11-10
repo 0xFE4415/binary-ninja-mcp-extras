@@ -8,9 +8,10 @@ the IL states and never a rendering of it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Any, Final, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, TypedDict
 
 from binaryninja import mcp
+from binaryninja.enums import VariableSourceType
 
 from binja_plugin.tools import (
     _MAX_LIMIT,
@@ -22,6 +23,7 @@ from binja_plugin.tools import (
 )
 
 if TYPE_CHECKING:
+    from binaryninja.architecture import Architecture
     from binaryninja.mediumlevelil import MediumLevelILFunction, MediumLevelILInstruction
     from binaryninja.variable import Variable
 
@@ -37,6 +39,39 @@ class _VariableUse(TypedDict):
     address: str
     operation: str
     text: str
+
+
+class _RegisterStorage(TypedDict):
+    source: Literal["register"]
+    register: str
+
+
+class _StackStorage(TypedDict):
+    source: Literal["stack"]
+    stack_offset: int
+
+
+class _FlagStorage(TypedDict):
+    source: Literal["flag"]
+    flag: str
+
+
+class _CompositeStorage(TypedDict):
+    source: Literal["composite_return_value", "composite_parameter"]
+    storage: int
+
+
+_VariableStorage = _RegisterStorage | _StackStorage | _FlagStorage | _CompositeStorage
+
+
+class _VariableReport(TypedDict):
+    variable: str
+    storage: _VariableStorage
+    type: str
+    definitions: list[str]
+    total: int
+    truncated: bool
+    uses: list[_VariableUse]
 
 
 class _ParameterCarrier(TypedDict):
@@ -239,9 +274,29 @@ def rex_hlil_statements(
     }
 
 
+def _variable_storage(architecture: Architecture, variable: Variable) -> _VariableStorage:
+    match variable.source_type:
+        case VariableSourceType.RegisterVariableSourceType:
+            return {"source": "register", "register": architecture.get_reg_name(variable.storage)}
+        case VariableSourceType.StackVariableSourceType:
+            return {"source": "stack", "stack_offset": variable.storage}
+        case VariableSourceType.FlagVariableSourceType:
+            return {"source": "flag", "flag": architecture.get_flag_name(variable.storage)}
+        case VariableSourceType.CompositeReturnValueSourceType:
+            return {"source": "composite_return_value", "storage": variable.storage}
+        case VariableSourceType.CompositeParameterSourceType:
+            return {"source": "composite_parameter", "storage": variable.storage}
+        case unknown:
+            raise ValueError(f"unknown variable source type {unknown!r}")
+
+
 def _variable_report(
-    target_mlil: MediumLevelILFunction, variable: Variable, limit: int, offset: int
-) -> dict[str, object]:
+    architecture: Architecture,
+    target_mlil: MediumLevelILFunction,
+    variable: Variable,
+    limit: int,
+    offset: int,
+) -> _VariableReport:
     uses = sorted(target_mlil.get_var_uses(variable), key=lambda use: use.address)
     rows = [
         _VariableUse(address=hex(use.address), operation=_operation(use), text=_truncate(str(use)))
@@ -249,6 +304,8 @@ def _variable_report(
     ]
     return {
         "variable": _truncate(variable.name),
+        "storage": _variable_storage(architecture, variable),
+        "type": _truncate(str(variable.type)),
         "definitions": [
             hex(definition.address) for definition in target_mlil.get_var_definitions(variable)
         ],
@@ -267,11 +324,11 @@ def rex_mlil_uses(
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> dict[str, object]:
-    """List every read of each MLIL variable the core defines at an address, with its definitions.
+    """List every read of each MLIL variable the core defines at an address; entries show storage.
 
     :param function: Address expression inside the target function.
     :param address: Address of an MLIL instruction that defines variables.
-    :param variable: Report only the defined variable with this name.
+    :param variable: Report only defined variables with this name (all same-named ones).
     :param limit: Maximum use sites to return per variable.
     :param offset: Use sites to skip per variable before collecting results.
     """
@@ -318,7 +375,8 @@ def rex_mlil_uses(
         "function": _function_entry(target),
         "definition_site": hex(address),
         "variables": [
-            _variable_report(target_mlil, defined, limit, offset) for defined in selected
+            _variable_report(target.arch, target_mlil, defined, limit, offset)
+            for defined in selected
         ],
     }
 

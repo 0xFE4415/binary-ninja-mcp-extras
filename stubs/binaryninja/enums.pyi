@@ -86,3 +86,11 @@ class SymbolType(IntEnum):
     LibraryFunctionSymbol = 6
     SymbolicFunctionSymbol = 7
     LocalLabelSymbol = 8
+
+
+class VariableSourceType(IntEnum):
+    StackVariableSourceType = 0
+    RegisterVariableSourceType = 1
+    FlagVariableSourceType = 2
+    CompositeReturnValueSourceType = 3
+    CompositeParameterSourceType = 4
