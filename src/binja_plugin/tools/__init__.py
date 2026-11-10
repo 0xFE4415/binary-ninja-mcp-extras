@@ -14,34 +14,34 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterable, Iterator
 from itertools import islice
 from pathlib import Path
-from typing import Any, NoReturn, TypedDict, TypeIs
+from typing import Final, NoReturn, TypedDict, TypeIs
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
 from binaryninja.function import Function
 
-_READ_CHUNK = 4 * 1024 * 1024
-_MAX_CHARS = 512
+_READ_CHUNK: Final = 4 * 1024 * 1024
+_MAX_CHARS: Final = 512
 # Hard caps for list sizes and echoed strings: user-supplied size parameters are
 # range-checked against these in the tool bodies — matching the schema-side
 # Minimum/Maximum annotations — so out-of-range values are rejected even when handlers
 # are invoked directly.
-_MAX_LIMIT = 500
+_MAX_LIMIT: Final = 500
 
 # Candidate variable names an error message may echo before it switches to a "+N more"
 # suffix: bounded so one misspelled name can never flood the MCP response.
-_MAX_NAME_CANDIDATES = 40
+_MAX_NAME_CANDIDATES: Final = 40
 
 # rex_disasm_at window sizes: bounded so one call can never request an unbounded
 # instruction render, whatever the containing function's size.
-_MAX_DISASM_CONTEXT = 4096
+_MAX_DISASM_CONTEXT: Final = 4096
 
 # rex_export_* tools: sweeps write to one fixed directory and echo only a summary, so a
 # large export can never flood the MCP response. The byte cap bounds each file; the
 # window caps bound how much a single call selects before serialization.
-_EXPORT_ROOT = Path.home() / ".binaryninja" / "exports"
-_MAX_EXPORT_COMPONENT_BYTES = 255
-_MAX_EXPORT_FILE_BYTES = 4 * 1024 * 1024
+_EXPORT_ROOT: Final = Path.home() / ".binaryninja" / "exports"
+_MAX_EXPORT_COMPONENT_BYTES: Final = 255
+_MAX_EXPORT_FILE_BYTES: Final = 4 * 1024 * 1024
 
 
 def _is_json_object(value: object) -> TypeIs[dict[str, object]]:

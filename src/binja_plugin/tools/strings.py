@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from functools import partial
 from itertools import chain
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Final, Literal
 
 from binaryninja import mcp
 
@@ -28,14 +28,14 @@ if TYPE_CHECKING:
         StringReference,
     )
 
-_MAX_STRING_READ_CHARS = 4096
+_MAX_STRING_READ_CHARS: Final = 4096
 
 # rex_string_refs: the per-string code-ref echo cap. The core calls themselves are
 # bounded by max_items = cap + 1, so truncation is detected without enumerating past
 # what the response can echo.
-_MAX_STRING_REFS = 64
+_MAX_STRING_REFS: Final = 64
 
-_STRING_TYPES = Literal["AsciiString", "Utf16String", "Utf32String", "Utf8String"]
+StringType = Literal["AsciiString", "Utf16String", "Utf32String", "Utf8String"]
 
 
 def _text_matcher(pattern: str, regex: bool, ignore_case: bool) -> Callable[[str], bool]:
@@ -164,7 +164,7 @@ def rex_string_search(
     regex: bool = False,
     ignore_case: bool = False,
     section: str | None = None,
-    string_type: _STRING_TYPES | None = None,
+    string_type: StringType | None = None,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> dict[str, object]:
