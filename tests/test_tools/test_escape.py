@@ -211,6 +211,20 @@ def test_eval_python_class_defined_in_the_submitted_code_has_no_module_name() ->
     assert result["result"] == "('builtins', False)"
 
 
+def test_eval_python_reports_the_outermost_exception_of_a_chain() -> None:
+    code = (
+        "class Cause(Exception):\n"
+        "    __module__ = 'pkg.cause'\n"
+        "    def __str__(self):\n"
+        "        raise RuntimeError('no str')\n"
+        "try:\n"
+        "    raise Cause('inner')\n"
+        "except Cause as cause:\n"
+        "    raise KeyError('outer') from cause"
+    )
+    assert _failing(code)["error"] == "KeyError: 'outer'"
+
+
 def test_eval_python_qualifies_the_type_of_an_unrenderable_message_and_system_exit() -> None:
     odd_str = _failing(
         "class Odd(Exception):\n"
