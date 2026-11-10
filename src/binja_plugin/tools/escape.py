@@ -95,7 +95,7 @@ def _spill_echo(text: str, cap: int, kind: str) -> _Echo:
 
 
 def _describe_error(error: BaseException) -> str:
-    kind = type(error).__qualname__
+    kind = traceback.TracebackException(type(error), error, None, compact=True).exc_type_str
     try:
         detail = f"exit status {error.code!r}" if isinstance(error, SystemExit) else str(error)
     except Exception:

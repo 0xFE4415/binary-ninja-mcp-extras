@@ -137,6 +137,93 @@ def test_eval_python_errors_lead_with_the_exception_type(code: str, error: str) 
     assert result["result"] is None
 
 
+@pytest.mark.parametrize(
+    ("code", "error"),
+    [
+        (
+            "import json\njson.loads('')",
+            "json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)",
+        ),
+        ("import zipfile\nraise zipfile.BadZipFile('torn')", "zipfile.BadZipFile: torn"),
+        ("raise FileNotFoundError(2, 'No such file')", "FileNotFoundError: [Errno 2] No such file"),
+        (
+            "class Boom(Exception):\n    __module__ = 'binaryninja.binaryview'\nraise Boom('x')",
+            "binaryninja.binaryview.Boom: x",
+        ),
+        (
+            "class Boom(Exception):\n    __module__ = 'binaryninja.binaryview'\nraise Boom()",
+            "binaryninja.binaryview.Boom",
+        ),
+        ("class Boom(Exception):\n    __module__ = '__main__'\nraise Boom('x')", "Boom: x"),
+        ("class Boom(Exception):\n    __module__ = 'builtins'\nraise Boom('x')", "Boom: x"),
+        (
+            "class Boom(Exception):\n    __module__ = '__main__x'\nraise Boom('x')",
+            "__main__x.Boom: x",
+        ),
+        (
+            "class Boom(Exception):\n    __module__ = 'xbuiltins'\nraise Boom('x')",
+            "xbuiltins.Boom: x",
+        ),
+        ("class Boom(Exception):\n    __module__ = 'pkg.mod'\nraise Boom('x')", "pkg.mod.Boom: x"),
+    ],
+)
+def test_eval_python_qualifies_exception_types_outside_builtins_and_main(
+    code: str, error: str
+) -> None:
+    assert _failing(code)["error"] == error
+
+
+@pytest.mark.parametrize(
+    ("code", "error"),
+    [
+        ("class Custom(Exception):\n    pass\nraise Custom('x')", "Custom: x"),
+        ("class Quiet(Exception):\n    pass\nraise Quiet()", "Quiet"),
+        (
+            "def make():\n"
+            "    class Inner(Exception):\n"
+            "        pass\n"
+            "    return Inner\n"
+            "raise make()('n')",
+            "make.<locals>.Inner: n",
+        ),
+        (
+            "class Outer:\n    class Inner(Exception):\n        pass\nraise Outer.Inner('n')",
+            "Outer.Inner: n",
+        ),
+        (
+            "class Outer:\n"
+            "    __module__ = 'pkg.mod'\n"
+            "    class Inner(Exception):\n"
+            "        __module__ = 'pkg.mod'\n"
+            "raise Outer.Inner('n')",
+            "pkg.mod.Outer.Inner: n",
+        ),
+    ],
+)
+def test_eval_python_names_exceptions_defined_in_the_submitted_code(code: str, error: str) -> None:
+    assert _failing(code)["error"] == error
+
+
+def test_eval_python_class_defined_in_the_submitted_code_has_no_module_name() -> None:
+    result = _failing(
+        "class Custom(Exception):\n    pass\nresult = (Custom.__module__, '__name__' in globals())"
+    )
+    assert result["result"] == "('builtins', False)"
+
+
+def test_eval_python_qualifies_the_type_of_an_unrenderable_message_and_system_exit() -> None:
+    odd_str = _failing(
+        "class Odd(Exception):\n"
+        "    __module__ = 'pkg.mod'\n"
+        "    def __str__(self):\n"
+        "        raise RuntimeError('no str')\n"
+        "raise Odd('x')"
+    )
+    assert odd_str["error"] == "pkg.mod.Odd: <message unavailable>"
+    qualified_exit = _failing("class Exit(SystemExit):\n    __module__ = 'pkg.mod'\nraise Exit(3)")
+    assert qualified_exit["error"] == "pkg.mod.Exit: exit status 3"
+
+
 def test_eval_python_reports_system_exit_in_band_with_captured_stdout() -> None:
     result = _failing("import sys\nprint('before')\nresult = 1\nsys.exit(3)")
     assert result["stdout"] == "before\n"

@@ -85,7 +85,12 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   captured output remains in `stdout`. On success, an assigned `result` is returned as
   Python `repr()`.
   `error` always leads with the exception type, `Type: message` (bare `Type` when the
-  message is empty), and a `SystemExit` reads `SystemExit: exit status <repr of code>`. It
+  message is empty). `Type` is the qualified name as `traceback.format_exception_only`
+  writes it: `module.qualname`, except that `builtins` and `__main__` are omitted, so
+  `KeyError: 'x'` but `json.decoder.JSONDecodeError: ...` and `binaryninja.mcp.ToolError:
+  ...`. A class defined in the submitted code has no `__name__` in the exec globals, so its
+  module is `builtins` and it reads as its bare qualname (`Custom: x`,
+  `make.<locals>.Inner: n`). A `SystemExit` reads `SystemExit: exit status <repr of code>`. It
   is capped like other echoes (`error_truncated`), so the type is never the part cut.
   `error_location` is `{line, text}` for the innermost line of the submitted code on the
   traceback (text stripped, capped at 200 characters), or null on success and for
