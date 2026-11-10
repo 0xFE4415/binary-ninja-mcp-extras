@@ -13,10 +13,14 @@ from helpers import (
     FakeTool,
     FakeToolError,
     _call,
+    _disasm_view,
+    _use_export_root,
     get_tool,
 )
 from helpers_view import (
+    FakeArchitecture,
     FakeBinaryView,
+    FakeType,
 )
 
 import binja_plugin
@@ -373,7 +377,7 @@ def _defined_error_codes() -> set[str]:
 def test_help_error_code_table_matches_the_handler_sources() -> None:
     defined = _defined_error_codes() - {"invalid_params"} - _TOOL_LEVEL_CODES
     listed = {code for codes in _PARAMETER_ERROR_CODES.values() for code in codes}
-    assert listed == defined
+    assert listed - {"invalid_params"} == defined
 
 
 _RAISING_HELPER_CODE_POSITIONS = {
@@ -456,7 +460,9 @@ def test_help_error_code_table_matches_each_tools_reachable_codes(tool_name: str
         if listed_tool == tool_name
         for code in codes
     }
-    assert listed == reachable - {"invalid_params"} - _TOOL_LEVEL_CODES - unlisted
+    assert (
+        listed - {"invalid_params"} == reachable - {"invalid_params"} - _TOOL_LEVEL_CODES - unlisted
+    )
 
 
 @pytest.mark.parametrize(
@@ -499,3 +505,61 @@ def test_help_details_the_dataflow_tool_error_codes() -> None:
     }
     assert parameter["function"]["error_codes"] == ["no_mlil", "analysis_pending"]
     assert parameter["parameter"]["error_codes"] == ["no_variable"]
+
+
+_EXPORT_FILENAME_CODES = [
+    ("", "invalid_params"),
+    ("/abs/path.txt", "invalid_params"),
+    ("up/../down.txt", "invalid_params"),
+    ("back\\slash.txt", "invalid_params"),
+    ("nul\x00byte.txt", "invalid_params"),
+    ("x" * 256, "invalid_params"),
+    ("link.txt", "path_escape"),
+    ("occupied.txt", "export_failed"),
+]
+
+_EXPORT_FILENAME_TOOLS = ["rex_export_disasm", "rex_export_symbols", "rex_type_library_export"]
+
+
+def _use_export_root_with_traps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    root.mkdir(parents=True)
+    (root / "link.txt").symlink_to(tmp_path / "outside.txt")
+    (root / "occupied.txt").mkdir()
+
+
+def _export_filename_error(tool_name: str, filename: str) -> FakeToolError:
+    _, tool = get_tool(tool_name)
+    arguments: dict[str, Any] = {"filename": filename}
+    if tool_name == "rex_export_disasm":
+        view, arguments["address"] = _disasm_view(), 0x1104
+    elif tool_name == "rex_export_symbols":
+        view, arguments["start"], arguments["end"] = FakeBinaryView(), 0x1000, 0x2000
+    else:
+        view = FakeBinaryView(arch=FakeArchitecture("x86_64"), types={"open": FakeType("open")})
+        arguments["library_name"], arguments["names"] = "recovered", ["open"]
+    with pytest.raises(FakeToolError) as error:
+        tool(_call(view), **arguments)
+    return error.value
+
+
+@pytest.mark.parametrize("tool_name", _EXPORT_FILENAME_TOOLS)
+@pytest.mark.parametrize(("filename", "code"), _EXPORT_FILENAME_CODES)
+def test_an_export_filename_raises_the_code_for_its_failure(
+    tool_name: str, filename: str, code: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root_with_traps(monkeypatch, tmp_path)
+    assert _export_filename_error(tool_name, filename).code == code
+
+
+@pytest.mark.parametrize("tool_name", _EXPORT_FILENAME_TOOLS)
+def test_help_lists_exactly_the_codes_an_export_filename_can_raise(tool_name: str) -> None:
+    parameters = {parameter["name"]: parameter for parameter in _help(tool_name)["parameters"]}
+    assert parameters["filename"]["error_codes"] == [
+        "invalid_params",
+        "path_escape",
+        "export_failed",
+    ]
+    assert set(parameters["filename"]["error_codes"]) == {
+        code for _, code in _EXPORT_FILENAME_CODES
+    }

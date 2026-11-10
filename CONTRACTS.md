@@ -168,6 +168,12 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `key_too_large`, `value_too_large`, `data_too_large`, `name_too_large`, or
   `library_name_too_large`. Over-cap component paths, type-name list entries, and export
   filenames return `invalid_params` instead.
+- The `filename` of `rex_export_disasm`, `rex_export_symbols`, and `rex_type_library_export`
+  raises `invalid_params` for an empty name, an absolute path, a backslash, a NUL byte, a
+  `..` component, or a component over 255 bytes. `path_escape` is raised only after
+  resolution, when a symlink inside the export root points outside it, and
+  `export_failed` when the root or file cannot be written. `rex_help` lists these three
+  codes for the parameter.
 - Hex byte patterns (`rex_data_find`, `rex_find_functions_by_pattern`, `rx_multi_find`)
   are whitespace-separated bytes written as exactly two ASCII hex digits, or `??` for any
   byte; whitespace inside a byte is ignored. Any other token (`+f`, `-1`, `0x`, `f_`,
