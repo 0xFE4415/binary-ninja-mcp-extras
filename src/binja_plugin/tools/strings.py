@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from functools import partial
-from itertools import chain
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from binaryninja import mcp
@@ -122,13 +121,15 @@ def rex_string_refs(
         # decoding when the bytes are not UTF-8.
         return matches_text(str(string.value))
 
-    detected = (
-        partial(_detected_string_entry, bv, string) for string in bv.strings if keep(string)
-    )
-    derived = (
-        partial(_derived_string_entry, bv, string) for string in bv.derived_strings if keep(string)
-    )
-    page, total, truncated = _paginate(chain(detected, derived), offset, limit)
+    def entry_builders() -> Iterator[Callable[[], dict[str, object]]]:
+        for string in bv.strings:
+            if keep(string):
+                yield partial(_detected_string_entry, bv, string)
+        for derived_string in bv.derived_strings:
+            if keep(derived_string):
+                yield partial(_derived_string_entry, bv, derived_string)
+
+    page, total, truncated = _paginate(entry_builders(), offset, limit)
     strings = [build_entry() for build_entry in page]
     return {"total": total, "truncated": truncated, "strings": strings}
 

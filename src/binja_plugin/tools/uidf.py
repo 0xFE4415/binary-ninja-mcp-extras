@@ -318,21 +318,20 @@ def _collect_mlil_definitions(
 
 
 def _iter_uidf_entries(targets: list[Function]) -> Iterator[_UidfEntry]:
-    return (
-        {
-            "function": _function_entry(target),
-            "variable": _truncate(stored.name),
-            "definition_site": hex(site.addr),
-            "architecture": site.arch.name,
-            "state": value.type.name,
-            "value": _truncate(str(value)),
-        }
-        for target in targets
-        for stored, sites in sorted(
+    for target in targets:
+        user_values = sorted(
             target.get_all_user_var_values().items(), key=lambda item: item[0].name
         )
-        for site, value in sorted(sites.items(), key=lambda item: item[0].addr)
-    )
+        for stored, sites in user_values:
+            for site, value in sorted(sites.items(), key=lambda item: item[0].addr):
+                yield {
+                    "function": _function_entry(target),
+                    "variable": _truncate(stored.name),
+                    "definition_site": hex(site.addr),
+                    "architecture": site.arch.name,
+                    "state": value.type.name,
+                    "value": _truncate(str(value)),
+                }
 
 
 def _select_definition_site(
@@ -478,12 +477,11 @@ def rex_uidf_clear(
         bv.update_analysis()
         return {"function": resolution.entry, "variable": None, "cleared": cleared}
     matches = _collect_mlil_definitions(target, variable)
-    informed_sites = {
-        site.addr
-        for stored, sites in target.get_all_user_var_values().items()
-        if stored.name == variable
-        for site in sites
-    }
+    informed_sites: set[int] = set()
+    for stored, sites in target.get_all_user_var_values().items():
+        if stored.name == variable:
+            for site in sites:
+                informed_sites.add(site.addr)
     cleared = 0
     for site_variable, definition in matches:
         try:

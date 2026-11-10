@@ -122,13 +122,18 @@ def rex_xrefs_to(
     )
     data_refs = sorted(bv.get_data_refs(addr, max_items=_MAX_LIMIT + 1))
     page, total, truncated = _paginate(chain(code_refs, data_refs), offset, limit)
+    code_entries: list[_CodeReferenceEntry] = []
+    data_entries: list[_DataReference] = []
+    for reference in page:
+        if isinstance(reference, int):
+            data_entries.append({"source": hex(reference)})
+        else:
+            code_entries.append(_code_ref_entry(reference))
     return {
         "total": total,
         "truncated": truncated,
-        "code_refs": [
-            _code_ref_entry(reference) for reference in page if not isinstance(reference, int)
-        ],
-        "data_refs": [{"source": hex(source)} for source in page if isinstance(source, int)],
+        "code_refs": code_entries,
+        "data_refs": data_entries,
     }
 
 

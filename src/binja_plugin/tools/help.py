@@ -138,7 +138,9 @@ def _tools_by_category(registered: dict[str, mcp.Tool]) -> dict[str, list[str]]:
             for name, member in vars(module).items()
             if name in registered and member.__module__ == module.__name__
         )
-    categorized = {name for names in categories.values() for name in names}
+    categorized: set[str] = set()
+    for names in categories.values():
+        categorized.update(names)
     categories[_UNCATEGORIZED] = sorted(set(registered) - categorized)
     return categories
 
@@ -163,13 +165,11 @@ def _category_view(registered: dict[str, mcp.Tool], category: str) -> _CategoryV
 def _categories_view(registered: dict[str, mcp.Tool]) -> _CategoriesView:
     categories = _tools_by_category(registered)
     use_when_by_category = {**_CATEGORY_USE_WHEN, _UNCATEGORIZED: _UNCATEGORIZED_USE_WHEN}
-    return {
-        "categories": [
-            {"name": name, "use_when": use_when_by_category[name], "tools": names}
-            for name, names in categories.items()
-            if names or name != _UNCATEGORIZED
-        ]
-    }
+    views: list[_CategorySummary] = []
+    for name, names in categories.items():
+        if names or name != _UNCATEGORIZED:
+            views.append({"name": name, "use_when": use_when_by_category[name], "tools": names})
+    return {"categories": views}
 
 
 def _tool_view(registered: dict[str, mcp.Tool], tool_name: str) -> _ToolView:
@@ -182,17 +182,19 @@ def _tool_view(registered: dict[str, mcp.Tool], tool_name: str) -> _ToolView:
         )
     schema = tool.input_schema
     required = schema.get("required", [])
-    parameters = [
-        {
+    parameters: list[dict[str, object]] = []
+    for parameter_name, parameter_schema in schema["properties"].items():
+        parameter: dict[str, object] = {
             "name": parameter_name,
             "type": parameter_schema["type"],
             "required": parameter_name in required,
             "description": parameter_schema["description"],
             "error_codes": list(_PARAMETER_ERROR_CODES.get((tool_name, parameter_name), ())),
         }
-        | {bound: parameter_schema[bound] for bound in _SCHEMA_BOUNDS if bound in parameter_schema}
-        for parameter_name, parameter_schema in schema["properties"].items()
-    ]
+        for bound in _SCHEMA_BOUNDS:
+            if bound in parameter_schema:
+                parameter[bound] = parameter_schema[bound]
+        parameters.append(parameter)
     return {"name": tool_name, "description": tool.description, "parameters": parameters}
 
 

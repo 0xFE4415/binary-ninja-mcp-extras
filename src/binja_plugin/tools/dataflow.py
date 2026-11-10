@@ -253,15 +253,16 @@ def rex_hlil_statements(
     hlil = target.hlil
     if hlil is None:
         raise _missing_il_error(target, "HLIL", "no_hlil")
-    rows = [
-        {
-            "address": hex(instruction.address),
-            "index": instruction.instr_index,
-            "text": _truncate(str(instruction)),
-        }
-        for block in hlil.basic_blocks
-        for instruction in block
-    ]
+    rows: list[dict[str, object]] = []
+    for block in hlil.basic_blocks:
+        for instruction in block:
+            rows.append(
+                {
+                    "address": hex(instruction.address),
+                    "index": instruction.instr_index,
+                    "text": _truncate(str(instruction)),
+                }
+            )
     return {
         "function": resolution.entry,
         "total": len(rows),

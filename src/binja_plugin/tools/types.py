@@ -165,9 +165,10 @@ def _object_candidates(bv: BinaryView, name: str) -> list[_ObjectCandidate]:
         for function in bv.get_functions_by_name(name)
     ]
     symbols = bv.get_symbols_by_name(name)
-    import_slot_addresses = {
-        symbol.address for symbol in symbols if symbol.type == SymbolType.ImportAddressSymbol
-    }
+    import_slot_addresses: set[int] = set()
+    for symbol in symbols:
+        if symbol.type == SymbolType.ImportAddressSymbol:
+            import_slot_addresses.add(symbol.address)
     for address in {symbol.address for symbol in symbols}:
         data_variable = bv.get_data_var_at(address)
         if data_variable is None:
