@@ -352,6 +352,17 @@ class FakeFileMetadata:
             self.undo_entries.append(self.redo_entries.pop())
 
 
+class FakeDataVariable:
+    """Mirrors DataVariable, which is falsy exactly when its type is (zero width, e.g. void)."""
+
+    def __init__(self, address: int, type_obj: FakeType) -> None:
+        self.address = address
+        self.type = type_obj
+
+    def __len__(self) -> int:
+        return len(self.type)
+
+
 class FakeBinaryView:
     data_variable_types: Mapping[int, FakeType] = types.MappingProxyType({})
 
@@ -683,11 +694,11 @@ class FakeBinaryView:
     def get_symbols_by_name(self, name: str) -> list[FakeSymbol]:
         return [symbol for symbol in self._symbols if symbol.name == name]
 
-    def get_data_var_at(self, address: int) -> types.SimpleNamespace | None:
+    def get_data_var_at(self, address: int) -> FakeDataVariable | None:
         """Mirror BinaryView.get_data_var_at: a DataVariable-like with ``type``, or None."""
         if address not in self.data_variable_types:
             return None
-        return types.SimpleNamespace(address=address, type=self.data_variable_types[address])
+        return FakeDataVariable(address, self.data_variable_types[address])
 
     def get_type_by_name(self, name: str) -> FakeType | None:
         return self._types.get(name)
@@ -815,13 +826,18 @@ class FakeType:
     ``name`` models the deconflicted name of a NamedTypeReference (the documented return
     contract of import_library_type)."""
 
-    def __init__(self, name: str, type_string: str = "") -> None:
+    def __init__(self, name: str, type_string: str = "", width: int = 0) -> None:
         self.name = name
         self._type_string = type_string
+        self._width = width
 
     @override
     def __str__(self) -> str:
         return self._type_string
+
+    def __len__(self) -> int:
+        """Mirrors Type.__len__, the width: void and function types are falsy on the real core."""
+        return self._width
 
     @staticmethod
     def generate_auto_type_id(source: str, name: str) -> str:
