@@ -383,18 +383,12 @@ class _ItemError(TypedDict):
 
 
 def _render_function_disassembly(function: Function) -> list[tuple[int, str]]:
-    """Render a function's addressed disassembly lines, sorted by address.
-
-    Shared by rex_disasm_at and rex_export_disasm so both tools see the same render.
-    """
-    # Unaddressed continuation lines cannot anchor or be reported by address.
-    addressed = (
-        (line.address, "".join(map(str, line.tokens)))
-        for block in function.basic_blocks
-        for line in block.get_disassembly_text()
-        if line.address is not None
-    )
-    return sorted(addressed, key=lambda entry: entry[0])
+    lines: list[tuple[int, str]] = []
+    for block in function.basic_blocks:
+        for line in block.get_disassembly_text():
+            if line.address is not None:
+                lines.append((line.address, "".join(str(token) for token in line.tokens)))
+    return sorted(lines, key=lambda entry: entry[0])
 
 
 def _disasm_window(
