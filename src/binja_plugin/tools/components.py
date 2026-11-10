@@ -10,7 +10,9 @@ from binja_plugin.tools import (
     _MAX_LIMIT,
     _function_entry,
     _FunctionEntry,
+    _Resolution,
     _resolve_address_batch,
+    _ResolvedFunction,
     _truncate,
     _validate_range,
     _validate_text,
@@ -19,7 +21,6 @@ from binja_plugin.tools import (
 if TYPE_CHECKING:
     from binaryninja.binaryview import BinaryView
     from binaryninja.component import Component
-    from binaryninja.function import Function
 
 # rex_component_* lexical bounds: component names persist in the database and paths are
 # echoed back whole in every response, so both get length caps before reaching the core.
@@ -30,7 +31,7 @@ _MAX_COMPONENT_CHILDREN: Final = 256
 _MAX_COMPONENT_ADD_FUNCTIONS: Final = 128
 
 
-class _AddedFunction(_FunctionEntry):
+class _AddedFunction(_ResolvedFunction):
     added: bool
 
 
@@ -99,9 +100,9 @@ def _component_child_path(parent_path: str, display_name: str) -> str:
     return f"{prefix}/{display_name}"
 
 
-def _add_to_component(component: Component, function: Function) -> _AddedFunction:
-    added = component.add_function(function)
-    return {**_function_entry(function), "added": added}
+def _add_to_component(component: Component, resolution: _Resolution) -> _AddedFunction:
+    added = component.add_function(resolution.function)
+    return {**resolution.entry, "added": added}
 
 
 @mcp.tool(destructive=True)
@@ -119,7 +120,7 @@ def rex_component_add_functions(
     _validate_component_path("path", path)
     resolved = _resolve_address_batch(call, bv, functions, _MAX_COMPONENT_ADD_FUNCTIONS)
     component = _resolve_component(bv, path)
-    results = [_add_to_component(component, function) for function in resolved]
+    results = [_add_to_component(component, resolution) for resolution in resolved]
     added_count = sum(1 for result in results if result["added"])
     return {
         "path": path,

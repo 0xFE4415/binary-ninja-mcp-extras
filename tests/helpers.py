@@ -10,7 +10,7 @@ import sys
 import types
 import typing
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 
@@ -30,6 +30,8 @@ from helpers_view import (
     FakeTypeLibrary,
     RenderableText,
 )
+
+NO_ALTERNATIVES: Final = types.MappingProxyType({"also_containing": [], "same_name": []})
 
 REGISTERED_TOOLS: list[tuple[str, dict[str, object], Any]] = []
 

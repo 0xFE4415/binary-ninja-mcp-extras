@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from helpers import (
+    NO_ALTERNATIVES,
     FakeParsingToolCall,
     FakeToolError,
     _call,
@@ -41,7 +42,18 @@ def test_annotate_many_applies_name_comment_and_prototype_in_one_transaction() -
         "failed": 0,
         "failed_count": 0,
         "total": 2,
-        "results": [{"addr": "0x1150", "ok": True}, {"addr": "0x2000", "ok": True}],
+        "results": [
+            {
+                "addr": "0x1150",
+                "ok": True,
+                "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+            },
+            {
+                "addr": "0x2000",
+                "ok": True,
+                "function": {"start": "0x2000", "name": "helper", **NO_ALTERNATIVES},
+            },
+        ],
     }
     assert main.name == "read_config"
     # The comment is an addressed comment at the exact address given, not the
@@ -72,7 +84,11 @@ def test_annotate_many_reports_a_missing_function_per_item() -> None:
         "total": 2,
         "results": [
             {"addr": "0x1800", "ok": False, "error": "no analyzed function contains 0x1800"},
-            {"addr": "0x1100", "ok": True},
+            {
+                "addr": "0x1100",
+                "ok": True,
+                "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+            },
         ],
     }
     # The batch still applies and commits; only the dead item failed.
@@ -304,7 +320,13 @@ def test_annotate_many_lands_a_comment_at_the_exact_address_given() -> None:
         FakeParsingToolCall(view),
         [{"addr": "0x1150", "comment": "mid-function"}],
     )
-    assert result["results"] == [{"addr": "0x1150", "ok": True}]
+    assert result["results"] == [
+        {
+            "addr": "0x1150",
+            "ok": True,
+            "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+        }
+    ]
     assert main.get_comment_at(0x1150) == "mid-function"
     assert main.get_comment_at(0x1100) == ""
     # The addressed comment never doubles as the function-level comment.
@@ -322,7 +344,18 @@ def test_annotate_many_echoes_the_function_start_for_function_level_fields() -> 
         FakeParsingToolCall(view),
         [{"addr": "0x1150", "name": "renamed"}, {"addr": "0x1150", "prototype": "int main(void)"}],
     )
-    assert result["results"] == [{"addr": "0x1100", "ok": True}, {"addr": "0x1100", "ok": True}]
+    assert result["results"] == [
+        {
+            "addr": "0x1100",
+            "ok": True,
+            "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+        },
+        {
+            "addr": "0x1100",
+            "ok": True,
+            "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+        },
+    ]
     assert main.name == "renamed"
     assert main.user_type == "int main(void)"
 

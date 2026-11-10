@@ -14,7 +14,7 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterable, Iterator
 from itertools import islice
 from pathlib import Path
-from typing import Final, Literal, NoReturn, TypedDict, TypeIs
+from typing import Final, Literal, NamedTuple, NoReturn, TypedDict, TypeIs
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -36,6 +36,10 @@ _MAX_NAME_CANDIDATES: Final = 40
 # rex_disasm_at window sizes: bounded so one call can never request an unbounded
 # instruction render, whatever the containing function's size.
 _MAX_DISASM_CONTEXT: Final = 4096
+
+# Functions listed per alternative list of a resolved function entry: bounded so a
+# pathological overlap or name collision cannot flood the response.
+_MAX_RESOLUTION_ALTERNATIVES: Final = 64
 
 # rex_export_* tools: sweeps write to one fixed directory and echo only a summary, so a
 # large export can never flood the MCP response. The byte cap bounds each file; the
@@ -185,18 +189,66 @@ def _raise_containment_miss(bv: BinaryView, address: int, code: str, described: 
     raise mcp.ToolError(code, message)
 
 
+class _FunctionEntry(TypedDict):
+    start: str
+    name: str
+
+
+def _function_entry(function: Function) -> _FunctionEntry:
+    return {"start": hex(function.start), "name": _truncate(function.name)}
+
+
+class _ResolvedFunction(_FunctionEntry):
+    also_containing: list[_FunctionEntry]
+    same_name: list[_FunctionEntry]
+
+
+class _Resolution(NamedTuple):
+    function: Function
+    entry: _ResolvedFunction
+
+
+def _function_order(function: Function) -> tuple[int, str]:
+    return function.start, function.arch.name
+
+
+def _resolved_entry(
+    bv: BinaryView, chosen: Function, containing: list[Function]
+) -> _ResolvedFunction:
+    also_containing = sorted(
+        (other for other in containing if other != chosen), key=_function_order
+    )
+    same_name = sorted(
+        (other for other in bv.get_functions_by_name(chosen.name) if other != chosen),
+        key=_function_order,
+    )
+    return {
+        **_function_entry(chosen),
+        "also_containing": [
+            _function_entry(other) for other in also_containing[:_MAX_RESOLUTION_ALTERNATIVES]
+        ],
+        "same_name": [_function_entry(other) for other in same_name[:_MAX_RESOLUTION_ALTERNATIVES]],
+    }
+
+
+def _resolve_containing(bv: BinaryView, containing: list[Function]) -> _Resolution:
+    """Pick the containing function with the lowest start, architecture name breaking ties."""
+    chosen = min(containing, key=_function_order)
+    return _Resolution(chosen, _resolved_entry(bv, chosen, containing))
+
+
 def _require_containing_function(
     bv: BinaryView, address: int, code: str, described: str
-) -> Function:
-    """Return the function containing ``address``, or reject with the caller's convention.
+) -> _Resolution:
+    """Resolve ``address`` to one containing function, or reject with the caller's convention.
 
     ``code`` is deliberate: scan-style tools answer ``no_function`` for a containment
     miss, argument-validating tools treat the same miss as ``invalid_params``.
     """
-    functions = bv.get_functions_containing(address)
-    if not functions:
+    containing = bv.get_functions_containing(address)
+    if not containing:
         _raise_containment_miss(bv, address, code, described)
-    return functions[0]
+    return _resolve_containing(bv, containing)
 
 
 _SKIP_CAUSES: Final[dict[AnalysisSkipReason, str]] = {
@@ -239,7 +291,7 @@ def _missing_il_error(
     )
 
 
-def _require_analyzed_function(bv: BinaryView, address: int) -> Function:
+def _require_analyzed_function(bv: BinaryView, address: int) -> _Resolution:
     return _require_containing_function(bv, address, "invalid_params", "analyzed function")
 
 
@@ -275,7 +327,7 @@ def _parse_address_batch(call: mcp.ToolCall, entries: object, maximum: int, noun
 
 def _resolve_address_pairs(
     call: mcp.ToolCall, bv: BinaryView, addresses: object, maximum: int, noun: str
-) -> list[tuple[int, Function]]:
+) -> list[tuple[int, _Resolution]]:
     """Resolve a tool's list of address expressions to (address, analyzed function) pairs."""
     return [
         (address, _require_analyzed_function(bv, address))
@@ -285,7 +337,7 @@ def _resolve_address_pairs(
 
 def _resolve_address_batch(
     call: mcp.ToolCall, bv: BinaryView, functions: object, maximum: int
-) -> list[Function]:
+) -> list[_Resolution]:
     """Resolve a tool's ``functions`` list of address expressions to analyzed functions."""
     pairs = _resolve_address_pairs(call, bv, functions, maximum, "functions")
     return [function for _, function in pairs]
@@ -319,22 +371,13 @@ def _iter_pattern_matches(
             position += _READ_CHUNK
 
 
-def _require_function(bv: BinaryView, address: int) -> Function:
+def _require_function(bv: BinaryView, address: int) -> _Resolution:
     return _require_containing_function(bv, address, "no_function", "function")
 
 
 class _ItemError(TypedDict):
     code: str
     message: str
-
-
-class _FunctionEntry(TypedDict):
-    start: str
-    name: str
-
-
-def _function_entry(function: Function) -> _FunctionEntry:
-    return {"start": hex(function.start), "name": _truncate(function.name)}
 
 
 def _render_function_disassembly(function: Function) -> list[tuple[int, str]]:

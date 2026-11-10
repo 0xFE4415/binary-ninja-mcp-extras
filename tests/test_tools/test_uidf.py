@@ -4,6 +4,7 @@ from typing import override
 
 import pytest
 from helpers import (
+    NO_ALTERNATIVES,
     FakeParsingToolCall,
     FakeToolError,
     _call,
@@ -98,7 +99,7 @@ def test_uidf_set_informs_a_constant_and_renders_hlil(monkeypatch: pytest.Monkey
     _, uidf_set = get_tool("rex_uidf_set")
     result = uidf_set(_call(view), 0x1100, "rax_1", "0x10")
     assert result == {
-        "function": {"start": "0x1100", "name": "main"},
+        "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
         "variable": "rax_1",
         "definition_site": "0x1104",
         "value": {"state": "ConstantValue", "rendered": "<const 0x10>"},
@@ -726,7 +727,7 @@ def test_uidf_clear_clears_one_variable_across_sites() -> None:
     _, uidf_clear = get_tool("rex_uidf_clear")
     result = uidf_clear(_call(view), 0x1100, "var_10")
     assert result == {
-        "function": {"start": "0x1100", "name": "main"},
+        "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
         "variable": "var_10",
         "cleared": 2,
         "definition_sites": 3,
@@ -747,7 +748,7 @@ def test_uidf_clear_all_for_a_function() -> None:
     _inform(main, "rax_1", 0x1104, "<const 0x3>")
     _, uidf_clear = get_tool("rex_uidf_clear")
     assert uidf_clear(_call(view), 0x1100) == {
-        "function": {"start": "0x1100", "name": "main"},
+        "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
         "variable": None,
         "cleared": 2,
     }
@@ -782,7 +783,7 @@ def test_uidf_clear_needs_mlil_only_for_named_variables() -> None:
         uidf_clear(_call(view), 0x2000, "x")
     assert exc.value.code == "no_mlil"
     assert uidf_clear(_call(view), 0x2000) == {
-        "function": {"start": "0x2000", "name": "leaf"},
+        "function": {"start": "0x2000", "name": "leaf", **NO_ALTERNATIVES},
         "variable": None,
         "cleared": 0,
     }
@@ -797,6 +798,7 @@ def test_uidf_list_reports_each_informed_site() -> None:
     _inform(handler, "rax_1", 0x2004, "<const 0x3>")
     _, uidf_list = get_tool("rex_uidf_list")
     assert uidf_list(_call(view)) == {
+        "function": None,
         "total": 4,
         "truncated": False,
         "values": [
@@ -835,6 +837,7 @@ def test_uidf_list_reports_each_informed_site() -> None:
         ],
     }
     scoped = uidf_list(_call(view), 0x2000)
+    assert scoped["function"] == {"start": "0x2000", "name": "handler", **NO_ALTERNATIVES}
     assert scoped["total"] == 1
     assert scoped["values"][0]["function"] == {"start": "0x2000", "name": "handler"}
     assert uidf_list(_call(view), 0x1100)["total"] == 3
@@ -858,11 +861,16 @@ def test_uidf_list_paginates_and_rejects_bad_arguments() -> None:
     assert tail["truncated"] is False
     assert [entry["variable"] for entry in tail["values"]] == ["var_10"]
     beyond = uidf_list(_call(view), offset=10)
-    assert beyond == {"total": 3, "truncated": False, "values": []}
+    assert beyond == {"function": None, "total": 3, "truncated": False, "values": []}
     empty_page = uidf_list(_call(view), limit=0)
     assert empty_page["values"] == []
     assert empty_page["truncated"] is True
-    assert uidf_list(_call(FakeBinaryView())) == {"total": 0, "truncated": False, "values": []}
+    assert uidf_list(_call(FakeBinaryView())) == {
+        "function": None,
+        "total": 0,
+        "truncated": False,
+        "values": [],
+    }
     for kwargs, message in (
         ({"limit": -1}, "Invalid integer parameter 'limit': Must be at least 0"),
         (

@@ -236,6 +236,7 @@ class FakeFunction:
         vars: list[FakeVariable] | None = None,
         mlil: FakeMediumLevelIL | FakeMLILInstructions | None = None,
         arch: FakeArchitecture | None = None,
+        extra_ranges: tuple[tuple[int, int], ...] = (),
         analysis_skipped: bool = False,
         analysis_skip_reason: FakeAnalysisSkipReason = FakeAnalysisSkipReason.NoSkipReason,
     ) -> None:
@@ -245,6 +246,7 @@ class FakeFunction:
         self.name = name
         self.start = start
         self.end = end
+        self.extra_ranges = extra_ranges
         self.hlil = hlil
         self.callers = callers if callers is not None else []
         self.callees = callees if callees is not None else []
@@ -271,6 +273,12 @@ class FakeFunction:
         self.clear_all_user_var_values_error: Exception | None = None
         # Empty until "analyzed": the define tools' wait gates on the first block.
         self.basic_blocks: list[FakeBasicBlock] = []
+
+    def contains(self, address: int) -> bool:
+        """Mirror containment for a discontiguous function: its entry range or a block range."""
+        return self.start <= address < self.end or any(
+            low <= address < high for low, high in self.extra_ranges
+        )
 
     @property
     def highest_address(self) -> int:
@@ -558,7 +566,7 @@ class FakeBinaryView:
         return len(data)
 
     def get_functions_containing(self, address: int) -> list[FakeFunction]:
-        return [f for f in self.functions if f.start <= address < f.end]
+        return [f for f in self.functions if f.contains(address)]
 
     def is_valid_offset(self, address: int) -> bool:
         """Mirror BinaryView.is_valid_offset: the address is mapped by the view.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from helpers import (
+    NO_ALTERNATIVES,
     FakeParsingToolCall,
     FakeToolError,
     _call,
@@ -209,8 +210,8 @@ def test_component_add_functions_resolves_then_adds() -> None:
     assert result["failed_count"] == 0
     assert result["total"] == 2
     assert result["results"] == [
-        {"start": "0x3000", "name": "crypto_mix", "added": True},
-        {"start": "0x5000", "name": "root_fn", "added": True},
+        {"start": "0x3000", "name": "crypto_mix", **NO_ALTERNATIVES, "added": True},
+        {"start": "0x5000", "name": "root_fn", **NO_ALTERNATIVES, "added": True},
     ]
     added_names = [function.name for function in view.root_component.children[0].added_functions]
     assert added_names == ["crypto_mix", "root_fn"]
@@ -237,7 +238,9 @@ def test_component_add_functions_reports_declined_adds() -> None:
     assert result["applied"] == 0
     assert result["failed_count"] == 1
     assert result["total"] == 1
-    assert result["results"] == [{"start": "0x1000", "name": "parse_header", "added": False}]
+    assert result["results"] == [
+        {"start": "0x1000", "name": "parse_header", **NO_ALTERNATIVES, "added": False}
+    ]
 
 
 def test_component_add_functions_into_the_root_component() -> None:
@@ -250,7 +253,7 @@ def test_component_add_functions_into_the_root_component() -> None:
         "applied": 1,
         "failed_count": 0,
         "total": 1,
-        "results": [{"start": "0x3000", "name": "crypto_mix", "added": True}],
+        "results": [{"start": "0x3000", "name": "crypto_mix", **NO_ALTERNATIVES, "added": True}],
     }
     assert len(view.root_component.added_functions) == 1
     assert view.component_path_lookups == []

@@ -4,6 +4,7 @@ from typing import override
 
 import pytest
 from helpers import (
+    NO_ALTERNATIVES,
     FakeDisasmFunction,
     FakeParsingToolCall,
     FakeToolError,
@@ -29,7 +30,7 @@ def test_disasm_at_returns_function_and_window() -> None:
     _, disasm = get_tool("rex_disasm_at")
     result = disasm(_call(view), 0x1104)
     assert result == {
-        "function": {"start": "0x1100", "name": "main"},
+        "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
         "instructions": [
             {"address": "0x1100", "text": "push rbp"},
             {"address": "0x1101", "text": "mov rbp, rsp"},
@@ -563,12 +564,14 @@ def test_decompile_many_renders_each_requested_function() -> None:
             {
                 "start": "0x1100",
                 "name": "main",
+                **NO_ALTERNATIVES,
                 "lines": ["void main() {", "    return 0;", "}"],
                 "truncated": False,
             },
             {
                 "start": "0x2000",
                 "name": "handler",
+                **NO_ALTERNATIVES,
                 "lines": ["void handler() {", "    recv(fd, buf, n);", "    return 1;", "}"],
                 "truncated": False,
             },
@@ -588,6 +591,7 @@ def test_decompile_many_truncates_lines_and_echoes() -> None:
             {
                 "start": "0x2000",
                 "name": "handler",
+                **NO_ALTERNATIVES,
                 "lines": ["void handler() {", "    recv(fd, buf, n);"],
                 "truncated": True,
             }
@@ -610,7 +614,9 @@ def test_decompile_many_renders_unlifted_functions_as_empty() -> None:
     view = _decompile_view()
     _, decompile = get_tool("rex_decompile_many")
     assert decompile(FakeParsingToolCall(view), ["0x3000"]) == {
-        "functions": [{"start": "0x3000", "name": "sink", "lines": [], "truncated": False}]
+        "functions": [
+            {"start": "0x3000", "name": "sink", **NO_ALTERNATIVES, "lines": [], "truncated": False}
+        ]
     }
 
 
@@ -699,7 +705,7 @@ def test_quick_main_resolves_main_from_the_entry_function_symbol() -> None:
         "main": "0x1000",
         "note": None,
         "hint": None,
-        "function": {"start": "0x1000", "name": "main"},
+        "function": {"start": "0x1000", "name": "main", **NO_ALTERNATIVES},
         "lines": ["int main() {", "    return 0;", "}"],
         "truncated": False,
     }
@@ -859,7 +865,7 @@ def test_quick_main_falls_back_to_the_entry_function_and_says_so() -> None:
     assert result["note"] == (
         "no main symbol and no parsable __libc_start_main pointer in the entry function"
     )
-    assert result["function"] == {"start": "0x1000", "name": "_start"}
+    assert result["function"] == {"start": "0x1000", "name": "_start", **NO_ALTERNATIVES}
     assert result["lines"] == ["void _start() {", "    char *p = 0;", "}"]
 
 
@@ -987,7 +993,7 @@ def test_quick_main_resolves_an_unlifted_main_to_empty_lines() -> None:
         "main": "0x2000",
         "note": None,
         "hint": None,
-        "function": {"start": "0x2000", "name": "main"},
+        "function": {"start": "0x2000", "name": "main", **NO_ALTERNATIVES},
         "lines": [],
         "truncated": False,
     }
@@ -1011,7 +1017,7 @@ def test_disasm_many_renders_one_window_per_address() -> None:
             {
                 "address": "0x1104",
                 "index": 0,
-                "function": {"start": "0x1100", "name": "main"},
+                "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
                 "instructions": [
                     {"address": "0x1104", "text": "sub rsp, 0x20"},
                     {"address": "0x1108", "text": "mov eax, 1"},
@@ -1022,7 +1028,7 @@ def test_disasm_many_renders_one_window_per_address() -> None:
             {
                 "address": "0x2000",
                 "index": 1,
-                "function": {"start": "0x2000", "name": "handler"},
+                "function": {"start": "0x2000", "name": "handler", **NO_ALTERNATIVES},
                 "instructions": [
                     {"address": "0x2000", "text": "push rbp"},
                     {"address": "0x2001", "text": "ret"},

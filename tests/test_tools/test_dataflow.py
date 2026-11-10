@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from helpers import FakeToolError, _call, get_tool
+from helpers import NO_ALTERNATIVES, FakeToolError, _call, get_tool
 from helpers_dataflow import (
     FakeHLIL,
     FakeInstruction,
@@ -156,7 +156,7 @@ def test_hlil_statements_page_past_the_end_keeps_the_exact_total() -> None:
     _, statements = get_tool("rex_hlil_statements")
     result = statements(_call(view), function=0x1000, limit=10, offset=5)
     assert result == {
-        "function": {"start": "0x1000", "name": "main"},
+        "function": {"start": "0x1000", "name": "main", **NO_ALTERNATIVES},
         "total": 2,
         "truncated": False,
         "statements": [],
@@ -355,7 +355,7 @@ def _two_use_view() -> FakeBinaryView:
 
 def test_uses_report_the_exact_response_for_a_single_assignment() -> None:
     assert _run_uses(_two_use_view()) == {
-        "function": {"start": "0x1000", "name": "check"},
+        "function": {"start": "0x1000", "name": "check", **NO_ALTERNATIVES},
         "definition_site": "0x1020",
         "variables": [
             {

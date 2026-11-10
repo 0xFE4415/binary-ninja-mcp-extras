@@ -11,10 +11,12 @@ from binaryninja.function import Function
 
 from binja_plugin.tools import (
     _function_entry,
+    _function_order,
     _FunctionEntry,
     _parse_address_batch,
     _raise_containment_miss,
     _require_function,
+    _ResolvedFunction,
     _validate_range,
 )
 
@@ -31,6 +33,8 @@ _MAX_DEFINE_WAIT_MS: Final = 600000
 
 
 class _CallPathsResult(TypedDict):
+    from_function: _ResolvedFunction
+    to_function: _ResolvedFunction
     reachable: bool
     paths: list[list[_FunctionEntry]]
     truncated: bool
@@ -105,10 +109,13 @@ def rex_call_paths(
     bv = call.binary_view
     max_depth = _validate_range("max_depth", max_depth, 1, _MAX_CALL_PATH_DEPTH)
     max_paths = _validate_range("max_paths", max_paths, 1, _MAX_CALL_PATHS)
-    source = _require_function(bv, from_addr)
-    target = _require_function(bv, to_addr)
+    source_resolution = _require_function(bv, from_addr)
+    target_resolution = _require_function(bv, to_addr)
+    source, target = source_resolution.function, target_resolution.function
     if source.start == target.start:
         return {
+            "from_function": source_resolution.entry,
+            "to_function": target_resolution.entry,
             "reachable": True,
             "paths": [[_function_entry(source)]],
             "truncated": False,
@@ -139,6 +146,8 @@ def rex_call_paths(
     # hit_path_cap is the only truncation signal: paths can never exceed max_paths (the inner
     # loop breaks first), and reaching max_paths only happens through that same append.
     return {
+        "from_function": source_resolution.entry,
+        "to_function": target_resolution.entry,
         "reachable": bool(paths),
         "paths": paths,
         "truncated": hit_path_cap,
@@ -152,7 +161,7 @@ def rex_function_containing(call: mcp.ToolCall, addr: mcp.Address) -> _FunctionC
 
     :param addr: Address to look up.
     """
-    functions = call.binary_view.get_functions_containing(addr)
+    functions = sorted(call.binary_view.get_functions_containing(addr), key=_function_order)
     if not functions:
         _raise_containment_miss(call.binary_view, addr, "no_function", "function")
     return {
@@ -221,11 +230,11 @@ def rex_function_define_many(
 
 
 @mcp.tool(destructive=True)
-def rex_function_undefine(call: mcp.ToolCall, start: mcp.Address) -> _FunctionEntry:
+def rex_function_undefine(call: mcp.ToolCall, start: mcp.Address) -> _ResolvedFunction:
     """Remove the user function covering an address.
 
     :param start: Any address inside the function to remove.
     """
-    function = _require_function(call.binary_view, start)
-    call.binary_view.remove_user_function(function)
-    return _function_entry(function)
+    resolution = _require_function(call.binary_view, start)
+    call.binary_view.remove_user_function(resolution.function)
+    return resolution.entry

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from helpers import (
+    NO_ALTERNATIVES,
     FakeToolError,
     _call,
     _disasm_view,
@@ -28,6 +29,7 @@ def test_export_disasm_writes_the_window_to_a_file(
     result = export(_call(view), 0x1104, filename="main.txt")
     expected = "push rbp\nmov rbp, rsp\nsub rsp, 0x20\nmov eax, 1\nleave\nret\n"
     assert result == {
+        "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
         "path": str((root / "main.txt").resolve()),
         "bytes_written": len(expected.encode("utf-8")),
         "lines": 6,

@@ -117,6 +117,16 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_undo` | Undo the view's last transaction; reports post-op stack depths. |
 | `rex_redo` | Redo the last undone transaction; reports post-op stack depths. |
 
+### Addresses inside several functions
+
+A cold block or outlined fragment can lie inside its parent and in a function of its own.
+Tools that take an address pick the containing function with the lowest start (the
+architecture name breaks a tie) and report it as `function`, with `also_containing` and
+`same_name` listing the other containing functions and the other functions sharing its
+name. A function name in an address expression can be ambiguous the same way, and
+`same_name` shows it. `rex_function_containing` lists every containing function in that
+order.
+
 ### Bounds on database-wide scans
 
 On a database with hundreds of thousands of functions, the whole-database searches

@@ -32,6 +32,7 @@ from binja_plugin.tools import (
     _paginate,
     _render_hlil_lines,
     _require_analyzed_function,
+    _ResolvedFunction,
     _truncate,
     _validate_range,
 )
@@ -117,7 +118,7 @@ class _UidfEntry(TypedDict):
 
 
 class _UidfSetResult(TypedDict):
-    function: _FunctionEntry
+    function: _ResolvedFunction
     variable: str
     definition_site: str
     value: _ValueDescription
@@ -127,7 +128,7 @@ class _UidfSetResult(TypedDict):
 
 
 class _UidfSetManyResult(TypedDict):
-    function: _FunctionEntry
+    function: _ResolvedFunction
     applied: int
     failed: int
     total: int
@@ -138,19 +139,20 @@ class _UidfSetManyResult(TypedDict):
 
 
 class _UidfClearAllResult(TypedDict):
-    function: _FunctionEntry
+    function: _ResolvedFunction
     variable: None
     cleared: int
 
 
 class _UidfClearVariableResult(TypedDict):
-    function: _FunctionEntry
+    function: _ResolvedFunction
     variable: str
     cleared: int
     definition_sites: int
 
 
 class _UidfListResult(TypedDict):
+    function: _ResolvedFunction | None
     total: int
     truncated: bool
     values: list[_UidfEntry]
@@ -392,7 +394,8 @@ def rex_uidf_set(
     """
     bv = call.binary_view
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
-    target = _require_analyzed_function(bv, function)
+    resolution = _require_analyzed_function(bv, function)
+    target = resolution.function
     site_variable, site = _select_definition_site(target, variable, def_address)
     parsed = _parse_uidf_value(bv, value, state, site)
     try:
@@ -405,7 +408,7 @@ def rex_uidf_set(
     analysis_complete = _wait_analysis_settled(bv)
     lines, truncated = _render_hlil_lines(target.hlil, max_lines)
     return {
-        "function": _function_entry(target),
+        "function": resolution.entry,
         "variable": _truncate(variable),
         "definition_site": hex(site.address),
         "value": _describe_value(parsed),
@@ -430,7 +433,8 @@ def rex_uidf_set_many(
     """
     bv = call.binary_view
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
-    target = _require_analyzed_function(bv, function)
+    resolution = _require_analyzed_function(bv, function)
+    target = resolution.function
     if not isinstance(items, list):
         raise mcp.ToolError("invalid_params", "items must be a list of uidf item objects")
     if not 1 <= len(items) <= _MAX_UIDF_BATCH:
@@ -450,7 +454,7 @@ def rex_uidf_set_many(
     lines, truncated = _render_hlil_lines(target.hlil, max_lines)
     failed = len(results) - applied
     return {
-        "function": _function_entry(target),
+        "function": resolution.entry,
         "applied": applied,
         "failed": failed,
         "total": len(results),
@@ -473,7 +477,8 @@ def rex_uidf_clear(
     :param variable: Variable whose user values clear at every definition site; omit for all.
     """
     bv = call.binary_view
-    target = _require_analyzed_function(bv, function)
+    resolution = _require_analyzed_function(bv, function)
+    target = resolution.function
     if variable is None:
         cleared = sum(len(sites) for sites in target.get_all_user_var_values().values())
         try:
@@ -483,7 +488,7 @@ def rex_uidf_clear(
                 "clear_failed", f"could not clear user variable values: {error}"
             ) from None
         bv.update_analysis()
-        return {"function": _function_entry(target), "variable": None, "cleared": cleared}
+        return {"function": resolution.entry, "variable": None, "cleared": cleared}
     matches = _collect_mlil_definitions(target, variable)
     informed_sites = {
         site.addr
@@ -504,7 +509,7 @@ def rex_uidf_clear(
             cleared += 1
     bv.update_analysis()
     return {
-        "function": _function_entry(target),
+        "function": resolution.entry,
         "variable": _truncate(variable),
         "cleared": cleared,
         "definition_sites": len(matches),
@@ -527,10 +532,16 @@ def rex_uidf_list(
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
+    resolution = _require_analyzed_function(bv, function) if function is not None else None
     targets = (
-        [_require_analyzed_function(bv, function)]
-        if function is not None
+        [resolution.function]
+        if resolution is not None
         else sorted(bv.functions, key=lambda entry: entry.start)
     )
     page, total, truncated = _paginate(_iter_uidf_entries(targets), offset, limit)
-    return {"total": total, "truncated": truncated, "values": page}
+    return {
+        "function": resolution.entry if resolution is not None else None,
+        "total": total,
+        "truncated": truncated,
+        "values": page,
+    }

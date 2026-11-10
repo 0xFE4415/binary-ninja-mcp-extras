@@ -15,14 +15,16 @@ from binja_plugin.tools import (
     _compile_user_regex,
     _disasm_window,
     _drop,
-    _function_entry,
-    _FunctionEntry,
     _ItemError,
     _name_filter,
     _parse_address_entry,
     _render_function_disassembly,
     _require_analyzed_function,
+    _Resolution,
     _resolve_address_batch,
+    _resolve_containing,
+    _resolved_entry,
+    _ResolvedFunction,
     _truncate,
     _validate_disasm_window,
     _validate_range,
@@ -71,7 +73,7 @@ _QUICK_MAIN_TRAP_HINT: Final = (
 _HEX_ADDRESS_PATTERN: Final = re.compile(r"0x[0-9a-fA-F]+")
 
 
-class _DecompiledFunction(_FunctionEntry):
+class _DecompiledFunction(_ResolvedFunction):
     lines: list[str]
     truncated: bool
 
@@ -86,7 +88,7 @@ class _InstructionLine(TypedDict):
 
 
 class _DisasmAtResult(TypedDict):
-    function: _FunctionEntry
+    function: _ResolvedFunction
     instructions: list[_InstructionLine]
     truncated: bool
 
@@ -100,7 +102,7 @@ class _DisasmError(TypedDict):
 class _DisasmWindow(TypedDict):
     address: str
     index: int
-    function: _FunctionEntry
+    function: _ResolvedFunction
     instructions: list[_InstructionLine]
     truncated: bool
 
@@ -136,7 +138,7 @@ class _QuickMainResult(TypedDict):
     main: str | None
     note: str | None
     hint: str | None
-    function: _FunctionEntry
+    function: _ResolvedFunction
     lines: list[str]
     truncated: bool
 
@@ -179,7 +181,7 @@ def _argument_address(call: mcp.ToolCall, argument: str | None) -> int | None:
 
 def _entry_argument_main(
     bv: BinaryView, call: mcp.ToolCall, entry: Function
-) -> tuple[Function | None, str | None]:
+) -> tuple[_Resolution | None, str | None]:
     """Find main as the __libc_start_main-style pointer argument of the entry function."""
     hlil = entry.hlil
     if hlil is None:
@@ -192,7 +194,7 @@ def _entry_argument_main(
             return None, _MAIN_FALLBACK_NOTE
         functions = bv.get_functions_containing(address)
         if functions:
-            return functions[0], None
+            return _resolve_containing(bv, functions), None
         return (
             None,
             f"found candidate main address {address:#x} but no analyzed function contains it",
@@ -201,16 +203,18 @@ def _entry_argument_main(
 
 
 def _resolve_main(
-    bv: BinaryView, call: mcp.ToolCall, entry: Function
-) -> tuple[Function | None, _MainMethod, str | None]:
+    bv: BinaryView, call: mcp.ToolCall, entry: _Resolution
+) -> tuple[_Resolution | None, _MainMethod, str | None]:
     """Resolve main: function symbol first, then the entry stub's pointer argument."""
-    if entry.name in _MAIN_SYMBOL_NAMES:
+    if entry.function.name in _MAIN_SYMBOL_NAMES:
         return entry, "symbol", None
     for name in _MAIN_SYMBOL_NAMES:
         candidates = sorted(bv.get_functions_by_name(name), key=lambda function: function.start)
         if candidates:
-            return candidates[0], "symbol", None
-    main, note = _entry_argument_main(bv, call, entry)
+            chosen = candidates[0]
+            resolved = _resolved_entry(bv, chosen, bv.get_functions_containing(chosen.start))
+            return _Resolution(chosen, resolved), "symbol", None
+    main, note = _entry_argument_main(bv, call, entry.function)
     if main is not None:
         return main, "entry-arg", note
     return None, "entry-fallback", note
@@ -251,9 +255,9 @@ def rex_decompile_many(
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
     resolved = _resolve_address_batch(call, bv, functions, _MAX_DECOMPILE_BATCH)
     rendered: list[_DecompiledFunction] = []
-    for function in resolved:
-        lines, truncated = _render_hlil_lines(function.hlil, max_lines)
-        rendered.append({**_function_entry(function), "lines": lines, "truncated": truncated})
+    for resolution in resolved:
+        lines, truncated = _render_hlil_lines(resolution.function.hlil, max_lines)
+        rendered.append({**resolution.entry, "lines": lines, "truncated": truncated})
     return {"functions": rendered}
 
 
@@ -272,11 +276,11 @@ def rex_disasm_at(
     """
     bv = call.binary_view
     before, after = _validate_disasm_window(before, after)
-    function = _require_analyzed_function(bv, address)
-    lines = _render_function_disassembly(function)
+    resolution = _require_analyzed_function(bv, address)
+    lines = _render_function_disassembly(resolution.function)
     start, end = _disasm_window(lines, address, before, after)
     return {
-        "function": _function_entry(function),
+        "function": resolution.entry,
         "instructions": [
             {"address": hex(line_address), "text": _truncate(text)}
             for line_address, text in lines[start:end]
@@ -313,7 +317,7 @@ def rex_disasm_many(
     for index, address_expression in enumerate(addresses):
         try:
             address = _parse_address_entry(call, index, address_expression, "addresses")
-            function = _require_analyzed_function(bv, address)
+            resolution = _require_analyzed_function(bv, address)
         except mcp.ToolError as error:
             errors.append(
                 {
@@ -323,7 +327,7 @@ def rex_disasm_many(
                 }
             )
             continue
-        lines = _render_function_disassembly(function)
+        lines = _render_function_disassembly(resolution.function)
         start, end = _disasm_window(lines, address, 0, max_lines - 1)
         window = lines[start:end]
         if total_lines + len(window) > _MAX_DISASM_MANY_TOTAL_LINES:
@@ -335,7 +339,7 @@ def rex_disasm_many(
             {
                 "address": hex(address),
                 "index": index,
-                "function": _function_entry(function),
+                "function": resolution.entry,
                 "instructions": [
                     {"address": hex(line_address), "text": _truncate(text)}
                     for line_address, text in window
@@ -466,18 +470,20 @@ def rex_quick_main(
         raise mcp.ToolError(
             "no_function", f"no analyzed function contains the entry point {entry_point:#x}"
         )
-    main, method, note = _resolve_main(bv, call, functions[0])
-    function = main if main is not None else functions[0]
+    entry = _resolve_containing(bv, functions)
+    main, method, note = _resolve_main(bv, call, entry)
+    resolution = main if main is not None else entry
+    function = resolution.function
     lines, truncated = _render_hlil_lines(function.hlil, max_lines)
     mnemonic = _trap_terminator(function)
     hint = _QUICK_MAIN_TRAP_HINT.format(mnemonic=mnemonic) if mnemonic is not None else None
     return {
         "entry_point": hex(entry_point),
         "method": method,
-        "main": hex(main.start) if main is not None else None,
+        "main": hex(main.function.start) if main is not None else None,
         "note": note,
         "hint": hint,
-        "function": _function_entry(function),
+        "function": resolution.entry,
         "lines": lines,
         "truncated": truncated,
     }

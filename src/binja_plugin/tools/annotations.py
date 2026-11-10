@@ -9,7 +9,12 @@ from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
 from binaryninja.function import Function
 
-from binja_plugin.tools import _is_json_object, _truncate
+from binja_plugin.tools import (
+    _is_json_object,
+    _resolve_containing,
+    _ResolvedFunction,
+    _truncate,
+)
 
 if TYPE_CHECKING:
     from binaryninja.types import Type
@@ -45,6 +50,7 @@ _ANNOTATE_ITEMS_SCHEMA: Final[dict[str, object]] = {
 class _AnnotationRow(TypedDict):
     addr: str
     ok: bool
+    function: NotRequired[_ResolvedFunction]
     error: NotRequired[str]
 
 
@@ -168,8 +174,8 @@ def _annotate_resolve(
         address = call.parse_address(addr_value)
     except Exception as error:
         return _annotate_addr_error(addr_value, f"bad address expression: {error}"), None
-    functions = bv.get_functions_containing(address)
-    if not functions:
+    containing = bv.get_functions_containing(address)
+    if not containing:
         return (
             _annotate_function_error(address, f"no analyzed function contains {address:#x}"),
             None,
@@ -183,14 +189,14 @@ def _annotate_resolve(
             parsed_type, _ = bv.parse_type_string(fields.prototype)
         except Exception as error:
             return _annotate_function_error(address, f"bad type: {_truncate(str(error))}"), None
-    function = functions[0]
+    resolution = _resolve_containing(bv, containing)
     # A comment lands at the exact address the item named; the other fields are
     # function-level and apply to the start, so the row echoes where it landed.
-    annotated = address if fields.comment is not None else function.start
+    annotated = address if fields.comment is not None else resolution.function.start
     return (
-        {"addr": hex(annotated), "ok": True},
+        {"addr": hex(annotated), "ok": True, "function": resolution.entry},
         _AnnotationPlan(
-            function=function,
+            function=resolution.function,
             address=address,
             name=fields.name,
             comment=fields.comment,

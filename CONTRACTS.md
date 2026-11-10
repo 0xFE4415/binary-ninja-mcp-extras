@@ -45,6 +45,25 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   new-function analysis, `analysis.mode`, or a suspended pipeline), and does not advise
   waiting. Otherwise analysis is pending and the message advises
   `bn_analysis_update_and_wait` or a bounded `rex_analysis_wait`.
+- An address can lie in several functions: a cold or outlined block belongs to its parent and
+  to a function of its own. Every tool that resolves an address expression to a function
+  (`rex_function_constraints`, `rex_hlil_statements`, `rex_mlil_uses`,
+  `rex_parameter_variables`, `rex_uidf_set`, `rex_uidf_set_many`, `rex_uidf_clear`,
+  `rex_uidf_list`, `rex_disasm_at`, `rex_disasm_many`, `rex_decompile_many`,
+  `rex_export_disasm`, `rex_call_paths`, `rex_function_undefine`,
+  `rex_component_add_functions`, `rex_annotate_many`, and `rex_quick_main`) picks one: the
+  containing function with the lowest start address, the architecture name breaking a tie
+  between equal starts. The core lists containing functions in no documented order, so the
+  pick never follows it. The chosen function comes back as a resolved function entry,
+  `{start, name, also_containing, same_name}`: `also_containing` lists the other functions
+  that contain the address and `same_name` the other functions with the chosen name, each
+  as `{start, name}` by ascending start and at most 64 per list. `rex_function_containing`
+  lists every containing function in the same order, so its first entry is the pick.
+  Passing a function name in an address expression is ambiguous too: the core resolves it
+  to one address before the plugin sees it and does not say that other functions share the
+  name. `same_name` is where that shows, whether the caller passed a name or an address.
+  `rex_quick_main` reports the entry function's containing functions, or the containing
+  functions of main's start when main is found by symbol.
 - For `rex_string_search`, `rex_data_find`, `rx_data_find`, `rex_string_refs`, and
   `rex_uidf_list`, a truncated `total` is a lower bound: scanning stops at the first
   result past the page. `rex_xrefs_to` has the same rule for fetched refs; `rx_multi_find`
@@ -162,20 +181,24 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
 ### Response fields
 
 The top-level fields of each response, beyond the paging and truncation rules above.
-Addresses are hex strings, and a function entry is `{start, name}`. Fields marked `?` are
+Addresses are hex strings, and a function entry is `{start, name}`. A resolved function entry
+adds `also_containing` and `same_name`, both lists of function entries (see above); every
+`function` field below that a tool fills from an address is one. Fields marked `?` are
 present only on some rows.
 
 - `rex_analysis_wait`: `completed`, `elapsed_ms`, `progress` (`{state, count, total}`),
   `function_count`, `in_flight` (`{start, name, analysis_time_ms}`, at most 10), and
   `truncated` (more in-flight functions than listed).
 - `rex_annotate_many`: `applied`, `failed`, `failed_count`, `total`, and `results` rows
-  `{addr, ok, error?}`.
+  `{addr, ok, function?, error?}`; `function` is the resolved function entry as it was before
+  the batch renamed it, present on every row that passed validation.
 - `rex_binary_close`: `closed` (always true; a failed close raises `close_failed`) and
   `path`, the closed file's full filename as the core reports it (truncated).
-- `rex_call_paths`: `reachable`, `paths` (lists of function entries), `truncated`, and
-  `explored` (functions expanded during the search).
+- `rex_call_paths`: `from_function` and `to_function` (resolved function entries for
+  `from_addr` and `to_addr`), `reachable`, `paths` (lists of function entries), `truncated`,
+  and `explored` (functions expanded during the search).
 - `rex_component_add_functions`: `path`, `added_count`, `applied`, `failed_count`, `total`,
-  and `results` rows `{start, name, added}`.
+  and `results` rows `{start, name, also_containing, same_name, added}`.
 - `rex_component_create`: `path`, `display_name`, `guid`.
 - `rex_component_get`: `path`, `guid`, `display_name`, `parent_path` (null for the root),
   `functions`, `function_count`, `truncated`, `children` (`{path, display_name, guid}`),
@@ -186,7 +209,8 @@ present only on some rows.
   `rx_multi_find`: `total` (the sum), `truncated` (any pattern truncated), and `results`
   of `{pattern, total, truncated, matches}`, one per input pattern.
 - `rex_data_read`: `address`, `length`, `bytes_read`, `data` (hex), `complete`.
-- `rex_decompile_many`: `functions` of `{start, name, lines, truncated}`.
+- `rex_decompile_many`: `functions` of `{start, name, also_containing, same_name, lines,
+  truncated}`.
 - `rex_disasm_at`: `function`, `instructions` (`{address, text}`), `truncated`.
   `rex_disasm_many`: `windows` of `{address, index, function, instructions, truncated}`,
   `errors` of `{index, address, error: {code, message}}`, `truncated`, `next_offset` (null
@@ -195,7 +219,8 @@ present only on some rows.
   `result_truncated`, `result_key`, `result_length`, `error`, `error_truncated`,
   `error_location`. `rex_eval_result`: `key`, `value`, `total`, `truncated`,
   `next_offset`.
-- `rex_export_disasm`: `path`, `bytes_written`, `lines`, `truncated`. `rex_export_symbols`:
+- `rex_export_disasm`: `function`, `path`, `bytes_written`, `lines`, `truncated`.
+  `rex_export_symbols`:
   `path`, `bytes_written`, `rows`, `truncated`, `total`.
 - `rex_find_functions_by_pattern`: `total`, `truncated`, and `functions` of `{start, name,
   match_count, addresses, addresses_truncated}`.
@@ -206,11 +231,11 @@ present only on some rows.
   and `text` is added, when the address is not a base variable plus a constant),
   `{kind: "variable", variable, definition?}` with `definition` `{address, load}` when the
   variable's only definition is a load, or `{kind: "expression", text}`.
-- `rex_function_containing`: `functions` (at most 64) and `truncated`.
+- `rex_function_containing`: `functions` (at most 64, ascending start) and `truncated`.
   `rex_function_define`: `start`, `name`, `analyzed`, `waited_ms`.
   `rex_function_define_many`: `defined` of `{start, name, analyzed}`, `failed` (addresses
   the core refused), `pending` (addresses not yet analyzed), `waited_ms`.
-  `rex_function_undefine`: the removed function's entry.
+  `rex_function_undefine`: the removed function's resolved entry.
 - `rex_help`: see above. A tool view is `{name, description, parameters}`.
 - `rex_hlil_grep`: `scanned`, `truncated`, `scan_incomplete`, `skipped_no_hlil`,
   `functions` of `{start, name, lines}`, and `next_offset`: the index of the first function
@@ -254,12 +279,14 @@ present only on some rows.
   `failed_count`, `total`. `rex_type_library_import`: `library` (null when none loaded),
   `imported` of `{requested, resolved}`, `failed`, `applied`, `failed_count`, `total`.
 - `rex_uidf_clear`: `function`, `variable` (null when clearing the whole function),
-  `cleared`, and `definition_sites` when a variable is named. `rex_uidf_list`: `total`,
-  `truncated`, and `values` of `{function, variable, definition_site, architecture, state,
-  value}`. `rex_uidf_set`: `function`, `variable`, `definition_site`, `value`
-  (`{state, rendered}`), `analysis_complete`, `lines`, `truncated`. `rex_uidf_set_many`:
-  `function`, `applied`, `failed`, `total`, `results` of `{index, variable, ok,
-  definition_site?, value?, error?}`, `analysis_complete`, `lines`, `truncated`.
+  `cleared`, and `definition_sites` when a variable is named. `rex_uidf_list`: `function`
+  (resolved entry, null when listing the whole view), `total`, `truncated`, and `values` of
+  `{function, variable, definition_site, architecture, state, value}`, where each value's
+  `function` is a plain function entry. `rex_uidf_set`: `function`, `variable`,
+  `definition_site`, `value` (`{state, rendered}`), `analysis_complete`, `lines`,
+  `truncated`. `rex_uidf_set_many`: `function`, `applied`, `failed`, `total`, `results` of
+  `{index, variable, ok, definition_site?, value?, error?}`, `analysis_complete`, `lines`,
+  `truncated`.
 - `rex_xrefs_to`: `total`, `truncated`, `code_refs` of `{function_start, function_name,
   arch, address, kind}` (`kind` is `call` or `code`; the first three are null outside a
   function), and `data_refs` of `{source}`.

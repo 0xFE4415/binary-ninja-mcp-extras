@@ -16,7 +16,6 @@ from binaryninja.enums import VariableSourceType
 from binja_plugin.tools import (
     _MAX_LIMIT,
     _MAX_NAME_CANDIDATES,
-    _function_entry,
     _missing_il_error,
     _require_analyzed_function,
     _truncate,
@@ -217,13 +216,14 @@ def rex_function_constraints(
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
-    target = _require_analyzed_function(bv, function)
+    resolution = _require_analyzed_function(bv, function)
+    target = resolution.function
     target_mlil = target.mlil
     if target_mlil is None:
         raise _missing_il_error(target, "MediumLevelIL", "no_mlil")
     rows = _iter_branch_constraints(target_mlil)
     return {
-        "function": _function_entry(target),
+        "function": resolution.entry,
         "total": len(rows),
         "truncated": offset + limit < len(rows),
         "constraints": rows[offset : offset + limit],
@@ -246,7 +246,8 @@ def rex_hlil_statements(
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_STATEMENT_LIMIT)
     offset = _validate_range("offset", offset, 0)
-    target = _require_analyzed_function(bv, function)
+    resolution = _require_analyzed_function(bv, function)
+    target = resolution.function
     hlil = target.hlil
     if hlil is None:
         raise _missing_il_error(target, "HLIL", "no_hlil")
@@ -260,7 +261,7 @@ def rex_hlil_statements(
         for instruction in block
     ]
     return {
-        "function": _function_entry(target),
+        "function": resolution.entry,
         "total": len(rows),
         "truncated": offset + limit < len(rows),
         "statements": rows[offset : offset + limit],
@@ -328,7 +329,8 @@ def rex_mlil_uses(
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
-    target = _require_analyzed_function(bv, function)
+    resolution = _require_analyzed_function(bv, function)
+    target = resolution.function
     target_mlil = target.mlil
     if target_mlil is None:
         raise _missing_il_error(target, "MediumLevelIL", "no_mlil")
@@ -367,7 +369,7 @@ def rex_mlil_uses(
             f"in {_truncate(target.name)}; defined there: {names}",
         )
     return {
-        "function": _function_entry(target),
+        "function": resolution.entry,
         "definition_site": hex(address),
         "variables": [
             _variable_report(target.arch, target_mlil, defined, limit, offset)
@@ -424,7 +426,8 @@ def rex_parameter_variables(
     :param parameter: Argument name as bn_variable_list reports it, such as arg2.
     """
     bv = call.binary_view
-    target = _require_analyzed_function(bv, function)
+    resolution = _require_analyzed_function(bv, function)
+    target = resolution.function
     target_mlil = target.mlil
     if target_mlil is None:
         raise _missing_il_error(target, "MediumLevelIL", "no_mlil")
@@ -445,7 +448,7 @@ def rex_parameter_variables(
             "not by their argument name",
         )
     return {
-        "function": _function_entry(target),
+        "function": resolution.entry,
         "parameter": _truncate(parameter),
         "storage": [_storage_description(variable) for variable in matches],
         "definitions": [
