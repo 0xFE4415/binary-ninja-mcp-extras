@@ -83,6 +83,13 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   exception in-band: it sets `error` and nulls `result` instead of raising a tool error;
   captured output remains in `stdout`. On success, an assigned `result` is returned as
   Python `repr()`.
+  `error` always leads with the exception type, `Type: message` (bare `Type` when the
+  message is empty), and a `SystemExit` reads `SystemExit: exit status <repr of code>`. It
+  is capped like other echoes (`error_truncated`), so the type is never the part cut.
+  `error_location` is `{line, text}` for the innermost line of the submitted code on the
+  traceback (text stripped, capped at 200 characters), or null on success and for
+  syntax errors, whose message already names the line. The code is compiled as
+  `<rex_eval_python>`.
 - Non-null `stdout_key`/`result_key` values let `rex_eval_result` page spilled text. The
   server keeps up to 8 spills (a call spilling both fields uses two slots), evicting the
   oldest first. Each spill is limited to 4,194,304 characters; larger text is dropped,

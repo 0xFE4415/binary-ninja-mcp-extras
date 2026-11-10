@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from helpers import FakeToolError, _call, _view_with_functions, get_tool
@@ -102,41 +103,143 @@ def test_eval_python_survives_result_repr_raising() -> None:
     assert result["stdout"] == "before\n"
     assert result["result"] is None
     assert result["result_truncated"] is False
-    assert result["error"] is not None
-    assert "no repr" in result["error"]
+    assert result["error"] == "RuntimeError: no repr"
     assert result["error_truncated"] is False
+    assert result["error_location"] == {"line": 4, "text": "raise RuntimeError('no repr')"}
 
 
-def test_eval_python_returns_truncated_error_instead_of_raising() -> None:
-    view = _view_with_functions()
+def _failing(code: str) -> dict[str, Any]:
     _, evaluate = get_tool("rex_eval_python")
-    result = evaluate(_call(view), "print('before')\nraise ValueError('z' * 1000)")
-    assert result["stdout"] == "before\n"
+    return evaluate(_call(_view_with_functions()), code)
+
+
+@pytest.mark.parametrize(
+    ("code", "error"),
+    [
+        ("d = {}\nd['x']", "KeyError: 'x'"),
+        ("raise ValueError()", "ValueError"),
+        ("raise ValueError('')", "ValueError"),
+        ("raise ValueError('boom')", "ValueError: boom"),
+        ("raise ValueError('a', 'b')", "ValueError: ('a', 'b')"),
+        ("class Custom(Exception):\n    pass\nraise Custom('x')", "Custom: x"),
+        ("import sys\nsys.exit()", "SystemExit: exit status None"),
+        ("import sys\nsys.exit(3)", "SystemExit: exit status 3"),
+        ("import sys\nsys.exit(0)", "SystemExit: exit status 0"),
+        ("import sys\nsys.exit('bye')", "SystemExit: exit status 'bye'"),
+        ("raise KeyboardInterrupt", "KeyboardInterrupt"),
+        ("raise KeyboardInterrupt('stop')", "KeyboardInterrupt: stop"),
+    ],
+)
+def test_eval_python_errors_lead_with_the_exception_type(code: str, error: str) -> None:
+    result = _failing(code)
+    assert result["error"] == error
+    assert result["error_truncated"] is False
     assert result["result"] is None
-    assert result["result_truncated"] is False
-    assert result["error"] is not None
-    assert result["error"].startswith("zzz")
-    assert result["error_truncated"] is True
-    assert len(result["error"]) == 512 + len("... [488 chars truncated]")
 
 
 def test_eval_python_reports_system_exit_in_band_with_captured_stdout() -> None:
-    view = _view_with_functions()
-    _, evaluate = get_tool("rex_eval_python")
-    result = evaluate(_call(view), "import sys\nprint('before')\nresult = 1\nsys.exit(3)")
+    result = _failing("import sys\nprint('before')\nresult = 1\nsys.exit(3)")
     assert result["stdout"] == "before\n"
     assert result["result"] is None
-    assert result["error"] == "3"
-    assert result["error_truncated"] is False
+    assert result["error"] == "SystemExit: exit status 3"
 
 
 def test_eval_python_reports_keyboard_interrupt_in_band_with_captured_stdout() -> None:
-    view = _view_with_functions()
-    _, evaluate = get_tool("rex_eval_python")
-    result = evaluate(_call(view), "print('before')\nraise KeyboardInterrupt('stop')")
+    result = _failing("print('before')\nraise KeyboardInterrupt('stop')")
     assert result["stdout"] == "before\n"
     assert result["result"] is None
-    assert result["error"] == "stop"
+    assert result["error"] == "KeyboardInterrupt: stop"
+
+
+def test_eval_python_survives_an_exception_whose_message_cannot_render() -> None:
+    result = _failing(
+        "class Odd(Exception):\n"
+        "    def __str__(self):\n"
+        "        raise RuntimeError('no str')\n"
+        "raise Odd('x')"
+    )
+    assert result["error"] == "Odd: <message unavailable>"
+
+
+def test_eval_python_survives_a_system_exit_code_whose_repr_cannot_render() -> None:
+    result = _failing(
+        "class Odd:\n"
+        "    def __repr__(self):\n"
+        "        raise RuntimeError('no repr')\n"
+        "raise SystemExit(Odd())"
+    )
+    assert result["error"] == "SystemExit: <message unavailable>"
+
+
+@pytest.mark.parametrize(
+    ("message_length", "truncated"),
+    [(499, False), (500, False), (501, True)],
+)
+def test_eval_python_truncates_the_error_at_the_echo_cap(
+    message_length: int, truncated: bool
+) -> None:
+    result = _failing(f"print('before')\nraise ValueError('z' * {message_length})")
+    full = "ValueError: " + "z" * message_length
+    assert result["stdout"] == "before\n"
+    assert result["error_truncated"] is truncated
+    if truncated:
+        assert result["error"] == full[:512] + "... [1 chars truncated]"
+    else:
+        assert result["error"] == full
+
+
+def test_eval_python_truncation_cuts_the_message_never_the_exception_type() -> None:
+    result = _failing("raise ValueError('z' * 1000)")
+    assert result["error"] == "ValueError: " + "z" * 500 + "... [500 chars truncated]"
+    assert result["error_truncated"] is True
+
+
+def test_eval_python_locates_the_failing_line_of_the_callers_code() -> None:
+    result = _failing("print('before')\nd = {}\n    \nd['x']  ")
+    assert result["error_location"] == {"line": 4, "text": "d['x']"}
+
+
+def test_eval_python_locates_the_innermost_line_of_the_callers_code() -> None:
+    result = _failing(
+        "def inner():\n    return int('x')\n\ndef outer():\n    return inner()\n\nouter()"
+    )
+    assert result["error"] == "ValueError: invalid literal for int() with base 10: 'x'"
+    assert result["error_location"] == {"line": 2, "text": "return int('x')"}
+
+
+def test_eval_python_counts_carriage_return_line_breaks() -> None:
+    assert _failing("a = 1\r\nb = 2\rraise ValueError('x')")["error_location"] == {
+        "line": 3,
+        "text": "raise ValueError('x')",
+    }
+
+
+def test_eval_python_counts_only_python_line_breaks() -> None:
+    result = _failing("s = '\u2028\x0c\x1c\x85'\nraise ValueError('x')")
+    assert result["error_location"] == {"line": 2, "text": "raise ValueError('x')"}
+
+
+@pytest.mark.parametrize("text_length", [199, 200, 201])
+def test_eval_python_bounds_the_located_line(text_length: int) -> None:
+    line = "1 / 0  # " + "q" * (text_length - len("1 / 0  # "))
+    expected = line if text_length <= 200 else line[:200] + "... [1 chars truncated]"
+    result = _failing(line)
+    assert result["error"] == "ZeroDivisionError: division by zero"
+    assert result["error_location"] == {"line": 1, "text": expected}
+
+
+def test_eval_python_reports_a_syntax_error_without_a_location() -> None:
+    result = _failing("x = (")
+    assert result["error"] is not None
+    assert result["error"].startswith("SyntaxError: ")
+    assert "<rex_eval_python>, line 1" in result["error"]
+    assert result["error_location"] is None
+
+
+def test_eval_python_has_no_location_on_success() -> None:
+    result = _failing("result = 1")
+    assert result["error"] is None
+    assert result["error_location"] is None
 
 
 def test_eval_python_keeps_text_exactly_at_the_echo_cap_unclipped() -> None:

@@ -112,7 +112,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_kv_delete` | Delete a previously stored scratch value. |
 | `rex_export_disasm` | Write one function's disassembly window to a file. |
 | `rex_export_symbols` | Write an address range's symbols to a CSV or JSON file. |
-| `rex_eval_python` | Run arbitrary Binary Ninja Python; binds `bv`, `call`, `binaryninja`/`bn`. |
+| `rex_eval_python` | Run arbitrary Binary Ninja Python; binds `bv`, `call`, `binaryninja`/`bn`. Errors read `Type: message` with the failing line in `error_location`. |
 | `rex_binary_close` | Discard unsaved changes and close the view. |
 | `rex_undo` | Undo the view's last transaction; reports post-op stack depths. |
 | `rex_redo` | Redo the last undone transaction; reports post-op stack depths. |

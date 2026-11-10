@@ -9,6 +9,8 @@ from __future__ import annotations
 import contextlib
 import io
 import itertools
+import re
+import traceback
 from collections import OrderedDict
 from typing import Annotated
 
@@ -19,6 +21,8 @@ from binja_plugin.tools import _truncate, _truncate_with_flag, _validate_range
 
 _MAX_EVAL_STDOUT_CHARS = 65536
 _MAX_EVAL_RESULT_CHARS = 16384
+_MAX_EVAL_LOCATION_CHARS = 200
+_EVAL_FILENAME = "<rex_eval_python>"
 
 # Spilled oversized echoes: when rex_eval_python's stdout or result is clipped, the full
 # text is kept in process memory (never the view's database) so rex_eval_result can page
@@ -52,6 +56,28 @@ def _spill_echo(text: str, cap: int, kind: str) -> tuple[str, bool, str | None, 
     return echo, True, key, len(text)
 
 
+def _describe_error(error: BaseException) -> str:
+    kind = type(error).__qualname__
+    try:
+        detail = f"exit status {error.code!r}" if isinstance(error, SystemExit) else str(error)
+    except Exception:
+        detail = "<message unavailable>"
+    return f"{kind}: {detail}" if detail else kind
+
+
+def _error_location(error: BaseException, code: str) -> dict[str, object] | None:
+    """The innermost line of the caller's own code on the error's traceback, or None."""
+    lines = [
+        lineno
+        for frame, lineno in traceback.walk_tb(error.__traceback__)
+        if frame.f_code.co_filename == _EVAL_FILENAME
+    ]
+    if not lines:
+        return None
+    text = re.split(r"\r\n|\r|\n", code)[lines[-1] - 1].strip()
+    return {"line": lines[-1], "text": _truncate(text, _MAX_EVAL_LOCATION_CHARS)}
+
+
 @mcp.tool(destructive=True)
 def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
     """Run Binary Ninja Python; globals: bv, bn, binaryninja, call.
@@ -67,16 +93,18 @@ def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
     buffer = io.StringIO()
     raw_result: str | None = None
     error_message: str | None = None
+    error_location: dict[str, object] | None = None
     try:
         with contextlib.redirect_stdout(buffer):
-            exec(code, namespace)
+            exec(compile(code, _EVAL_FILENAME, "exec"), namespace)
         if "result" in namespace:
             # repr() inside the try: a raising __repr__ must take the error path below, not
             # escape the handler and drop the captured stdout.
             raw_result = repr(namespace["result"])
     except (Exception, SystemExit, KeyboardInterrupt) as error:
         # Keep failures out of the mcp layer's uncapped str(error) ToolError path.
-        error_message = str(error)
+        error_message = _describe_error(error)
+        error_location = _error_location(error, code)
 
     stdout, stdout_truncated, stdout_key, stdout_length = _spill_echo(
         buffer.getvalue(), _MAX_EVAL_STDOUT_CHARS, "stdout"
@@ -101,6 +129,7 @@ def rex_eval_python(call: mcp.ToolCall, code: str) -> dict[str, object]:
         "result_length": result_length,
         "error": error,
         "error_truncated": error_truncated,
+        "error_location": error_location,
     }
 
 
