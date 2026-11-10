@@ -768,6 +768,25 @@ def test_uidf_clear_clears_one_variable_across_sites() -> None:
     assert list(main.user_var_values) == [_variable(main, "rax_1")]
 
 
+def test_uidf_clear_counts_only_the_named_variables_informed_sites() -> None:
+    rax_1 = FakeVariable("rax_1")
+    var_10 = FakeVariable("var_10")
+    main = FakeFunction(
+        "main",
+        0x1100,
+        0x1200,
+        vars=[rax_1, var_10],
+        mlil=FakeMediumLevelIL({rax_1: [0x1190], var_10: [0x1190, 0x1196]}),
+    )
+    view = FakeBinaryView(functions=[main])
+    _inform(main, "rax_1", 0x1190, "<const 0x3>")
+    _, uidf_clear = get_tool("rex_uidf_clear")
+    result = uidf_clear(_call(view), 0x1100, "var_10")
+    assert result["cleared"] == 0
+    assert result["definition_sites"] == 2
+    assert list(main.user_var_values) == [_variable(main, "rax_1")]
+
+
 def test_uidf_clear_all_for_a_function() -> None:
     view, main = _uidf_view()
     _inform(main, "var_10", 0x1190, "<const 0x1>")

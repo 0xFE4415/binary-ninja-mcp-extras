@@ -1073,6 +1073,34 @@ def test_parameter_missing_name_counts_candidates_past_the_listed_ones() -> None
     )
 
 
+def test_parameter_missing_name_lists_exactly_the_candidate_cap() -> None:
+    variables = [FakeVariable(f"arg{index:02d}") for index in range(41)]
+    function = FakeFunction("check", 0x1000, 0x1100, mlil=FakeMLILInstructions([]), vars=variables)
+    view = FakeBinaryView(functions=[function])
+    _, parameter = get_tool("rex_parameter_variables")
+    with pytest.raises(FakeToolError) as error:
+        parameter(_call(view), function=0x1000, parameter="nope")
+    assert "arg39 (+1 more)" in error.value.message
+    assert "arg40" not in error.value.message
+
+
+def test_parameter_definitions_list_every_definition_of_every_same_named_variable() -> None:
+    first = FakeVariable("arg2", storage=105)
+    second = FakeVariable("arg2", storage=104)
+    mlil = FakeMLILInstructions(
+        instructions=[],
+        definitions={
+            first: [set_var(0x1010, first, const(1)), set_var(0x1020, first, const(2))],
+            second: [set_var(0x1030, second, const(3))],
+        },
+    )
+    function = FakeFunction("check", 0x1000, 0x1100, mlil=mlil, vars=[first, second])
+    view = FakeBinaryView(functions=[function])
+    _, parameter = get_tool("rex_parameter_variables")
+    result = parameter(_call(view), function=0x1000, parameter="arg2")
+    assert result["definitions"] == ["0x1010", "0x1020", "0x1030"]
+
+
 def test_parameter_without_mlil_fails_with_no_mlil() -> None:
     function = FakeFunction("bare", 0x2000, 0x2100, vars=[FakeVariable("arg2")])
     view = FakeBinaryView(functions=[function])
