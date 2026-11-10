@@ -535,3 +535,15 @@ def test_eval_spill_keeps_a_spill_exactly_at_the_per_spill_cap() -> None:
     tail = page(_call(view), result["result_key"], offset=escape._MAX_EVAL_SPILL_CHARS - 1)
     assert tail["value"] == "'"
     assert tail["truncated"] is False
+
+
+def test_describe_error_uses_the_fully_qualified_exception_name() -> None:
+    def _nested() -> ValueError:
+        class Hidden(ValueError):
+            pass
+
+        return Hidden("boom")
+
+    error = _nested()
+    expected = f"{type(error).__module__}.{type(error).__qualname__}: boom"
+    assert escape._describe_error(error) == expected

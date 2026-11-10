@@ -264,7 +264,8 @@ def _stage_uidf_item(
 
 def _apply_plan(target: Function, plan: _UIDFSetPlan) -> _UidfRow:
     try:
-        target.set_user_var_value(plan.variable, plan.site.address, plan.value, after=True)
+        # after defaults to True in the core API: apply after the definition site.
+        target.set_user_var_value(plan.variable, plan.site.address, plan.value)
     except Exception as error:
         return plan.set_failed_row(error)
     return plan.applied_row()

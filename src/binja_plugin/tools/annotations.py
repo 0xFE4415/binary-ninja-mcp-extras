@@ -90,14 +90,21 @@ def _annotate_function_error(address: int, message: str) -> _AnnotationRow:
     return {"addr": hex(address), "ok": False, "error": message}
 
 
-def _text_field_error(
-    field: str, value: object, max_chars: int, *, allow_empty: bool
-) -> str | None:
+def _required_text_error(field: str, value: object, max_chars: int) -> str | None:
     if value is None:
         return None
-    if not isinstance(value, str) or not (allow_empty or value):
-        expected = "a string" if allow_empty else "a non-empty string"
-        return f"{field} must be {expected}"
+    if not isinstance(value, str) or not value:
+        return f"{field} must be a non-empty string"
+    if len(value) > max_chars:
+        return f"{field} exceeds {max_chars} characters"
+    return None
+
+
+def _optional_text_error(field: str, value: object, max_chars: int) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return f"{field} must be a string"
     if len(value) > max_chars:
         return f"{field} exceeds {max_chars} characters"
     return None
@@ -113,11 +120,9 @@ def _annotate_fields(item: dict[str, object], address: int) -> _AnnotationFields
     comment = item.get("comment")
     prototype = item.get("prototype")
     error = (
-        _text_field_error("name", name, _MAX_ANNOTATE_NAME_CHARS, allow_empty=False)
-        or _text_field_error("comment", comment, _MAX_ANNOTATE_COMMENT_CHARS, allow_empty=True)
-        or _text_field_error(
-            "prototype", prototype, _MAX_ANNOTATE_PROTOTYPE_CHARS, allow_empty=False
-        )
+        _required_text_error("name", name, _MAX_ANNOTATE_NAME_CHARS)
+        or _optional_text_error("comment", comment, _MAX_ANNOTATE_COMMENT_CHARS)
+        or _required_text_error("prototype", prototype, _MAX_ANNOTATE_PROTOTYPE_CHARS)
     )
     if error is not None:
         return _annotate_function_error(address, error)

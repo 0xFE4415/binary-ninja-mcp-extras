@@ -85,8 +85,15 @@ def _spill_echo(text: str, cap: int, kind: str) -> _Echo:
     return _Echo(echo, True, key, len(text))
 
 
+def _exception_kind(error: BaseException) -> str:
+    cls = type(error)
+    if cls.__module__ in ("builtins", "__main__"):
+        return cls.__qualname__
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
 def _describe_error(error: BaseException) -> str:
-    kind = traceback.TracebackException(type(error), error, None, compact=True).exc_type_str
+    kind = _exception_kind(error)
     try:
         detail = f"exit status {error.code!r}" if isinstance(error, SystemExit) else str(error)
     except Exception:

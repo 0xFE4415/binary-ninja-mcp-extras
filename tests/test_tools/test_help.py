@@ -25,7 +25,12 @@ from helpers_view import (
 )
 
 import binja_plugin
-from binja_plugin.tools.help import _PARAMETER_ERROR_CODES
+from binja_plugin.tools.help import (
+    _CATEGORY_USE_WHEN,
+    _PARAMETER_ERROR_CODES,
+    _UNCATEGORIZED,
+    _UNCATEGORIZED_USE_WHEN,
+)
 from binja_plugin.tools.scanning import _MAX_PATTERN_CHARS
 
 # Error codes the handlers define for the tool as a whole — batch or view-level failures
@@ -202,8 +207,8 @@ def test_help_fails_on_an_unknown_category_and_lists_the_valid_ones() -> None:
     with pytest.raises(FakeToolError) as exc:
         _help(category="nope")
     assert exc.value.code == "unknown_category"
-    assert "no category named 'nope'" in exc.value.message
-    assert "uidf" in exc.value.message
+    expected_categories = ", ".join([*_CATEGORY_USE_WHEN, _UNCATEGORIZED])
+    assert exc.value.message == f"no category named 'nope'; categories: {expected_categories}"
 
 
 @pytest.mark.parametrize("category", ["strings", "nope"])
@@ -314,8 +319,14 @@ def test_help_fails_on_an_unknown_name_and_lists_the_valid_ones() -> None:
     with pytest.raises(FakeToolError) as exc:
         _help("rex_nope")
     assert exc.value.code == "unknown_tool"
-    assert "no rex_ tool named 'rex_nope'" in exc.value.message
-    assert "rex_string_search" in exc.value.message
+    registered = ", ".join(sorted(tool.name for tool in FakeTool.list()))
+    expected = f"no rex_ tool named 'rex_nope'; registered rex_ tools: {registered}"
+    assert exc.value.message == expected
+
+
+def test_help_uncategorized_category_reports_the_uncategorized_use_when() -> None:
+    listing = _help(category="other")
+    assert listing["use_when"] == _UNCATEGORIZED_USE_WHEN
 
 
 def test_help_error_code_table_keys_are_registered_parameters() -> None:

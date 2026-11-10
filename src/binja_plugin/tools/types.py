@@ -175,7 +175,9 @@ def _object_candidates(bv: BinaryView, name: str) -> list[_ObjectCandidate]:
         else:
             rank = _ObjectRank.DATA_VARIABLE
         candidates.append(_ObjectCandidate(rank, address, data_variable.type))
-    return sorted(candidates, key=lambda candidate: (candidate.rank, candidate.address))
+    # _ObjectCandidate's natural order is (rank, address); same-address candidates
+    # always differ in rank, so the third field never enters a comparison.
+    return sorted(candidates)
 
 
 @mcp.tool(destructive=True)

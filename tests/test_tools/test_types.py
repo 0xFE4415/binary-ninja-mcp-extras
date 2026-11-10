@@ -987,3 +987,27 @@ def test_struct_from_access_rejects_bad_names() -> None:
     view_at_cap = _struct_view([], 0)
     at_cap = create(_call(view_at_cap), "x" * types._MAX_TYPE_NAME_CHARS)
     assert at_cap["name"] == "x" * types._MAX_TYPE_NAME_CHARS
+
+
+def test_type_library_export_objects_orders_candidates_by_rank_before_address(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    typed = FakeType("table_t", "int32_t[4]")
+    void = FakeType("void", "void", type_class=FakeTypeClass.VoidTypeClass)
+    view = _objects_view(
+        symbols=[
+            FakeSymbol(0x100, "DataSymbol", "g_shared"),
+            FakeSymbol(0x200, "DataSymbol", "g_shared"),
+        ],
+        data_variable_types={0x100: void, 0x200: typed},
+    )
+    result = _export_objects(view, "g_shared")
+    assert result["exported"] == [
+        {
+            "name": "g_shared",
+            "type": "int32_t[4]",
+            "address": "0x200",
+            "alternatives": [{"address": "0x100", "type": "void"}],
+        }
+    ]

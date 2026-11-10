@@ -452,3 +452,12 @@ def test_annotate_many_lists_all_unknown_fields() -> None:
     assert result["results"] == [
         {"addr": "0x1100", "ok": False, "error": "unknown field(s): hue, tint"}
     ]
+
+
+def test_optional_text_passes_through_strings_and_maps_everything_else_to_none() -> None:
+    assert annotations_tools._optional_text("note") == "note"
+    # An empty comment is a real value: it must survive, not collapse into None.
+    assert annotations_tools._optional_text("") == ""
+    assert annotations_tools._optional_text(None) is None
+    assert annotations_tools._optional_text(123) is None
+    assert annotations_tools._optional_text(["note"]) is None
