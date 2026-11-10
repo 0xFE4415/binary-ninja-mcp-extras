@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Literal
+from typing import Final, Literal, TypedDict
 
 from binaryninja import Type, TypeLibrary, mcp
 from binaryninja.binaryview import BinaryView
@@ -19,15 +19,65 @@ from binja_plugin.tools import (
 # Type-library tools: one call moves at most this many type names, and each name is
 # capped before it reaches the type system — QualifiedNames have no core-side length
 # bound and persist in the type database or the .bntl.
-_MAX_TYPE_LIBRARY_NAMES = 128
-_MAX_TYPE_NAME_CHARS = 255
-_EXPORT_KINDS = Literal["types", "objects"]
+_MAX_TYPE_LIBRARY_NAMES: Final = 128
+_MAX_TYPE_NAME_CHARS: Final = 255
+ExportKind = Literal["types", "objects"]
 # rex_struct_from_access echoes at most this many members; the struct is defined in full
 # regardless, the cap bounds only the echoed list.
-_MAX_STRUCT_MEMBERS = 128
+_MAX_STRUCT_MEMBERS: Final = 128
 # Source passed to Type.generate_auto_type_id, so the auto types this tool defines are
 # identifiable in the type system as originating here.
-_STRUCT_TYPE_SOURCE = "rex_struct"
+_STRUCT_TYPE_SOURCE: Final = "rex_struct"
+
+
+class _StructMember(TypedDict):
+    offset: int
+    name: str
+    type: str
+
+
+class _StructFromAccessResult(TypedDict):
+    name: str
+    registered: str
+    width: int
+    member_count: int
+    members: list[_StructMember]
+    truncated: bool
+
+
+class _ExportedType(TypedDict):
+    name: str
+    type: str
+
+
+class _UnresolvedName(TypedDict):
+    requested: str
+    reason: str
+
+
+class _ImportedType(TypedDict):
+    requested: str
+    resolved: str
+
+
+class _TypeLibraryExportResult(TypedDict):
+    path: str
+    bytes_written: int
+    library: str
+    exported: list[_ExportedType]
+    failed: list[_UnresolvedName]
+    applied: int
+    failed_count: int
+    total: int
+
+
+class _TypeLibraryImportResult(TypedDict):
+    library: str | None
+    imported: list[_ImportedType]
+    failed: list[_UnresolvedName]
+    applied: int
+    failed_count: int
+    total: int
 
 
 def _validate_type_names(names: list[str]) -> list[str]:
@@ -47,7 +97,7 @@ def _validate_type_names(names: list[str]) -> list[str]:
 
 
 @mcp.tool(destructive=True)
-def rex_struct_from_access(call: mcp.ToolCall, name: str) -> dict[str, object]:
+def rex_struct_from_access(call: mcp.ToolCall, name: str) -> _StructFromAccessResult:
     """Infer a struct from the offset accesses analysis has recorded; analyze the derefs first.
 
     :param name: Name for the new structure.
@@ -98,9 +148,9 @@ def rex_type_library_export(
     call: mcp.ToolCall,
     library_name: str,
     names: list[str],
-    kind: _EXPORT_KINDS = "types",
+    kind: ExportKind = "types",
     filename: str = "",
-) -> dict[str, object]:
+) -> _TypeLibraryExportResult:
     """Export types or objects into a new .bntl; each exported entry reports its rendered type.
 
     :param library_name: Name for the new type library.
@@ -126,8 +176,8 @@ def rex_type_library_export(
             "no_arch", "the binary view has no architecture to create a type library for"
         )
     library = TypeLibrary.new(arch, library_name)
-    exported: list[dict[str, str]] = []
-    failed: list[dict[str, str]] = []
+    exported: list[_ExportedType] = []
+    failed: list[_UnresolvedName] = []
     for name in names:
         if requested == "types":
             type_obj = bv.get_type_by_name(name)
@@ -175,7 +225,9 @@ def rex_type_library_export(
 
 
 @mcp.tool(destructive=True)
-def rex_type_library_import(call: mcp.ToolCall, path: str, names: list[str]) -> dict[str, object]:
+def rex_type_library_import(
+    call: mcp.ToolCall, path: str, names: list[str]
+) -> _TypeLibraryImportResult:
     """Import types from a .bntl into the current binary view.
 
     :param path: Filesystem path of the .bntl file to load.
@@ -189,8 +241,8 @@ def rex_type_library_import(call: mcp.ToolCall, path: str, names: list[str]) -> 
             "library_not_found", f"could not load a type library from '{_truncate(path)}'"
         )
     bv.add_type_library(library)
-    imported: list[dict[str, str]] = []
-    failed: list[dict[str, str]] = []
+    imported: list[_ImportedType] = []
+    failed: list[_UnresolvedName] = []
     for name in names:
         if library.get_named_type(name) is None:
             failed.append({"requested": name, "reason": "not provided by this type library"})

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Final, TypedDict
 
 from binaryninja import mcp
 
@@ -15,19 +15,22 @@ from binja_plugin.tools import (
     _validate_text,
 )
 
-_MAX_KV_VALUE_CHARS = 65536
-_MAX_KV_KEY_CHARS = 128
-_MAX_TAG_DATA_CHARS = 65536
-_MAX_TAG_TYPE_CHARS = 64
+if TYPE_CHECKING:
+    from binaryninja.binaryview import Tag
+
+_MAX_KV_VALUE_CHARS: Final = 65536
+_MAX_KV_KEY_CHARS: Final = 128
+_MAX_TAG_DATA_CHARS: Final = 65536
+_MAX_TAG_TYPE_CHARS: Final = 64
 
 # rex_report_show: the core receives title and markdown as unbounded strings and renders
 # them in a GUI popup named by the title, so both are capped — the markdown to keep one
 # agent call from pushing megabytes into the viewer, the title because it labels the tab.
-_MAX_REPORT_TITLE_CHARS = 256
-_MAX_REPORT_CONTENT_CHARS = 65536
+_MAX_REPORT_TITLE_CHARS: Final = 256
+_MAX_REPORT_CONTENT_CHARS: Final = 65536
 
-_METADATA_PREFIX = "rex/"
-_TAG_ICON = "\u25c6"
+_METADATA_PREFIX: Final = "rex/"
+_TAG_ICON: Final = "\u25c6"
 
 # rex_undo/rex_redo echo post-operation stack depths (never the entry text) so an agent
 # can stop when the depth stops changing. The stack is the file's undo database, shared
@@ -37,28 +40,77 @@ _TAG_ICON = "\u25c6"
 # a live core before relying on rollback.
 
 
+class _KvKeyResult(TypedDict):
+    key: str
+
+
+class _KvGetResult(TypedDict):
+    key: str
+    value: str
+    truncated: bool
+
+
+class _KvSetResult(TypedDict):
+    key: str
+    length: int
+    value: str
+    truncated: bool
+
+
+class _UndoResult(TypedDict):
+    undone: bool
+    undo_left: int
+    redo_left: int
+
+
+class _RedoResult(TypedDict):
+    redone: bool
+    undo_left: int
+    redo_left: int
+
+
+class _ReportResult(TypedDict):
+    title: str
+    length: int
+    preview: str
+    truncated: bool
+
+
+class _TagEntry(TypedDict):
+    address: str
+    tag_type: str
+    data: str
+    data_truncated: bool
+
+
+class _TagListResult(TypedDict):
+    total: int
+    truncated: bool
+    tags: list[_TagEntry]
+
+
+class _TagSetResult(TypedDict):
+    address: str
+    tag_type: str
+    data: str
+    data_truncated: bool
+    length: int
+
+
 def _require_key(key: str) -> None:
     if not key:
         raise mcp.ToolError("invalid_key", "key must not be empty")
 
 
-def _run_undo_stack_step(
-    call: mcp.ToolCall, step: Callable[[], None], failed_code: str, verb: str, done: str
-) -> dict[str, object]:
-    """Shared body of rex_undo and rex_redo: run one undo-database step, echo the depths."""
+def _run_undo_stack_step(verb: str, step: Callable[[], None], failed_code: str) -> None:
     try:
         step()
     except Exception as error:
         raise mcp.ToolError(failed_code, f"could not {verb}: {error}") from None
-    return {
-        done: True,
-        "undo_left": len(call.binary_view.file.undo_entries),
-        "redo_left": len(call.binary_view.file.redo_entries),
-    }
 
 
 @mcp.tool(destructive=True)
-def rex_kv_delete(call: mcp.ToolCall, key: str) -> dict[str, object]:
+def rex_kv_delete(call: mcp.ToolCall, key: str) -> _KvKeyResult:
     """Delete a value previously stored with rex_kv_set.
 
     :param key: Key to delete.
@@ -69,7 +121,7 @@ def rex_kv_delete(call: mcp.ToolCall, key: str) -> dict[str, object]:
 
 
 @mcp.tool(read_only=True)
-def rex_kv_get(call: mcp.ToolCall, key: str) -> dict[str, object]:
+def rex_kv_get(call: mcp.ToolCall, key: str) -> _KvGetResult:
     """Read a string previously stored with rex_kv_set.
 
     :param key: Key to read.
@@ -84,7 +136,7 @@ def rex_kv_get(call: mcp.ToolCall, key: str) -> dict[str, object]:
 
 
 @mcp.tool(destructive=True)
-def rex_kv_set(call: mcp.ToolCall, key: str, value: str) -> dict[str, object]:
+def rex_kv_set(call: mcp.ToolCall, key: str, value: str) -> _KvSetResult:
     """Persist scratch in the binary view database: it survives tool calls and server restarts.
 
     :param key: Key to store under.
@@ -102,9 +154,15 @@ def rex_kv_set(call: mcp.ToolCall, key: str, value: str) -> dict[str, object]:
 
 
 @mcp.tool(destructive=True)
-def rex_redo(call: mcp.ToolCall) -> dict[str, object]:
+def rex_redo(call: mcp.ToolCall) -> _RedoResult:
     """Redo the last undone transaction in the view's undo database."""
-    return _run_undo_stack_step(call, call.binary_view.redo, "redo_failed", "redo", "redone")
+    _run_undo_stack_step("redo", call.binary_view.redo, "redo_failed")
+    file = call.binary_view.file
+    return {
+        "redone": True,
+        "undo_left": len(file.undo_entries),
+        "redo_left": len(file.redo_entries),
+    }
 
 
 @mcp.tool(read_only=True)
@@ -112,7 +170,7 @@ def rex_report_show(
     call: mcp.ToolCall,
     title: Annotated[str, mcp.NonEmpty()],
     markdown: Annotated[str, mcp.NonEmpty()],
-) -> dict[str, object]:
+) -> _ReportResult:
     """Render a markdown triage report inside Binary Ninja.
 
     :param title: Title displayed on the report tab.
@@ -129,12 +187,22 @@ def rex_report_show(
     return {"title": title, "length": len(markdown), "preview": preview, "truncated": truncated}
 
 
+def _tag_entry(address: int, tag: Tag) -> _TagEntry:
+    data, data_truncated = _truncate_with_flag(tag.data)
+    return {
+        "address": hex(address),
+        "tag_type": tag.type.name,
+        "data": data,
+        "data_truncated": data_truncated,
+    }
+
+
 @mcp.tool(read_only=True)
 def rex_tag_list(
     call: mcp.ToolCall,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
-) -> dict[str, object]:
+) -> _TagListResult:
     """List the tags set on the binary view.
 
     :param limit: Maximum tags to return.
@@ -142,17 +210,7 @@ def rex_tag_list(
     """
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
-    tags = []
-    for address, tag in call.binary_view.get_tags():
-        data, data_truncated = _truncate_with_flag(tag.data)
-        tags.append(
-            {
-                "address": hex(address),
-                "tag_type": tag.type.name,
-                "data": data,
-                "data_truncated": data_truncated,
-            }
-        )
+    tags = [_tag_entry(address, tag) for address, tag in call.binary_view.get_tags()]
     # Like the other listing tools: total covers the whole listing, truncated marks a
     # window that ends before it, and the page is [offset, offset + limit).
     return {
@@ -165,7 +223,7 @@ def rex_tag_list(
 @mcp.tool(destructive=True)
 def rex_tag_set(
     call: mcp.ToolCall, addr: mcp.Address, tag_type: str, data: str, create_missing: bool = True
-) -> dict[str, object]:
+) -> _TagSetResult:
     """Attach a Binary Ninja tag at an address, visible in the GUI.
 
     :param addr: Address expression to tag, e.g. "main" or ".text + 0x10".
@@ -197,6 +255,12 @@ def rex_tag_set(
 
 
 @mcp.tool(destructive=True)
-def rex_undo(call: mcp.ToolCall) -> dict[str, object]:
+def rex_undo(call: mcp.ToolCall) -> _UndoResult:
     """Undo the last committed transaction in the view's undo database."""
-    return _run_undo_stack_step(call, call.binary_view.undo, "undo_failed", "undo", "undone")
+    _run_undo_stack_step("undo", call.binary_view.undo, "undo_failed")
+    file = call.binary_view.file
+    return {
+        "undone": True,
+        "undo_left": len(file.undo_entries),
+        "redo_left": len(file.redo_entries),
+    }
