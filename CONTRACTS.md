@@ -48,7 +48,8 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   function's `addresses` (`rex_constant_find`) and `match_count` plus `addresses`
   (`rex_find_functions_by_pattern`) are lower bounds, because the scan stopped before
   reaching every hit of functions in the page; `addresses_truncated` only reports the
-  cap on what was seen.
+  cap on what was seen. `rex_constant_find` lists functions, and picks each function's
+  example addresses, in the core's hit order, which is not address order.
   `rex_hlil_grep` returns no `total`; it additionally returns `scan_incomplete`, set when
   the `max_functions` render budget ran out before the whole view was scanned: nothing
   was proven about matches past the page, so more may exist even though `truncated` is
