@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, Final, TypedDict
+from typing import TYPE_CHECKING, Annotated, TypedDict
 
 from binaryninja import mcp
 
@@ -18,19 +18,19 @@ from binja_plugin.tools import (
 if TYPE_CHECKING:
     from binaryninja.binaryview import Tag
 
-_MAX_KV_VALUE_CHARS: Final = 65536
-_MAX_KV_KEY_CHARS: Final = 128
-_MAX_TAG_DATA_CHARS: Final = 65536
-_MAX_TAG_TYPE_CHARS: Final = 64
+_MAX_KV_VALUE_CHARS = 65536
+_MAX_KV_KEY_CHARS = 128
+_MAX_TAG_DATA_CHARS = 65536
+_MAX_TAG_TYPE_CHARS = 64
 
 # rex_report_show: the core receives title and markdown as unbounded strings and renders
 # them in a GUI popup named by the title, so both are capped — the markdown to keep one
 # agent call from pushing megabytes into the viewer, the title because it labels the tab.
-_MAX_REPORT_TITLE_CHARS: Final = 256
-_MAX_REPORT_CONTENT_CHARS: Final = 65536
+_MAX_REPORT_TITLE_CHARS = 256
+_MAX_REPORT_CONTENT_CHARS = 65536
 
-_METADATA_PREFIX: Final = "rex/"
-_TAG_ICON: Final = "\u25c6"
+_METADATA_PREFIX = "rex/"
+_TAG_ICON = "\u25c6"
 
 # rex_undo/rex_redo echo post-operation stack depths (never the entry text) so an agent
 # can stop when the depth stops changing. The stack is the file's undo database, shared

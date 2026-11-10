@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import importlib
-from typing import Final, TypedDict
+from typing import TypedDict
 
 from binaryninja import mcp
 
-_TOOL_PREFIX: Final = "rex_"
+_TOOL_PREFIX = "rex_"
 
-_UNCATEGORIZED: Final = "other"
-_UNCATEGORIZED_USE_WHEN: Final = "Registered rex_ tools that no category module defines."
+_UNCATEGORIZED = "other"
+_UNCATEGORIZED_USE_WHEN = "Registered rex_ tools that no category module defines."
 
-_CATEGORY_USE_WHEN: Final[dict[str, str]] = {
+_CATEGORY_USE_WHEN: dict[str, str] = {
     "decompile": "First contact and reading code: entry point, main, HLIL/disassembly, HLIL grep.",
     "strings": "Locate detected strings and the code that references them.",
     "scanning": "Find a magic constant or byte pattern, and the functions that contain it.",
@@ -34,7 +34,7 @@ _CATEGORY_USE_WHEN: Final[dict[str, str]] = {
 # applies before a handler runs. The registry records only the JSON Schema, not these —
 # they live in the handler bodies — so the map is maintained by hand and pinned against
 # the handler sources by tests/test_tools/test_help.py.
-_PARAMETER_ERROR_CODES: Final[dict[tuple[str, str], tuple[str, ...]]] = {
+_PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
     ("rex_call_paths", "from_addr"): ("no_function", "analysis_pending"),
     ("rex_call_paths", "to_addr"): ("no_function", "analysis_pending"),
     ("rex_component_add_functions", "functions"): ("analysis_pending",),
@@ -91,7 +91,7 @@ _PARAMETER_ERROR_CODES: Final[dict[tuple[str, str], tuple[str, ...]]] = {
 }
 
 
-_SCHEMA_BOUNDS: Final = (
+_SCHEMA_BOUNDS = (
     "minimum",
     "maximum",
     "default",

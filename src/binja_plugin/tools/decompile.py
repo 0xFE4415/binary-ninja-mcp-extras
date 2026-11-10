@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from itertools import takewhile
-from typing import TYPE_CHECKING, Annotated, Final, Literal, TypedDict
+from typing import TYPE_CHECKING, Annotated, Literal, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -34,44 +34,44 @@ from binja_plugin.tools import (
 if TYPE_CHECKING:
     from binaryninja.highlevelil import HighLevelILFunction
 
-_MAX_HLIL_GREP_LIMIT: Final = 200
-_MAX_HLIL_GREP_FUNCTIONS: Final = 5000
+_MAX_HLIL_GREP_LIMIT = 200
+_MAX_HLIL_GREP_FUNCTIONS = 5000
 
 # rex_hlil_grep per-match context: bounded so the three-matches-per-function cap keeps
 # the echoed lines per function a few dozen at most.
-_MAX_HLIL_GREP_CONTEXT: Final = 8
+_MAX_HLIL_GREP_CONTEXT = 8
 # rex_decompile_many caps: the batch size bounds one call's decompilation cost, the
 # line cap the echoed text per function.
-_MAX_DECOMPILE_BATCH: Final = 1024
-_MAX_DECOMPILE_LINES: Final = 512
+_MAX_DECOMPILE_BATCH = 1024
+_MAX_DECOMPILE_LINES = 512
 
 # rex_disasm_many caps: the batch size and per-window line cap bound one call's render
 # and echo, and the cross-window budget paginates so one call cannot return an
 # unbounded dump.
-_MAX_DISASM_BATCH: Final = 64
-_MAX_DISASM_MANY_LINES: Final = 512
-_MAX_DISASM_MANY_TOTAL_LINES: Final = 1024
+_MAX_DISASM_BATCH = 64
+_MAX_DISASM_MANY_LINES = 512
+_MAX_DISASM_MANY_TOTAL_LINES = 1024
 
 # rex_quick_main's resolution chain: function symbols first, then the __libc_start_main
 # pointer argument of the entry stub, then an explicitly named entry-function fallback.
-_MAIN_SYMBOL_NAMES: Final = ("main", "_main")
-_MAIN_LIBC_MARKER: Final = "libc_start_main"
-_MAIN_FALLBACK_NOTE: Final = (
+_MAIN_SYMBOL_NAMES = ("main", "_main")
+_MAIN_LIBC_MARKER = "libc_start_main"
+_MAIN_FALLBACK_NOTE = (
     "no main symbol and no parsable __libc_start_main pointer in the entry function"
 )
 
 # A trap ends the basic block, so analysis stops there: bytes after it belong to no
 # function even though a handler can resume execution past the trap (the same
 # block-ending blind spot _containment_miss_hint names).
-_TRAP_MNEMONICS: Final = frozenset({"int3", "breakpoint", "ud2"})
-_QUICK_MAIN_TRAP_HINT: Final = (
+_TRAP_MNEMONICS = frozenset({"int3", "breakpoint", "ud2"})
+_QUICK_MAIN_TRAP_HINT = (
     "function ends in {mnemonic}; if a SIGTRAP-style handler resumes past it, execution "
     "reaches code outside this function — inspect with rex_disasm_at and rex_function_define"
 )
 
 # Precompiled once: _argument_address runs per rendered call argument, so the compiled
 # pattern must not go through the re-module cache on every call.
-_HEX_ADDRESS_PATTERN: Final = re.compile(r"0x[0-9a-fA-F]+")
+_HEX_ADDRESS_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
 
 
 class _DecompiledFunction(_ResolvedFunction):

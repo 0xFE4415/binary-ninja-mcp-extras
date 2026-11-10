@@ -8,7 +8,7 @@ the IL states and never a rendering of it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypedDict
 
 from binaryninja import mcp
 from binaryninja.enums import VariableSourceType
@@ -27,14 +27,14 @@ if TYPE_CHECKING:
     from binaryninja.mediumlevelil import MediumLevelILFunction, MediumLevelILInstruction
     from binaryninja.variable import Variable
 
-_MAX_STATEMENT_LIMIT: Final = 1000
-_MAX_DEFINITION_SITES: Final = 10
-_COMPARISON_OPERATORS: Final = {"MLIL_CMP_E": "==", "MLIL_CMP_NE": "!="}
-_EXTENSIONS: Final = ("MLIL_SX", "MLIL_ZX")
-_CONSTANTS: Final = ("MLIL_CONST", "MLIL_CONST_PTR")
-_DEFINITIONS: Final = ("MLIL_SET_VAR", "MLIL_SET_VAR_SSA")
-_TEMP_FLAG_BIT: Final = 0x80000000
-_TEMP_FLAG_INDEX_MASK: Final = 0x7FFFFFFF
+_MAX_STATEMENT_LIMIT = 1000
+_MAX_DEFINITION_SITES = 10
+_COMPARISON_OPERATORS = {"MLIL_CMP_E": "==", "MLIL_CMP_NE": "!="}
+_EXTENSIONS = ("MLIL_SX", "MLIL_ZX")
+_CONSTANTS = ("MLIL_CONST", "MLIL_CONST_PTR")
+_DEFINITIONS = ("MLIL_SET_VAR", "MLIL_SET_VAR_SSA")
+_TEMP_FLAG_BIT = 0x80000000
+_TEMP_FLAG_INDEX_MASK = 0x7FFFFFFF
 
 
 class _VariableUse(TypedDict):

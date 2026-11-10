@@ -7,7 +7,7 @@ out the analysis engine, discarding the view — rather than its analyzed conten
 from __future__ import annotations
 
 import time
-from typing import Annotated, Final, TypedDict
+from typing import Annotated, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -18,9 +18,9 @@ from binja_plugin.tools import _truncate, _validate_range
 # rex_analysis_wait: the wait runs on the MCP server thread in ~100 ms slices, so the
 # hold is bounded by timeout_ms plus one slice; the in-flight cap bounds the echoed
 # hotspot list (per-function analysis time doubles as an analysis profiler).
-_MAX_ANALYSIS_WAIT_MS: Final = 600000
-_ANALYSIS_WAIT_SLICE_MS: Final = 100
-_MAX_ANALYSIS_INFLIGHT: Final = 10
+_MAX_ANALYSIS_WAIT_MS = 600000
+_ANALYSIS_WAIT_SLICE_MS = 100
+_MAX_ANALYSIS_INFLIGHT = 10
 
 
 class _AnalysisProgress(TypedDict):

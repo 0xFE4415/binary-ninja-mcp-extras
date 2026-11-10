@@ -10,7 +10,7 @@ import contextlib
 import enum
 import types
 from collections.abc import Callable, Generator, Iterator, Mapping
-from typing import Any, Final, override
+from typing import Any, override
 
 from helpers_dataflow import FakeMLILInstructions
 from helpers_uidf import (
@@ -96,10 +96,10 @@ class FakeLineContents:
         self.tokens = list(tokens)
 
 
-_TOKEN_TYPE: Final = FakeInstructionTextTokenType
+_TOKEN_TYPE = FakeInstructionTextTokenType
 
 # The token shapes find_all_constant was observed to yield on a live x86_64 ELF.
-INSTRUCTION_LINE: Final = (
+INSTRUCTION_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
     FakeLineToken(_TOKEN_TYPE.InstructionToken, "cmp"),
     FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
@@ -107,7 +107,7 @@ INSTRUCTION_LINE: Final = (
     FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", "),
     FakeLineToken(_TOKEN_TYPE.IntegerToken, "0x0"),
 )
-FUNCTION_HEADER_LINE: Final = (
+FUNCTION_HEADER_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
     FakeLineToken(_TOKEN_TYPE.TextToken, "  "),
     FakeLineToken(_TOKEN_TYPE.TextToken, "int64_t"),
@@ -115,18 +115,18 @@ FUNCTION_HEADER_LINE: Final = (
     FakeLineToken(_TOKEN_TYPE.CodeSymbolToken, "sub_40a020"),
     FakeLineToken(_TOKEN_TYPE.TextToken, "()"),
 )
-CONTINUATION_LINE: Final = (
+CONTINUATION_LINE = (
     FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{ Continuation of function "),
     FakeLineToken(_TOKEN_TYPE.CodeSymbolToken, "sub_412c10"),
     FakeLineToken(_TOKEN_TYPE.AnnotationToken, " }"),
 )
-FALLS_THROUGH_LINE: Final = (
+FALLS_THROUGH_LINE = (
     FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{ Falls through into "),
     FakeLineToken(_TOKEN_TYPE.CodeSymbolToken, "_fini"),
     FakeLineToken(_TOKEN_TYPE.AnnotationToken, " }"),
 )
-CASE_LINE: Final = (FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{Case 0x0}"),)
-ANNOTATED_INSTRUCTION_LINE: Final = (
+CASE_LINE = (FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{Case 0x0}"),)
+ANNOTATED_INSTRUCTION_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
     FakeLineToken(_TOKEN_TYPE.InstructionToken, "mul"),
     FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
@@ -251,7 +251,7 @@ class FakeAnalysisSkipReason(enum.IntEnum):
     AnalysisPipelineSuspendedReason = 8
 
 
-SKIP_CAUSES: Final = {
+SKIP_CAUSES = {
     FakeAnalysisSkipReason.NoSkipReason: "the core reports no reason",
     FakeAnalysisSkipReason.AlwaysSkipReason: "its analysis_skip_override always skips it",
     FakeAnalysisSkipReason.ExceedFunctionSizeSkipReason: (
@@ -952,7 +952,7 @@ class SpyBinaryView(FakeBinaryView):
         return super().get_functions_containing(address)
 
 
-X86_64_REGISTERS: Final = types.MappingProxyType(
+X86_64_REGISTERS = types.MappingProxyType(
     {
         98: "rax",
         99: "rcx",
@@ -966,7 +966,7 @@ X86_64_REGISTERS: Final = types.MappingProxyType(
         2147483678: "temp30",
     }
 )
-X86_64_FLAGS: Final = types.MappingProxyType({0: "c", 2: "p", 4: "a", 6: "z", 7: "s"})
+X86_64_FLAGS = types.MappingProxyType({0: "c", 2: "p", 4: "a", 6: "z", 7: "s"})
 
 
 class FakeArchitecture:

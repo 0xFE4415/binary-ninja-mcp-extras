@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from functools import partial
 from itertools import chain
-from typing import TYPE_CHECKING, Annotated, Final, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from binaryninja import mcp
 
@@ -28,12 +28,12 @@ if TYPE_CHECKING:
         StringReference,
     )
 
-_MAX_STRING_READ_CHARS: Final = 4096
+_MAX_STRING_READ_CHARS = 4096
 
 # rex_string_refs: the per-string code-ref echo cap. The core calls themselves are
 # bounded by max_items = cap + 1, so truncation is detected without enumerating past
 # what the response can echo.
-_MAX_STRING_REFS: Final = 64
+_MAX_STRING_REFS = 64
 
 StringType = Literal["AsciiString", "Utf16String", "Utf32String", "Utf8String"]
 

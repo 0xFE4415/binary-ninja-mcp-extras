@@ -12,28 +12,28 @@ import itertools
 import re
 import traceback
 from collections import OrderedDict
-from typing import Annotated, Final, NamedTuple, TypedDict
+from typing import Annotated, NamedTuple, TypedDict
 
 import binaryninja
 from binaryninja import mcp
 
 from binja_plugin.tools import _truncate, _truncate_with_flag, _validate_range
 
-_MAX_EVAL_STDOUT_CHARS: Final = 65536
-_MAX_EVAL_RESULT_CHARS: Final = 16384
-_MAX_EVAL_LOCATION_CHARS: Final = 200
-_EVAL_FILENAME: Final = "<rex_eval_python>"
+_MAX_EVAL_STDOUT_CHARS = 65536
+_MAX_EVAL_RESULT_CHARS = 16384
+_MAX_EVAL_LOCATION_CHARS = 200
+_EVAL_FILENAME = "<rex_eval_python>"
 
 # Spilled oversized echoes: when rex_eval_python's stdout or result is clipped, the full
 # text is kept in process memory (never the view's database) so rex_eval_result can page
 # it back. The store keeps the most recent few spills and dies with the server process;
 # a spill larger than the per-spill cap is not kept at all, and the clipped echo is then
 # the only copy.
-_MAX_EVAL_SPILLS: Final = 8
-_MAX_EVAL_SPILL_CHARS: Final = 4 * 1024 * 1024
-_MAX_EVAL_RESULT_PAGE_CHARS: Final = 65536
-_EVAL_SPILLS: Final[OrderedDict[str, str]] = OrderedDict()
-_SPILL_SEQUENCE: Final = itertools.count()
+_MAX_EVAL_SPILLS = 8
+_MAX_EVAL_SPILL_CHARS = 4 * 1024 * 1024
+_MAX_EVAL_RESULT_PAGE_CHARS = 65536
+_EVAL_SPILLS: OrderedDict[str, str] = OrderedDict()
+_SPILL_SEQUENCE = itertools.count()
 
 
 class _Echo(NamedTuple):

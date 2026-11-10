@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Annotated, Final, TypedDict
+from typing import Annotated, TypedDict
 
 from binaryninja import mcp
 from binaryninja.enums import InstructionTextTokenType
@@ -22,21 +22,21 @@ from binja_plugin.tools import (
 )
 
 # rex_constant_find matches displayed constants, which are at most 64-bit values.
-_MAX_CONSTANT_VALUE: Final = 2**64 - 1
+_MAX_CONSTANT_VALUE = 2**64 - 1
 
 # Raw pattern-string cap for rex_data_find: bounds the regex compile and the per-chunk
 # read inflation (read_size grows with the pattern length) before any of that happens.
-_MAX_PATTERN_CHARS: Final = 8192
+_MAX_PATTERN_CHARS = 8192
 
 # rex_find_functions_by_pattern example matches per function: triage wants a handful of
 # hit addresses; rex_data_find already returns full match lists. One extra address is
 # collected so `addresses_truncated` can tell an exact cap from clipped examples.
-_MAX_FIND_FUNCTIONS_EXAMPLES: Final = 5
+_MAX_FIND_FUNCTIONS_EXAMPLES = 5
 
 # rex_constant_find example reference addresses per function: a hot constant concentrated
 # in one function stays bounded. One extra address is collected so `addresses_truncated`
 # can tell an exact cap from clipped examples.
-_MAX_CONSTANT_ADDRESSES: Final = 6
+_MAX_CONSTANT_ADDRESSES = 6
 
 
 def _compile_pattern(pattern: str) -> tuple[re.Pattern[bytes], int]:

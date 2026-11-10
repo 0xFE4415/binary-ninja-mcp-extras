@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from typing import Annotated, Final, Literal, TypedDict
+from typing import Annotated, Literal, TypedDict
 
 from binaryninja import mcp
 from binaryninja.function import Function
@@ -20,16 +20,16 @@ from binja_plugin.tools import (
     _validate_range,
 )
 
-_MAX_CALL_PATH_DEPTH: Final = 16
-_MAX_CALL_PATHS: Final = 64
-_MAX_FUNCTION_ENTRIES: Final = 64
-_MAX_DEFINE_BATCH: Final = 128
+_MAX_CALL_PATH_DEPTH = 16
+_MAX_CALL_PATHS = 64
+_MAX_FUNCTION_ENTRIES = 64
+_MAX_DEFINE_BATCH = 128
 
 # The define tools' analysis wait polls in ~100 ms slices like rex_analysis_wait; a
 # defined function counts as analyzed once the engine has produced its first basic
 # block, which is the same gate the decompile and disassembly tools go through.
-_DEFINE_WAIT_SLICE_MS: Final = 100
-_MAX_DEFINE_WAIT_MS: Final = 600000
+_DEFINE_WAIT_SLICE_MS = 100
+_MAX_DEFINE_WAIT_MS = 600000
 
 
 class _CallPathsResult(TypedDict):

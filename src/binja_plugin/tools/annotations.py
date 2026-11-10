@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Final, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Annotated, NotRequired, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -23,16 +23,16 @@ if TYPE_CHECKING:
 # rows; the string caps bound what reaches the core per field. The name cap is far below
 # any sane symbol length, the type cap matches the pattern-string cap (both feed a
 # parser), and the comment cap matches the tag-data cap.
-_MAX_ANNOTATE_ITEMS: Final = 128
-_MAX_ANNOTATE_NAME_CHARS: Final = 256
-_MAX_ANNOTATE_COMMENT_CHARS: Final = 65536
-_MAX_ANNOTATE_PROTOTYPE_CHARS: Final = 8192
-_ANNOTATE_FIELDS: Final = frozenset({"addr", "name", "comment", "prototype"})
+_MAX_ANNOTATE_ITEMS = 128
+_MAX_ANNOTATE_NAME_CHARS = 256
+_MAX_ANNOTATE_COMMENT_CHARS = 65536
+_MAX_ANNOTATE_PROTOTYPE_CHARS = 8192
+_ANNOTATE_FIELDS = frozenset({"addr", "name", "comment", "prototype"})
 # Schema-side description of one rex_annotate_many item. The bundled mcp layer cannot
 # describe object arrays structurally: mcp.Schema hands the item through as decoded JSON
 # and the handler validates every field, so this schema is what the client sees while
 # the checks below are what actually rejects.
-_ANNOTATE_ITEMS_SCHEMA: Final[dict[str, object]] = {
+_ANNOTATE_ITEMS_SCHEMA: dict[str, object] = {
     "type": "object",
     "properties": {
         "addr": {

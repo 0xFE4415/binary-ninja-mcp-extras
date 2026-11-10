@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Final, TypedDict
+from typing import TYPE_CHECKING, Annotated, TypedDict
 
 from binaryninja import mcp
 
@@ -24,11 +24,11 @@ if TYPE_CHECKING:
 
 # rex_component_* lexical bounds: component names persist in the database and paths are
 # echoed back whole in every response, so both get length caps before reaching the core.
-_MAX_COMPONENT_NAME_CHARS: Final = 128
-_MAX_COMPONENT_PATH_CHARS: Final = 512
+_MAX_COMPONENT_NAME_CHARS = 128
+_MAX_COMPONENT_PATH_CHARS = 512
 # rex_component_get child-component echo cap; functions are paginated instead.
-_MAX_COMPONENT_CHILDREN: Final = 256
-_MAX_COMPONENT_ADD_FUNCTIONS: Final = 128
+_MAX_COMPONENT_CHILDREN = 256
+_MAX_COMPONENT_ADD_FUNCTIONS = 128
 
 
 class _AddedFunction(_ResolvedFunction):

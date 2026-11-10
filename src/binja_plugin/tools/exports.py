@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
-from typing import Annotated, Final, Literal, NamedTuple, TypedDict
+from typing import Annotated, Literal, NamedTuple, TypedDict
 
 from binaryninja import mcp
 
@@ -23,8 +23,8 @@ from binja_plugin.tools import (
     _write_export_file,
 )
 
-_MAX_EXPORT_DISASM_LINES: Final = 512
-_MAX_EXPORT_SYMBOLS: Final = 2048
+_MAX_EXPORT_DISASM_LINES = 512
+_MAX_EXPORT_SYMBOLS = 2048
 
 ExportFormat = Literal["csv", "json"]
 

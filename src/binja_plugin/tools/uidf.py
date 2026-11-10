@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Final, Literal, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Annotated, Literal, NotRequired, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -42,11 +42,11 @@ if TYPE_CHECKING:
 
 # rex_uidf_set settles the reanalysis an informed value schedules before rendering HLIL,
 # polling like rex_analysis_wait; the deadline bounds one call's hold on the server thread.
-_UIDF_ANALYSIS_SLICE_MS: Final = 100
-_MAX_UIDF_ANALYSIS_WAIT_MS: Final = 10000
-_MAX_UIDF_BATCH: Final = 128
+_UIDF_ANALYSIS_SLICE_MS = 100
+_MAX_UIDF_ANALYSIS_WAIT_MS = 10000
+_MAX_UIDF_BATCH = 128
 
-_UIDF_ITEMS_SCHEMA: Final[dict[str, object]] = {
+_UIDF_ITEMS_SCHEMA: dict[str, object] = {
     "type": "object",
     "properties": {
         "variable": {"type": "string", "minLength": 1},
@@ -73,7 +73,7 @@ _UIDF_ITEMS_SCHEMA: Final[dict[str, object]] = {
 
 # The states BinaryView.parse_possiblevalueset documents a string grammar for; the schema
 # advertises exactly these, so a state with no documented syntax is never offered.
-_VALUE_STATES: Final[dict[str, RegisterValueType]] = {
+_VALUE_STATES: dict[str, RegisterValueType] = {
     "ConstantValue": RegisterValueType.ConstantValue,
     "ConstantPointerValue": RegisterValueType.ConstantPointerValue,
     "StackFrameOffset": RegisterValueType.StackFrameOffset,

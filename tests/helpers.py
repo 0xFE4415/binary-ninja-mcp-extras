@@ -10,7 +10,7 @@ import sys
 import types
 import typing
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
 import pytest
 
@@ -32,7 +32,7 @@ from helpers_view import (
     RenderableText,
 )
 
-NO_ALTERNATIVES: Final = types.MappingProxyType({"also_containing": [], "same_name": []})
+NO_ALTERNATIVES = types.MappingProxyType({"also_containing": [], "same_name": []})
 
 REGISTERED_TOOLS: list[tuple[str, dict[str, object], Any]] = []
 

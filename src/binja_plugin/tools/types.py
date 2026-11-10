@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import enum
-from typing import Final, Literal, NamedTuple, TypedDict
+from typing import Literal, NamedTuple, TypedDict
 
 from binaryninja import Type, TypeLibrary, mcp
 from binaryninja.binaryview import BinaryView
@@ -21,15 +21,15 @@ from binja_plugin.tools import (
 # Type-library tools: one call moves at most this many type names, and each name is
 # capped before it reaches the type system — QualifiedNames have no core-side length
 # bound and persist in the type database or the .bntl.
-_MAX_TYPE_LIBRARY_NAMES: Final = 128
-_MAX_TYPE_NAME_CHARS: Final = 255
+_MAX_TYPE_LIBRARY_NAMES = 128
+_MAX_TYPE_NAME_CHARS = 255
 ExportKind = Literal["types", "objects"]
 # rex_struct_from_access echoes at most this many members; the struct is defined in full
 # regardless, the cap bounds only the echoed list.
-_MAX_STRUCT_MEMBERS: Final = 128
+_MAX_STRUCT_MEMBERS = 128
 # Source passed to Type.generate_auto_type_id, so the auto types this tool defines are
 # identifiable in the type system as originating here.
-_STRUCT_TYPE_SOURCE: Final = "rex_struct"
+_STRUCT_TYPE_SOURCE = "rex_struct"
 
 
 class _StructMember(TypedDict):

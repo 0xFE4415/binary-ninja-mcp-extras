@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from itertools import chain
-from typing import TYPE_CHECKING, Annotated, Final, Literal, TypedDict
+from typing import TYPE_CHECKING, Annotated, Literal, TypedDict
 
 from binaryninja import mcp
 from binaryninja.enums import LowLevelILOperation
@@ -13,9 +13,9 @@ from binja_plugin.tools import _MAX_LIMIT, _paginate, _truncate, _validate_range
 if TYPE_CHECKING:
     from binaryninja.binaryview import ReferenceSource, Relocation
 
-_MAX_DATA_READ_BYTES: Final = 0x100000
+_MAX_DATA_READ_BYTES = 0x100000
 
-_CALL_OPERATIONS: Final = (
+_CALL_OPERATIONS = (
     LowLevelILOperation.LLIL_CALL,
     LowLevelILOperation.LLIL_TAILCALL,
 )
