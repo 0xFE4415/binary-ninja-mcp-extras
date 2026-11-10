@@ -868,13 +868,11 @@ X86_64_REGISTERS: Final = types.MappingProxyType(
         2147483678: "temp30",
     }
 )
-X86_64_FLAGS: Final = types.MappingProxyType(
-    {0: "c", 2: "p", 4: "a", 6: "z", 7: "s", 2147483648: "flag2147483648"}
-)
+X86_64_FLAGS: Final = types.MappingProxyType({0: "c", 2: "p", 4: "a", 6: "z", 7: "s"})
 
 
 class FakeArchitecture:
-    """Mirrors Architecture: register and flag indexes the core knows resolve to names."""
+    """Mirrors Architecture: known indexes resolve to names, any other flag to ``flag<index>``."""
 
     def __init__(
         self,
@@ -890,7 +888,7 @@ class FakeArchitecture:
         return self._registers[reg]
 
     def get_flag_name(self, flag: int) -> str:
-        return self._flags[flag]
+        return self._flags.get(flag, f"flag{flag}")
 
 
 class FakeTypeClass(enum.IntEnum):

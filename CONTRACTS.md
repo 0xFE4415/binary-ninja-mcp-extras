@@ -34,7 +34,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   identify the entry. `storage` is `{source: "register", register}` with the register
   name from the function's architecture, `{source: "stack", stack_offset}` with the
   signed core offset, `{source: "flag", flag}`, or `{source: "composite_return_value" |
-  "composite_parameter", storage}` with the raw core value. `limit` and `offset` page
+  "composite_parameter", storage}` with the raw core value. `flag` is the architecture's
+  flag name, except for a temporary flag (storage with bit 31 set, the variable `condN`),
+  which reads `temp flag N` with N the storage minus 0x80000000; the core's own name for it
+  is `flag<storage>`, so nothing is lost. `limit` and `offset` page
   each entry's uses, and `variable` keeps every variable with that name, same-named ones
   included (`no_variable` if the instruction defines none).
 - `no_mlil` (`rex_function_constraints`, `rex_mlil_uses`, `rex_parameter_variables`, and the

@@ -33,6 +33,8 @@ _COMPARISON_OPERATORS: Final = {"MLIL_CMP_E": "==", "MLIL_CMP_NE": "!="}
 _EXTENSIONS: Final = ("MLIL_SX", "MLIL_ZX")
 _CONSTANTS: Final = ("MLIL_CONST", "MLIL_CONST_PTR")
 _DEFINITIONS: Final = ("MLIL_SET_VAR", "MLIL_SET_VAR_SSA")
+_TEMP_FLAG_BIT: Final = 0x80000000
+_TEMP_FLAG_INDEX_MASK: Final = 0x7FFFFFFF
 
 
 class _VariableUse(TypedDict):
@@ -275,6 +277,11 @@ def _variable_storage(architecture: Architecture, variable: Variable) -> _Variab
         case VariableSourceType.StackVariableSourceType:
             return {"source": "stack", "stack_offset": variable.storage}
         case VariableSourceType.FlagVariableSourceType:
+            if variable.storage & _TEMP_FLAG_BIT:
+                return {
+                    "source": "flag",
+                    "flag": f"temp flag {variable.storage & _TEMP_FLAG_INDEX_MASK}",
+                }
             return {"source": "flag", "flag": architecture.get_flag_name(variable.storage)}
         case VariableSourceType.CompositeReturnValueSourceType:
             return {"source": "composite_return_value", "storage": variable.storage}

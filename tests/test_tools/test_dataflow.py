@@ -20,6 +20,8 @@ from helpers_dataflow import (
 )
 from helpers_uidf import FakeVariable, FakeVariableSourceType
 from helpers_view import FakeAnalysisSkipReason, FakeArchitecture, FakeBinaryView, FakeFunction
+from hypothesis import given
+from hypothesis import strategies as st
 
 from binja_plugin.tools import dataflow as dataflow_tools
 
@@ -699,6 +701,12 @@ def test_uses_filter_returns_every_same_named_variable_and_no_other() -> None:
     ]
 
 
+def _flag_variable(storage: int) -> FakeVariable:
+    return FakeVariable(
+        "f", source_type=FakeVariableSourceType.FlagVariableSourceType, storage=storage
+    )
+
+
 def test_uses_tell_same_named_same_storage_variables_apart_by_type() -> None:
     narrow = FakeVariable("category", storage=105, type_string="int32_t")
     wide = FakeVariable("category", storage=105, type_string="int64_t")
@@ -734,12 +742,12 @@ def test_uses_keep_one_entry_for_a_variable_the_core_lists_twice() -> None:
             FakeVariable("v", source_type=FakeVariableSourceType.FlagVariableSourceType, storage=6),
             {"source": "flag", "flag": "z"},
         ),
-        (
-            FakeVariable(
-                "v", source_type=FakeVariableSourceType.FlagVariableSourceType, storage=2147483648
-            ),
-            {"source": "flag", "flag": "flag2147483648"},
-        ),
+        (_flag_variable(0), {"source": "flag", "flag": "c"}),
+        (_flag_variable(0x7FFFFFFF), {"source": "flag", "flag": "flag2147483647"}),
+        (_flag_variable(0x80000000), {"source": "flag", "flag": "temp flag 0"}),
+        (_flag_variable(0x80000001), {"source": "flag", "flag": "temp flag 1"}),
+        (_flag_variable(0x8000001E), {"source": "flag", "flag": "temp flag 30"}),
+        (_flag_variable(0xFFFFFFFF), {"source": "flag", "flag": "temp flag 2147483647"}),
         (
             FakeVariable(
                 "v",
@@ -1086,3 +1094,11 @@ def test_uses_render_a_use_whose_operation_has_no_name_attribute() -> None:
     _, uses = get_tool("rex_mlil_uses")
     result = uses(_call(view), function=0x1000, address=0x1020)
     assert result["variables"][0]["uses"][0]["operation"] == "42"
+
+
+@given(index=st.integers(min_value=0, max_value=0x7FFFFFFF))
+def test_a_temp_flag_display_names_the_exact_storage_it_stands_for(index: int) -> None:
+    variable = _flag_variable(0x80000000 | index)
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[variable])
+    [report] = _run_uses(_uses_view([call], {variable: [call]}))["variables"]
+    assert report["storage"] == {"source": "flag", "flag": f"temp flag {index}"}
