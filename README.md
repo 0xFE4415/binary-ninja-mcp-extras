@@ -50,128 +50,104 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 
 ## Tool reference
 
-Every tool is pinned as read-only or destructive when it registers, and that marking
-is the only approval-policy signal an MCP client gets. The tables below cover all 52
-registered tools, split on that marking: 50 Python `rex_*` tools and 2 native `rx_*`
-scanners. Read the destructive table before you let an agent run those tools.
+Each tool registers as read-only or destructive. That mark is the only approval signal an
+MCP client gets, so read the destructive table before you let an agent run those tools.
+The tables list all 52 tools: 50 Python `rex_*` tools and 2 native `rx_*` scanners.
+CONTRACTS.md holds the exact rules for every response field and limit.
 
 ### Read-only tools
 
-| Tool | Notes |
+| Tool | What it does |
 | --- | --- |
-| `rex_string_search` | Search detected strings by substring or regex; section and type filters. |
-| `rex_data_find` | Find every occurrence of a hex byte pattern (`??` wildcards) in mapped memory. |
-| `rex_data_read` | Read mapped bytes with relocations applied; reports what it actually read. |
-| `rx_multi_find` | Up to 64 hex patterns in one pass, with per-pattern prefilters in Rust. |
-| `rx_data_find` | `rex_data_find`'s contract with the byte scan running in native Rust. |
-| `rex_hlil_grep` | Regex search over rendered HLIL text, paged with a `next_offset` cursor. |
-| `rex_hlil_statements` | HLIL statements in block order, each tagged with its source address. |
-| `rex_function_constraints` | Branch comparisons against a constant, with the tested subject. |
-| `rex_mlil_uses` | Every read of each MLIL variable the core defines at an address; reports the `function`, the `definition_site`, and per variable its `storage` (register, stack offset, flag), `type`, `definitions` (a flat list of addresses) and paged `uses`. |
-| `rex_parameter_variables` | Map a parameter to its storage, MLIL variables, and carrying copies. |
-| `rex_constant_find` | Find functions whose disassembly instruction lines hold a constant value, not raw bytes or IL. |
-| `rex_find_functions_by_pattern` | Map a byte pattern to the functions containing its matches. |
-| `rex_string_refs` | Code refs to detected strings, synthesized included; filters. |
-| `rex_xrefs_to` | Code and data references to an address. |
-| `rex_disasm_at` | Window (max 4096 instructions per side); full function: `rex_export_disasm`. |
-| `rex_disasm_many` | Up to 64 windows; errors, shared budget, and `next_offset` paging. |
-| `rex_decompile_many` | HLIL render for up to 1024 functions in one batch call. |
-| `rex_quick_main` | Entry point, `main`, and `main`'s HLIL in one call. |
-| `rex_analysis_wait` | Bounded wait for background analysis; snapshot at expiry. |
-| `rex_uidf_list` | List informed user variable values for one function or the whole view. |
-| `rex_call_paths` | Bounded breadth-first search for call paths between two functions. |
-| `rex_function_containing` | List the functions containing an address. |
-| `rex_component_get` | Look up a component by path; report functions and child components. |
+| `rex_string_search` | Search detected strings by substring or regex. |
+| `rex_data_find` | Find a hex byte pattern (`??` wildcards) in mapped memory. |
+| `rex_data_read` | Read mapped bytes with relocations applied. |
+| `rx_multi_find` | Find up to 64 hex patterns in one native pass. |
+| `rx_data_find` | Same as `rex_data_find`, with the scan in native Rust. |
+| `rex_hlil_grep` | Regex search over HLIL text, one page of functions at a time. |
+| `rex_hlil_statements` | List a function's HLIL statements with their addresses. |
+| `rex_function_constraints` | List branch comparisons against a constant. |
+| `rex_mlil_uses` | Show every read of the MLIL variables defined at an address. |
+| `rex_parameter_variables` | Map a parameter to its storage, variables, and copies. |
+| `rex_constant_find` | Find functions that use a constant in a disassembly line. |
+| `rex_find_functions_by_pattern` | Map a byte pattern to the functions that contain it. |
+| `rex_string_refs` | List code references to detected strings. |
+| `rex_xrefs_to` | List code and data references to an address. |
+| `rex_disasm_at` | Disassemble the lines around an address. |
+| `rex_disasm_many` | Disassemble up to 64 addresses in one call. |
+| `rex_decompile_many` | Decompile up to 1024 functions in one call. |
+| `rex_quick_main` | Show the entry point, `main`, and the HLIL of `main`. |
+| `rex_analysis_wait` | Wait for analysis, with a time limit. |
+| `rex_uidf_list` | List user variable values for one function or the whole view. |
+| `rex_call_paths` | Find call paths between two functions, within set bounds. |
+| `rex_function_containing` | List every function that contains an address. |
+| `rex_component_get` | Show a component's functions and child components. |
 | `rex_string_read_at` | Read the detected string at an address. |
-| `rex_relocation_at` | List the relocations covering an address, symbol names included. |
-| `rex_tag_list` | List the tags set on the binary view. |
-| `rex_report_show` | Render a markdown report with `binaryninja://` links into the view. |
-| `rex_kv_get` | Read a stored scratch string from the view's database. |
-| `rex_eval_result` | Page back a spilled oversized `rex_eval_python` stdout or result. |
-| `rex_help` | List tool categories, one category's tools, or one tool's parameters. |
+| `rex_relocation_at` | List the relocations that cover an address. |
+| `rex_tag_list` | List the tags in the view. |
+| `rex_report_show` | Show a markdown report inside Binary Ninja. |
+| `rex_kv_get` | Read a scratch string stored in the database. |
+| `rex_eval_result` | Page through a long `rex_eval_python` result. |
+| `rex_help` | List tool categories, a category's tools, or one tool's parameters. |
 
 ### Destructive tools
 
-| Tool | Notes |
+| Tool | What it does |
 | --- | --- |
-| `rex_annotate_many` | Rename or retype a function; comment at the exact address; 128 items. |
-| `rex_memory_write` | Overwrite bytes in the binary view with a hex byte string. |
-| `rex_function_define` | Turn bytes at an address into a function; optional wait for analysis. |
-| `rex_function_define_many` | Define up to 128 functions per call, waiting for first blocks. |
-| `rex_function_undefine` | Remove the function covering an address. |
-| `rex_uidf_set` | Set an MLIL variable's value at its definition; returns settled HLIL. |
-| `rex_uidf_set_many` | Set up to 128 MLIL values; report item errors, then reanalyze/render once. |
-| `rex_uidf_clear` | Clear one MLIL variable's informed values, or all of a function's. |
+| `rex_annotate_many` | Rename, retype, or comment up to 128 items in one undoable batch. |
+| `rex_memory_write` | Overwrite bytes in the view with a hex string. |
+| `rex_function_define` | Make a function at an address; can wait for analysis. |
+| `rex_function_define_many` | Define up to 128 functions and wait for their first blocks. |
+| `rex_function_undefine` | Remove the function that covers an address. |
+| `rex_uidf_set` | Set an MLIL variable's value at its definition; returns the new HLIL. |
+| `rex_uidf_set_many` | Set up to 128 values, then reanalyze and render once. |
+| `rex_uidf_clear` | Clear one variable's set values, or all values in a function. |
 | `rex_struct_from_access` | Infer a struct from recorded offset accesses and define it. |
-| `rex_type_library_import` | Attach a `.bntl` and import a bounded list of its type names. |
-| `rex_type_library_export` | Export view types or objects into a new `.bntl` in the export root; each exported entry reports its type; objects also report the chosen `address` and the other same-name `alternatives`. Reports the written file's `path` and `bytes_written`, and the `library` name. |
-| `rex_component_create` | Create a component, optionally nested under a parent path. |
-| `rex_component_add_functions` | Put resolved functions into a component. |
-| `rex_tag_set` | Attach a GUI-visible tag at an address, creating the tag type on demand. |
-| `rex_kv_set` | Store a scratch string in the view's database; survives across sessions. |
-| `rex_kv_delete` | Delete a previously stored scratch value. |
-| `rex_export_disasm` | Write one function's disassembly window to a file. |
-| `rex_export_symbols` | Write an address range's symbols to a CSV or JSON file. |
-| `rex_eval_python` | Run arbitrary Binary Ninja Python; binds `bv`, `call`, `binaryninja`/`bn`. Errors read `Type: message` (module-qualified outside builtins) with the failing line in `error_location`. |
-| `rex_binary_close` | Discard unsaved changes and close the view; reports `closed` and the file's `path`. |
-| `rex_undo` | Undo the view's last transaction; reports post-op stack depths. |
-| `rex_redo` | Redo the last undone transaction; reports post-op stack depths. |
+| `rex_type_library_import` | Attach a `.bntl` and import a list of its types. |
+| `rex_type_library_export` | Write view types or objects to a new `.bntl` file. |
+| `rex_component_create` | Create a component, optionally under a parent path. |
+| `rex_component_add_functions` | Add functions to a component. |
+| `rex_tag_set` | Add a tag at an address; creates the tag type if needed. |
+| `rex_kv_set` | Store a scratch string in the view's database. |
+| `rex_kv_delete` | Delete a stored scratch string. |
+| `rex_export_disasm` | Write a function's disassembly window to a file. |
+| `rex_export_symbols` | Write the symbols in an address range to a CSV or JSON file. |
+| `rex_eval_python` | Run Binary Ninja Python with `bv`, `bn`, `binaryninja`, and `call`. |
+| `rex_binary_close` | Discard unsaved changes and close the view. |
+| `rex_undo` | Undo the view's last transaction. |
+| `rex_redo` | Redo the last undone transaction. |
 
 ### Addresses inside several functions
 
-A cold block or outlined fragment can lie inside its parent and in a function of its own.
-Tools that take an address pick the containing function with the lowest start (the
-architecture name breaks a tie) and report it as `function`, with `also_containing` and
-`same_name` listing the other containing functions and the other functions sharing its
-name. A function name in an address expression can be ambiguous the same way, and
-`same_name` shows it. `rex_function_containing` lists every containing function in that
-order.
+A cold block can sit inside its parent and inside a function of its own. A tool that takes
+an address picks the containing function with the lowest start. It reports that function as
+`function`, with `also_containing` and `same_name` listing the others.
+`rex_function_containing` lists all of them in the same order.
 
 ### Bounds on database-wide scans
 
-On a database with hundreds of thousands of functions, the whole-database searches
-stay bounded per call:
+Three searches stop early, so one call stays fast on a large database.
 
-- `rex_constant_find` reuses the core's linear-view constant search over disassembly lines
-  (the engine behind Search > For Constant) instead of generating IL for every function.
-  The search is a bounded, core-side pass that stops once the requested window is filled;
-  a value that occurs rarely or never requires scanning the whole view. Each function
-  echoes at most 6 distinct reference addresses and flags clipping via
-  `addresses_truncated`, which is true only when a further distinct address exists. The
-  core's hits are not address-ordered, and the order of functions in the page and the
-  example addresses chosen for each follow that hit order, not address order. While the
-  result is `truncated` a function's addresses are a lower bound even when
-  `addresses_truncated` is false. Only instruction lines count: function
-  header and annotation lines the core also reports are dropped, so `value` 0 no longer
-  matches every function.
-- `rex_hlil_grep` renders at most `max_functions` functions per call. The first
-  render of a function's HLIL costs tens of milliseconds, so on a large database,
-  page through the `next_offset` cursor. `truncated` proves a matching function exists
-  past the page; `scan_incomplete` says the render budget ran out first — page on
-  while either flag is set. `skipped_no_hlil` counts the name-matching functions in the
-  scanned range that have no HLIL (analysis skipped or unavailable); they are not in
-  `scanned` and are always reported, 0 when none were skipped.
-- `rex_find_functions_by_pattern` reads memory in chunks and stops as soon as it finds
-  a matching function past the requested window. While the result is `truncated`, a
-  function's `match_count` and addresses are lower bounds: matches at higher addresses
-  (for example cold chunks placed after another function) were never scanned. Once
-  `truncated` is false they are exact; example addresses cap at 5 with the same
-  `addresses_truncated` flag.
+- `rex_constant_find` searches disassembly with the core's constant search and stops once
+  the page is full. It returns up to 6 distinct addresses per function, in the core's hit
+  order. While `truncated` is set, each function's addresses are a lower bound.
+- `rex_hlil_grep` renders at most `max_functions` functions per call. Page with
+  `next_offset` while `truncated` or `scan_incomplete` is set. `skipped_no_hlil` counts
+  functions with no HLIL.
+- `rex_find_functions_by_pattern` stops at the first match past the page. While
+  `truncated` is set, `match_count` and addresses are lower bounds. It returns up to 5
+  addresses per function.
 
 ### Known limits
 
-- `rex_string_search`, `rex_string_refs`, and `rex_hlil_grep` compile
-  model-supplied regular expressions with Python's `re`, which has no match timeout.
-  A pattern prone to catastrophic backtracking (nested quantifiers like `(a+)+$`) can
-  stall the invocation indefinitely, and the server processes calls serially while it
-  runs. Prefer substring mode (`regex=false`) for untrusted input, and keep regexes
-  simple.
-- `rx_data_find`'s speed advantage depends on scan scope, per the project's own
-  benchmark ([native/BENCH.md](native/BENCH.md)): about 7.5x on a whole-database scan
-  with a short pattern, and parity (0.99x) when the scan covers one section. The
-  multi-pattern scanner won at every scope measured (12.6x on the full view, against
-  8 sequential Python calls). Both tools register whenever both halves are installed;
-  there is no switch between them, so pick per scan.
+- `rex_string_search`, `rex_string_refs`, and `rex_hlil_grep` compile regular expressions
+  with Python's `re`, which has no timeout. A pattern like `(a+)+$` can stall the server,
+  and it handles calls one at a time. Use substring mode (`regex=false`) for untrusted
+  input where the tool has it, and keep `rex_hlil_grep` patterns simple.
+- `rx_data_find` beats `rex_data_find` by about 7.5x on a whole-view scan and ties it
+  (0.99x) on one section. `rx_multi_find` won at every scope, up to 12.6x on the full view.
+  Both register whenever the native half is installed, so pick per scan. The numbers come
+  from [native/BENCH.md](native/BENCH.md).
 
 ## Development and testing
 

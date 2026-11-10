@@ -53,7 +53,7 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   waiting. Otherwise analysis is pending and the message advises
   `bn_analysis_update_and_wait` or a bounded `rex_analysis_wait`.
   `rex_quick_main` applies the same rule to its `note` when the entry function has no HLIL
-  and no `main` symbol exists: the note reads `the entry ` followed by that message.
+  and no `main` symbol exists: the note is `the entry`, a space, and that message.
 - An address can lie in several functions: a cold or outlined block belongs to its parent and
   to a function of its own. Every tool that resolves an address expression to a function
   (`rex_function_constraints`, `rex_hlil_statements`, `rex_mlil_uses`,
@@ -91,8 +91,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   out-of-range page, not an empty result set. While `truncated` is true, each returned
   function's `addresses` (`rex_constant_find`) and `match_count` plus `addresses`
   (`rex_find_functions_by_pattern`) are lower bounds, because the scan stopped before
-  reaching every hit of functions in the page; `addresses_truncated` only reports the
-  cap on what was seen. `rex_constant_find` lists functions, and picks each function's
+  reaching every hit of functions in the page (for example a cold block placed after its
+  function); `addresses_truncated` only reports the cap on what was seen.
+  `rex_constant_find` lists functions, and picks each function's
   example addresses, in the core's hit order, which is not address order.
   `rex_hlil_grep` returns no `total`; it additionally returns `scan_incomplete`, set when
   the `max_functions` render budget ran out before the whole view was scanned: nothing
@@ -102,7 +103,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `scanned` or searched. Filtered-out functions never count, and a function is counted
   in exactly one page (the one whose range covers it). Its
   `offset`/`next_offset` count functions in the view, not matches; pass the
-  cursor back as `offset` and page while either flag is set. `rex_disasm_many`
+  cursor back as `offset` and page while either flag is set. The first render of a
+  function's HLIL costs tens of milliseconds, which is why a call renders at most
+  `max_functions` functions. `rex_disasm_many`
   also returns `truncated` and a `next_offset` index into the input addresses;
   continue with addresses from that index.
   It returns valid `windows` plus per-address `errors` (`index`, `address`, and an
@@ -128,7 +131,8 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   remains to page.
 - `rex_eval_python` always returns `stdout`. It is the only tool that reports a whole-call
   exception in-band: it sets `error` and nulls `result` instead of raising a tool error;
-  captured output remains in `stdout`. On success, an assigned `result` is returned as
+  captured output remains in `stdout`. The code runs with `bv`, `call`, `binaryninja`, and
+  `bn` in scope. On success, an assigned `result` is returned as
   Python `repr()`.
   `error` always leads with the exception type, `Type: message` (bare `Type` when the
   message is empty). `Type` is the qualified name as `traceback.format_exception_only`
@@ -202,7 +206,8 @@ present only on some rows.
   `truncated` (more in-flight functions than listed).
 - `rex_annotate_many`: `applied`, `failed`, `failed_count`, `total`, and `results` rows
   `{addr, ok, function?, error?}`; `function` is the resolved function entry as it was before
-  the batch renamed it, present on every row that passed validation.
+  the batch renamed it, present on every row that passed validation. A `comment` lands at the
+  exact `addr` the item named; `name` and `prototype` apply to the whole function.
 - `rex_binary_close`: `closed` (always true; a failed close raises `close_failed`) and
   `path`, the closed file's full filename as the core reports it (truncated).
 - `rex_call_paths`: `from_function` and `to_function` (resolved function entries for
@@ -273,7 +278,8 @@ present only on some rows.
 - `rex_relocation_at`: `address`, `count`, and `relocations` of `{address, size, type,
   addend, implicit_addend, pc_relative, target, reloc, symbol}` (`symbol` is null when the
   relocation has none).
-- `rex_report_show`: `title`, `length`, `preview`, `truncated`.
+- `rex_report_show`: `title`, `length`, `preview`, `truncated`. The markdown can link into
+  the view with `binaryninja://?expr=...`.
 - `rex_string_read_at`: `address`, `length`, `type`, `value`, `truncated`.
   `rex_string_search`: `total`, `truncated`, and `strings` of `{address, length, type,
   value}`. `rex_string_refs`: `total`, `truncated`, and `strings` of `{value, location,
@@ -284,7 +290,8 @@ present only on some rows.
   `{offset, name, type}`, `truncated`.
 - `rex_tag_list`: `total`, `truncated`, and `tags` of `{address, tag_type, data,
   data_truncated}`. `rex_tag_set`: `address`, `tag_type`, `data`, `data_truncated`,
-  `length`.
+  `length`. A missing `tag_type` is created when `create_missing` is true (the default),
+  and raises `tag_type_not_found` otherwise.
 - `rex_type_library_export`: `path` (the resolved file), `bytes_written`, `library` (the
   library name, truncated), `exported`, `failed` (`{requested, reason}`), `applied`,
   `failed_count`, `total`. `rex_type_library_import`: `library` (null when none loaded),
@@ -307,6 +314,10 @@ present only on some rows.
 - Numeric parameters such as `limit`, `length`, `offset`, `max_depth`, `max_paths`,
   `max_functions`, and `max_chars` are range-checked, not clamped; invalid values return
   `invalid_params`.
+- Batch caps: `rex_annotate_many`, `rex_function_define_many`, `rex_uidf_set_many`, and
+  `rex_component_add_functions` take 1-128 items, `rex_disasm_many` 1-64 addresses, and
+  `rex_decompile_many` 1-1024 functions. `before` and `after` of `rex_disasm_at` and
+  `rex_export_disasm` are 0-4096 instructions.
 - Over-cap strings return parameter-specific codes such as `pattern_too_large`,
   `key_too_large`, `value_too_large`, `data_too_large`, `name_too_large`, or
   `library_name_too_large`. Over-cap component paths, type-name list entries, and export
@@ -354,7 +365,8 @@ Usage strategies that do not fit a tool's one-line description.
   ... }`, and `{Case ...}` annotation lines; those never count, so `value` 0 no longer
   matches every function. The core still matches any zero-valued token on an instruction
   line, so `value` 0 can hit an instruction with no zero operand that carries an annotation
-  such as `{0x3}`; check the disassembly. Use it to enumerate every function touching a
+  such as `{0x3}`; check the disassembly. A value that is rare or absent makes the core scan
+  the whole view before the search ends. Use it to enumerate every function touching a
   magic value; when the value lives in data rather than code, use `rex_data_find` or
   `rx_multi_find` instead.
 - `rex_call_paths` with `direction=callers` from a sink answers "who can reach this"
