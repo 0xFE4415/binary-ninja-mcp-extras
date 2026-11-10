@@ -143,6 +143,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `functions`, and any address that fails to resolve rejects the whole batch before any
   render (its per-item alternative is `rex_disasm_many`). `rex_uidf_set_many` reports
   per-item `results`, counts, one `analysis_complete` state, and the final HLIL `lines`.
+  It stages every item, including each row's rendered `value`, before it informs any
+  value, so an unexpected error while staging (a value that cannot render) raises for the
+  whole call with nothing informed; expected item errors stay per-item rows.
 
 ### Parameters
 

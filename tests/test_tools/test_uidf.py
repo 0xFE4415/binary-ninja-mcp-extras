@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import override
+
 import pytest
 from helpers import (
     FakeParsingToolCall,
@@ -314,6 +316,162 @@ def test_uidf_set_many_reports_core_apply_failures_without_reanalysis() -> None:
         "message": "could not inform 'rax_1': core refused",
     }
     assert view.update_analysis_calls == 0
+
+
+class _ExplodingValue(FakePossibleValueSet):
+    @override
+    def __str__(self) -> str:
+        raise RuntimeError("no str")
+
+
+class _CountingValue(FakePossibleValueSet):
+    renders = 0
+
+    @override
+    def __str__(self) -> str:
+        type(self).renders += 1
+        return super().__str__()
+
+
+class _SpecialValueView(FakeBinaryView):
+    @override
+    def parse_possiblevalueset(
+        self, value: str, state: FakeRegisterValueType, here: int = 0
+    ) -> FakePossibleValueSet:
+        if value == "boom":
+            return _ExplodingValue(state, "<boom>")
+        if value == "count":
+            return _CountingValue(state, "<counted>")
+        return super().parse_possiblevalueset(value, state, here)
+
+
+def _special_value_view() -> tuple[_SpecialValueView, FakeFunction]:
+    _, main = _uidf_view()
+    return _SpecialValueView(functions=[main]), main
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        [{"variable": "rax_1", "value": "boom"}],
+        [
+            {"variable": "rax_1", "value": "boom"},
+            {"variable": "var_10", "value": "2", "def_address": 0x1196},
+        ],
+        [
+            {"variable": "rax_1", "value": "0x10"},
+            {"variable": "var_10", "value": "boom", "def_address": 0x1196},
+        ],
+        [
+            {"variable": "rax_1", "value": "0x10"},
+            {"variable": "var_10", "value": "2", "def_address": 0x1196},
+            {"variable": "var_10", "value": "boom", "def_address": 0x119C},
+        ],
+        [
+            {"variable": "rax_1", "value": "0x10"},
+            {"variable": "missing", "value": "1"},
+            {"variable": "var_10", "value": "boom", "def_address": 0x119C},
+            {"variable": "var_10", "value": "3", "def_address": 0x1196},
+        ],
+    ],
+)
+def test_uidf_set_many_stages_every_description_before_it_mutates(
+    items: list[dict[str, object]],
+) -> None:
+    view, main = _special_value_view()
+    _, uidf_set_many = get_tool("rex_uidf_set_many")
+    with pytest.raises(RuntimeError, match=r"^no str$"):
+        uidf_set_many(FakeParsingToolCall(view), 0x1100, items)
+    assert main.set_user_var_value_calls == []
+    assert main.user_var_values == {}
+    assert view.update_analysis_calls == 0
+
+
+def test_uidf_set_many_renders_each_value_exactly_once() -> None:
+    _CountingValue.renders = 0
+    view, main = _special_value_view()
+    _, uidf_set_many = get_tool("rex_uidf_set_many")
+    applied = uidf_set_many(
+        FakeParsingToolCall(view), 0x1100, [{"variable": "rax_1", "value": "count"}]
+    )
+    assert applied["results"] == [
+        {
+            "index": 0,
+            "variable": "rax_1",
+            "definition_site": "0x1104",
+            "value": {"state": "ConstantValue", "rendered": "<counted>"},
+            "ok": True,
+        }
+    ]
+    assert _CountingValue.renders == 1
+    main.set_user_var_value_error = Exception("core refused")
+    _CountingValue.renders = 0
+    failed = uidf_set_many(
+        FakeParsingToolCall(view), 0x1100, [{"variable": "rax_1", "value": "count"}]
+    )
+    assert failed["results"] == [
+        {
+            "index": 0,
+            "variable": "rax_1",
+            "definition_site": "0x1104",
+            "value": {"state": "ConstantValue", "rendered": "<counted>"},
+            "ok": False,
+            "error": {
+                "code": "set_failed",
+                "message": "could not inform 'rax_1': core refused",
+            },
+        }
+    ]
+    assert _CountingValue.renders == 1
+
+
+def test_uidf_set_many_reports_exact_rows_for_applied_staged_and_refused_items() -> None:
+    view, main = _uidf_view()
+    _, uidf_set_many = get_tool("rex_uidf_set_many")
+    items: list[dict[str, object]] = [
+        {"variable": "rax_1", "value": "0x10"},
+        {"variable": "missing", "value": "1"},
+        {
+            "variable": "var_10",
+            "value": "1:10:1",
+            "def_address": 0x1196,
+            "state": "UnsignedRangeValue",
+        },
+    ]
+    result = uidf_set_many(FakeParsingToolCall(view), 0x1100, items)
+    assert result["results"][0] == {
+        "index": 0,
+        "variable": "rax_1",
+        "definition_site": "0x1104",
+        "value": {"state": "ConstantValue", "rendered": "<const 0x10>"},
+        "ok": True,
+    }
+    assert result["results"][2] == {
+        "index": 2,
+        "variable": "var_10",
+        "definition_site": "0x1196",
+        "value": {
+            "state": "UnsignedRangeValue",
+            "rendered": "<unsigned ranges: [<range: 0x1 to 0x10>]>",
+        },
+        "ok": True,
+    }
+    assert [entry[1] for entry in main.set_user_var_value_calls] == [0x1104, 0x1196]
+    main.set_user_var_value_error = Exception("core refused")
+    refused = uidf_set_many(FakeParsingToolCall(view), 0x1100, items[:1])
+    assert refused["results"] == [
+        {
+            "index": 0,
+            "variable": "rax_1",
+            "definition_site": "0x1104",
+            "value": {"state": "ConstantValue", "rendered": "<const 0x10>"},
+            "ok": False,
+            "error": {
+                "code": "set_failed",
+                "message": "could not inform 'rax_1': core refused",
+            },
+        }
+    ]
 
 
 def test_uidf_set_parses_ranges_and_value_sets(monkeypatch: pytest.MonkeyPatch) -> None:

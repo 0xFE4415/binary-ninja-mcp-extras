@@ -176,13 +176,14 @@ class _UIDFSetPlan:
     variable: Variable
     site: MediumLevelILInstruction
     value: PossibleValueSet
+    description: _ValueDescription
 
     def applied_row(self) -> _UidfRow:
         return {
             "index": self.index,
             "variable": _truncate(self.variable_name),
             "definition_site": hex(self.site.address),
-            "value": _describe_value(self.value),
+            "value": self.description,
             "ok": True,
         }
 
@@ -191,7 +192,7 @@ class _UIDFSetPlan:
             "index": self.index,
             "variable": _truncate(self.variable_name),
             "definition_site": hex(self.site.address),
-            "value": _describe_value(self.value),
+            "value": self.description,
             "ok": False,
             "error": {
                 "code": "set_failed",
@@ -248,7 +249,9 @@ def _stage_uidf_item(
             raise mcp.ToolError("invalid_params", "state must be a string")
         site_variable, site = _select_definition_site(target, variable_name, def_address)
         parsed = _parse_uidf_value(bv, value, state, site)
-        return _UIDFSetPlan(index, variable_name, site_variable, site, parsed)
+        return _UIDFSetPlan(
+            index, variable_name, site_variable, site, parsed, _describe_value(parsed)
+        )
     except mcp.ToolError as error:
         return {
             "index": index,
