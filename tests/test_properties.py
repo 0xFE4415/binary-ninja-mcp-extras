@@ -560,8 +560,8 @@ def test_string_refs_filters_mixed_sources_before_paging(
 
 
 def test_compile_user_regex_adds_no_flags_beyond_ignore_case() -> None:
-    assert tools._compile_user_regex("x").flags == re.compile("x").flags
-    caseless = tools._compile_user_regex("x", ignore_case=True)
+    assert tools._compile_user_regex("pattern", "x").flags == re.compile("x").flags
+    caseless = tools._compile_user_regex("pattern", "x", ignore_case=True)
     assert caseless.flags == re.compile("x", re.IGNORECASE).flags
 
 

@@ -40,7 +40,7 @@ StringType = Literal["AsciiString", "Utf16String", "Utf32String", "Utf8String"]
 
 def _text_matcher(pattern: str, regex: bool, ignore_case: bool) -> Callable[[str], bool]:
     if regex:
-        compiled = _compile_user_regex(pattern, ignore_case=ignore_case)
+        compiled = _compile_user_regex("pattern", pattern, ignore_case=ignore_case)
         return lambda value: compiled.search(value) is not None
     if ignore_case:
         needle = pattern.lower()

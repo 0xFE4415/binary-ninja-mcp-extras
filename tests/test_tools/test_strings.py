@@ -107,8 +107,10 @@ def test_string_search_errors() -> None:
     with pytest.raises(FakeToolError) as exc:
         search(_call(view), pattern="(", regex=True)
     assert exc.value.code == "invalid_regex"
-    # The re.error text is appended, so the message stays explainable to the caller.
-    assert exc.value.message.startswith("bad regular expression: ")
+    assert exc.value.message == (
+        "Invalid regular expression parameter 'pattern': missing ), unterminated subpattern"
+        " at position 0"
+    )
     with pytest.raises(FakeToolError) as exc:
         search(_call(view), section="s" * 1000)
     assert exc.value.code == "section_not_found"
@@ -138,6 +140,26 @@ def test_string_search_section_includes_its_start_and_excludes_its_end() -> None
     _, search = get_tool("rex_string_search")
     values = [entry["value"] for entry in search(_call(view), section="s")["strings"]]
     assert values == ["first", "last"]
+
+
+@pytest.mark.parametrize("tool_name", ["rex_string_search", "rex_string_refs"])
+@pytest.mark.parametrize("ignore_case", [False, True])
+def test_string_tools_name_the_pattern_parameter_in_an_invalid_regex(
+    tool_name: str, ignore_case: bool
+) -> None:
+    _, tool = get_tool(tool_name)
+    with pytest.raises(FakeToolError) as exc:
+        tool(_call(FakeBinaryView()), pattern="[", regex=True, ignore_case=ignore_case)
+    assert exc.value.code == "invalid_regex"
+    assert exc.value.message == (
+        "Invalid regular expression parameter 'pattern': unterminated character set at position 0"
+    )
+
+
+@pytest.mark.parametrize("tool_name", ["rex_string_search", "rex_string_refs"])
+def test_string_tools_accept_an_invalid_regex_as_a_plain_substring(tool_name: str) -> None:
+    _, tool = get_tool(tool_name)
+    assert tool(_call(FakeBinaryView()), pattern="[", regex=False)["strings"] == []
 
 
 def test_string_search_reports_an_invalid_regex_before_a_missing_section() -> None:

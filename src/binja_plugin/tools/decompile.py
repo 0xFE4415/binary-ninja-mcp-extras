@@ -378,7 +378,7 @@ def rex_hlil_grep(
     offset = _validate_range("offset", offset, 0)
     context_before = _validate_range("context_before", context_before, 0, _MAX_HLIL_GREP_CONTEXT)
     context_after = _validate_range("context_after", context_after, 0, _MAX_HLIL_GREP_CONTEXT)
-    matcher = _compile_user_regex(regex)
+    matcher = _compile_user_regex("regex", regex)
     name_matcher = _name_filter(function_filter)
     search = matcher.search
     matches: list[_HlilGrepMatch] = []

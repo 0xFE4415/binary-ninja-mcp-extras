@@ -174,6 +174,11 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   resolution, when a symlink inside the export root points outside it, and
   `export_failed` when the root or file cannot be written. `rex_help` lists these three
   codes for the parameter.
+- A regular expression that does not compile returns `invalid_regex`; the message is
+  `Invalid regular expression parameter '<name>': <reason>` and names the bad parameter:
+  `pattern` (`rex_string_search` and `rex_string_refs` with `regex=true`), `regex`
+  (`rex_hlil_grep`), or `function_filter` (`rex_hlil_grep`, `rex_constant_find`).
+  `rex_hlil_grep` checks `regex` before `function_filter`.
 - Hex byte patterns (`rex_data_find`, `rex_find_functions_by_pattern`, `rx_multi_find`)
   are whitespace-separated bytes written as exactly two ASCII hex digits, or `??` for any
   byte; whitespace inside a byte is ignored. Any other token (`+f`, `-1`, `0x`, `f_`,

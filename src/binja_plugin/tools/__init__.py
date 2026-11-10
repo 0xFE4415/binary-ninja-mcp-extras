@@ -81,7 +81,11 @@ def _truncate(value: str, limit: int = _MAX_CHARS) -> str:
     return _truncate_with_flag(value, limit)[0]
 
 
-def _compile_user_regex(pattern: str, ignore_case: bool = False) -> re.Pattern[str]:
+def _compile_user_regex(
+    parameter: Literal["pattern", "regex", "function_filter"],
+    pattern: str,
+    ignore_case: bool = False,
+) -> re.Pattern[str]:
     # Compilation and matching run on Python's re with no timeout, so a pattern with
     # catastrophic backtracking can stall the scan; untrusted input belongs in
     # substring mode.
@@ -89,13 +93,15 @@ def _compile_user_regex(pattern: str, ignore_case: bool = False) -> re.Pattern[s
     try:
         return re.compile(pattern, flags)
     except re.error as exc:
-        raise mcp.ToolError("invalid_regex", f"bad regular expression: {exc}") from None
+        raise mcp.ToolError(
+            "invalid_regex", f"Invalid regular expression parameter '{parameter}': {exc}"
+        ) from None
 
 
 def _name_filter(function_filter: str) -> re.Pattern[str] | None:
     if not function_filter:
         return None
-    return _compile_user_regex(function_filter, ignore_case=True)
+    return _compile_user_regex("function_filter", function_filter, ignore_case=True)
 
 
 def _resolve_section(bv: BinaryView, name: str) -> tuple[int, int]:

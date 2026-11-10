@@ -590,6 +590,17 @@ def test_constant_find_stops_the_scan_at_the_limit() -> None:
     assert view.constant_scan_aborted is True
 
 
+def test_constant_find_names_the_function_filter_in_an_invalid_regex() -> None:
+    _, find = get_tool("rex_constant_find")
+    with pytest.raises(FakeToolError) as exc:
+        find(_call(_constant_view()), value=0x31337, function_filter="[")
+    assert exc.value.code == "invalid_regex"
+    assert exc.value.message == (
+        "Invalid regular expression parameter 'function_filter': "
+        "unterminated character set at position 0"
+    )
+
+
 def test_constant_find_rejects_out_of_range_value() -> None:
     view = _constant_view()
     _, find = get_tool("rex_constant_find")

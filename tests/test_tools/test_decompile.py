@@ -225,6 +225,24 @@ def test_disasm_at_truncates_names_and_text() -> None:
     assert result["instructions"][0]["text"].endswith("chars truncated]")
 
 
+@pytest.mark.parametrize(
+    ("regex", "function_filter", "parameter", "reason"),
+    [
+        ("[", "", "regex", "unterminated character set at position 0"),
+        ("x", "(", "function_filter", "missing ), unterminated subpattern at position 0"),
+        ("[", "(", "regex", "unterminated character set at position 0"),
+    ],
+)
+def test_hlil_grep_names_the_parameter_with_the_invalid_regex(
+    regex: str, function_filter: str, parameter: str, reason: str
+) -> None:
+    _, grep = get_tool("rex_hlil_grep")
+    with pytest.raises(FakeToolError) as exc:
+        grep(_call(FakeBinaryView()), regex, function_filter=function_filter)
+    assert exc.value.code == "invalid_regex"
+    assert exc.value.message == f"Invalid regular expression parameter '{parameter}': {reason}"
+
+
 def test_hlil_grep_matches_lines() -> None:
     view = _view_with_functions()
     _, grep = get_tool("rex_hlil_grep")
@@ -383,6 +401,10 @@ def test_hlil_grep_limits_and_errors() -> None:
     with pytest.raises(FakeToolError) as exc:
         grep(_call(view), "(")
     assert exc.value.code == "invalid_regex"
+    assert exc.value.message == (
+        "Invalid regular expression parameter 'regex': missing ), unterminated subpattern"
+        " at position 0"
+    )
     # Out-of-range sizes are rejected with the mcp layer's argument-error convention.
     for kwargs, message in (
         ({"limit": -1}, "Invalid integer parameter 'limit': Must be at least 0"),
