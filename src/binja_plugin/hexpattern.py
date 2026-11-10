@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from itertools import batched
 
 
 class HexPatternError(ValueError):
@@ -23,17 +24,16 @@ def parse_hex_pattern(pattern: str) -> list[int | None]:
         raise HexPatternError("empty hex pattern")
     if len(cleaned) % 2 != 0:
         raise HexPatternError("hex pattern must contain whole bytes")
-    values: list[int | None] = []
-    for index in range(0, len(cleaned), 2):
-        token = cleaned[index : index + 2]
-        if token == "??":
-            values.append(None)
-            continue
-        try:
-            values.append(int(token, 16))
-        except ValueError:
-            raise HexPatternError(f"invalid hex byte token '{token}'") from None
-    return values
+    return [_parse_byte_token("".join(token)) for token in batched(cleaned, 2)]
+
+
+def _parse_byte_token(token: str) -> int | None:
+    if token == "??":
+        return None
+    try:
+        return int(token, 16)
+    except ValueError:
+        raise HexPatternError(f"invalid hex byte token '{token}'") from None
 
 
 def compile_hex_pattern(pattern: str) -> tuple[re.Pattern[bytes], int]:

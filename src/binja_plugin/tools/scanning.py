@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Annotated
+from typing import Annotated, Final, TypedDict
 
 from binaryninja import mcp
 
@@ -21,21 +21,21 @@ from binja_plugin.tools import (
 )
 
 # rex_constant_find matches displayed constants, which are at most 64-bit values.
-_MAX_CONSTANT_VALUE = 2**64 - 1
+_MAX_CONSTANT_VALUE: Final = 2**64 - 1
 
 # Raw pattern-string cap for rex_data_find: bounds the regex compile and the per-chunk
 # read inflation (read_size grows with the pattern length) before any of that happens.
-_MAX_PATTERN_CHARS = 8192
+_MAX_PATTERN_CHARS: Final = 8192
 
 # rex_find_functions_by_pattern example matches per function: triage wants a handful of
 # hit addresses; rex_data_find already returns full match lists. One extra address is
 # collected so `addresses_truncated` can tell an exact cap from clipped examples.
-_MAX_FIND_FUNCTIONS_EXAMPLES = 5
+_MAX_FIND_FUNCTIONS_EXAMPLES: Final = 5
 
 # rex_constant_find example reference addresses per function: a hot constant concentrated
 # in one function stays bounded. One extra address is collected so `addresses_truncated`
 # can tell an exact cap from clipped examples.
-_MAX_CONSTANT_ADDRESSES = 6
+_MAX_CONSTANT_ADDRESSES: Final = 6
 
 
 def _compile_pattern(pattern: str) -> tuple[re.Pattern[bytes], int]:
@@ -47,7 +47,40 @@ def _compile_pattern(pattern: str) -> tuple[re.Pattern[bytes], int]:
         raise mcp.ToolError("invalid_pattern", str(exc)) from None
 
 
-@dataclass
+class _ConstantFunction(TypedDict):
+    start: str
+    name: str
+    addresses: list[str]
+    addresses_truncated: bool
+
+
+class _ConstantFindResult(TypedDict):
+    total: int
+    truncated: bool
+    functions: list[_ConstantFunction]
+
+
+class _DataFindResult(TypedDict):
+    total: int
+    truncated: bool
+    matches: list[str]
+
+
+class _PatternFunction(TypedDict):
+    start: str
+    name: str
+    match_count: int
+    addresses: list[str]
+    addresses_truncated: bool
+
+
+class _FindFunctionsResult(TypedDict):
+    total: int
+    truncated: bool
+    functions: list[_PatternFunction]
+
+
+@dataclass(slots=True)
 class _FunctionHits:
     name: str
     match_count: int = 0
@@ -61,7 +94,7 @@ def rex_constant_find(
     function_filter: str = "",
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
-) -> dict[str, object]:
+) -> _ConstantFindResult:
     """Find functions using an immediate constant (a magic value) in rendered IL, not raw bytes.
 
     :param value: Immediate value to search for, compared against displayed constants.
@@ -80,7 +113,7 @@ def rex_constant_find(
     def keep_scanning(current: int, total: int) -> bool:
         return not abort
 
-    groups: dict[int, tuple[str, list[str]]] = {}
+    groups: dict[int, _FunctionHits] = {}
     for address, line in bv.find_all_constant(bv.start, bv.end, value, progress_func=keep_scanning):
         function = line.function
         if function is None:
@@ -95,17 +128,17 @@ def rex_constant_find(
                 truncated = True
                 abort = True
                 break
-            group = groups[start] = (_truncate(function.name), [])
-        if len(group[1]) <= _MAX_CONSTANT_ADDRESSES:
-            group[1].append(hex(address))
-    functions = [
+            group = groups[start] = _FunctionHits(_truncate(function.name))
+        if len(group.addresses) <= _MAX_CONSTANT_ADDRESSES:
+            group.addresses.append(hex(address))
+    functions: list[_ConstantFunction] = [
         {
             "start": hex(start),
-            "name": name,
-            "addresses": addresses[:_MAX_CONSTANT_ADDRESSES],
-            "addresses_truncated": len(addresses) > _MAX_CONSTANT_ADDRESSES,
+            "name": group.name,
+            "addresses": group.addresses[:_MAX_CONSTANT_ADDRESSES],
+            "addresses_truncated": len(group.addresses) > _MAX_CONSTANT_ADDRESSES,
         }
-        for start, (name, addresses) in _drop(groups.items(), offset)
+        for start, group in _drop(groups.items(), offset)
     ]
     # Count seen, like _paginate: exact when the scan completed, so a page past the end
     # carries the total it undershot; a lower bound once truncated stops the scan early.
@@ -119,7 +152,7 @@ def rex_data_find(
     section: str | None = None,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
-) -> dict[str, object]:
+) -> _DataFindResult:
     """Find all occurrences of a hex byte pattern in mapped memory.
 
     :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; "??" matches any single byte.
@@ -145,7 +178,7 @@ def rex_find_functions_by_pattern(
     pattern: str,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
-) -> dict[str, object]:
+) -> _FindFunctionsResult:
     """Which functions contain a byte pattern; hit counts rank use of an instruction encoding.
 
     :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; "??" matches any single byte.
@@ -175,7 +208,7 @@ def rex_find_functions_by_pattern(
         entry.match_count += 1
         if len(entry.addresses) <= _MAX_FIND_FUNCTIONS_EXAMPLES:
             entry.addresses.append(hex(address))
-    functions = [
+    functions: list[_PatternFunction] = [
         {
             "start": hex(start),
             "name": entry.name,

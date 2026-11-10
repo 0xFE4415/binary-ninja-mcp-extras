@@ -7,7 +7,7 @@ out the analysis engine, discarding the view — rather than its analyzed conten
 from __future__ import annotations
 
 import time
-from typing import Annotated
+from typing import Annotated, Final, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -18,9 +18,38 @@ from binja_plugin.tools import _truncate, _validate_range
 # rex_analysis_wait: the wait runs on the MCP server thread in ~100 ms slices, so the
 # hold is bounded by timeout_ms plus one slice; the in-flight cap bounds the echoed
 # hotspot list (per-function analysis time doubles as an analysis profiler).
-_MAX_ANALYSIS_WAIT_MS = 600000
-_ANALYSIS_WAIT_SLICE_MS = 100
-_MAX_ANALYSIS_INFLIGHT = 10
+_MAX_ANALYSIS_WAIT_MS: Final = 600000
+_ANALYSIS_WAIT_SLICE_MS: Final = 100
+_MAX_ANALYSIS_INFLIGHT: Final = 10
+
+
+class _AnalysisProgress(TypedDict):
+    state: str
+    count: int
+    total: int
+
+
+class _InFlightFunction(TypedDict):
+    start: str
+    name: str
+    analysis_time_ms: int
+
+
+class _AnalysisSnapshot(TypedDict):
+    progress: _AnalysisProgress
+    function_count: int
+    in_flight: list[_InFlightFunction]
+    truncated: bool
+
+
+class _AnalysisWaitResult(_AnalysisSnapshot):
+    completed: bool
+    elapsed_ms: int
+
+
+class _BinaryCloseResult(TypedDict):
+    closed: bool
+    path: str
 
 
 def _analysis_is_idle(bv: BinaryView) -> bool:
@@ -28,7 +57,7 @@ def _analysis_is_idle(bv: BinaryView) -> bool:
     return bv.analysis_progress.state == AnalysisState.IdleState
 
 
-def _analysis_snapshot(bv: BinaryView) -> dict[str, object]:
+def _analysis_snapshot(bv: BinaryView) -> _AnalysisSnapshot:
     """Triage-style progress snapshot: engine state plus the in-flight analysis hotspots."""
     progress = bv.analysis_progress
     in_flight = sorted(
@@ -59,7 +88,7 @@ def _analysis_snapshot(bv: BinaryView) -> dict[str, object]:
 def rex_analysis_wait(
     call: mcp.ToolCall,
     timeout_ms: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_ANALYSIS_WAIT_MS)],
-) -> dict[str, object]:
+) -> _AnalysisWaitResult:
     """Bounded wait for background analysis with a progress snapshot at expiry.
 
     :param timeout_ms: Milliseconds to wait; 0 answers a snapshot without waiting.
@@ -77,7 +106,7 @@ def rex_analysis_wait(
 
 
 @mcp.tool(destructive=True)
-def rex_binary_close(call: mcp.ToolCall) -> dict[str, object]:
+def rex_binary_close(call: mcp.ToolCall) -> _BinaryCloseResult:
     """Discard this view's unsaved changes and close it."""
     file_metadata = call.binary_view.file
     # The UI adapter keys its discard refusal on this flag; clearing it is the
