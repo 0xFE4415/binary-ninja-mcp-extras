@@ -8,7 +8,7 @@ the IL states and never a rendering of it.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Final, TypedDict
 
 from binaryninja import mcp
 
@@ -21,12 +21,28 @@ from binja_plugin.tools import (
     _validate_range,
 )
 
-_MAX_STATEMENT_LIMIT = 1000
-_MAX_DEFINITION_SITES = 10
-_COMPARISON_OPERATORS = {"MLIL_CMP_E": "==", "MLIL_CMP_NE": "!="}
-_EXTENSIONS = ("MLIL_SX", "MLIL_ZX")
-_CONSTANTS = ("MLIL_CONST", "MLIL_CONST_PTR")
-_DEFINITIONS = ("MLIL_SET_VAR", "MLIL_SET_VAR_SSA")
+if TYPE_CHECKING:
+    from binaryninja.mediumlevelil import MediumLevelILFunction, MediumLevelILInstruction
+    from binaryninja.variable import Variable
+
+_MAX_STATEMENT_LIMIT: Final = 1000
+_MAX_DEFINITION_SITES: Final = 10
+_COMPARISON_OPERATORS: Final = {"MLIL_CMP_E": "==", "MLIL_CMP_NE": "!="}
+_EXTENSIONS: Final = ("MLIL_SX", "MLIL_ZX")
+_CONSTANTS: Final = ("MLIL_CONST", "MLIL_CONST_PTR")
+_DEFINITIONS: Final = ("MLIL_SET_VAR", "MLIL_SET_VAR_SSA")
+
+
+class _VariableUse(TypedDict):
+    address: str
+    operation: str
+    text: str
+
+
+class _ParameterCarrier(TypedDict):
+    variable: str
+    address: str
+    text: str
 
 
 def _operation(instruction: Any) -> str:
@@ -34,16 +50,20 @@ def _operation(instruction: Any) -> str:
     return name if isinstance(name, str) else str(instruction.operation)
 
 
-def _definitions_by_instruction(target_mlil: Any) -> dict[int, list[Any]]:
+def _definitions_by_instruction(
+    target_mlil: MediumLevelILFunction,
+) -> dict[int, list[Variable]]:
     """Every variable the core records a definition for, keyed by defining instruction index."""
-    defined: dict[int, list[Any]] = {}
+    defined: dict[int, list[Variable]] = {}
     for variable in target_mlil.vars:
         for definition in target_mlil.get_var_definitions(variable):
             defined.setdefault(definition.instr_index, []).append(variable)
     return defined
 
 
-def _defined_variables(instruction: Any, defined: dict[int, list[Any]]) -> list[Any]:
+def _defined_variables(
+    instruction: MediumLevelILInstruction, defined: dict[int, list[Variable]]
+) -> list[Variable]:
     """The variables the core defines at an instruction, in operand order where it states one."""
     recorded = defined.get(instruction.instr_index, [])
     written = list(instruction.vars_written)
@@ -82,9 +102,11 @@ def _describe_load(expression: Any) -> dict[str, object] | None:
     return {"kind": "load", "base": None, "offset": None, "text": _truncate(str(address))}
 
 
-def _definition_load(target_mlil: Any, variable: Any) -> dict[str, object] | None:
+def _definition_load(
+    target_mlil: MediumLevelILFunction, variable: Variable
+) -> dict[str, object] | None:
     """The load behind a variable when its only definition is a memory load, else None."""
-    definitions = target_mlil.get_var_definitions(variable)
+    definitions: list[Any] = target_mlil.get_var_definitions(variable)
     if len(definitions) != 1 or _operation(definitions[0]) not in _DEFINITIONS:
         return None
     load = _describe_load(definitions[0].src)
@@ -93,7 +115,7 @@ def _definition_load(target_mlil: Any, variable: Any) -> dict[str, object] | Non
     return {"address": hex(definitions[0].address), "load": load}
 
 
-def _describe_subject(target_mlil: Any, expression: Any) -> dict[str, object]:
+def _describe_subject(target_mlil: MediumLevelILFunction, expression: Any) -> dict[str, object]:
     """Describe the non-constant side of a comparison as structured data."""
     expression = _strip_extension(expression)
     load = _describe_load(expression)
@@ -111,7 +133,7 @@ def _describe_subject(target_mlil: Any, expression: Any) -> dict[str, object]:
     return {"kind": "expression", "text": _truncate(str(expression))}
 
 
-def _iter_branch_constraints(target_mlil: Any) -> list[dict[str, object]]:
+def _iter_branch_constraints(target_mlil: MediumLevelILFunction) -> list[dict[str, object]]:
     """Every conditional that compares an expression against a constant, in address order."""
     rows: list[dict[str, object]] = []
     for instruction in target_mlil.instructions:
@@ -217,14 +239,12 @@ def rex_hlil_statements(
     }
 
 
-def _variable_report(target_mlil: Any, variable: Any, limit: int, offset: int) -> dict[str, object]:
+def _variable_report(
+    target_mlil: MediumLevelILFunction, variable: Variable, limit: int, offset: int
+) -> dict[str, object]:
     uses = sorted(target_mlil.get_var_uses(variable), key=lambda use: use.address)
     rows = [
-        {
-            "address": hex(use.address),
-            "operation": _operation(use),
-            "text": _truncate(str(use)),
-        }
+        _VariableUse(address=hex(use.address), operation=_operation(use), text=_truncate(str(use)))
         for use in uses
     ]
     return {
@@ -267,7 +287,7 @@ def rex_mlil_uses(
             "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry",
         )
     definitions = _definitions_by_instruction(target_mlil)
-    defined_at: dict[int, list[Any]] = {}
+    defined_at: dict[int, list[Variable]] = {}
     for instruction in target_mlil.instructions:
         variables = _defined_variables(instruction, definitions)
         if variables:
@@ -303,7 +323,7 @@ def rex_mlil_uses(
     }
 
 
-def _storage_description(variable: Any) -> dict[str, object]:
+def _storage_description(variable: Variable) -> dict[str, object]:
     source = getattr(variable, "source_type", None)
     return {
         "source": getattr(source, "name", None) or str(source),
@@ -311,24 +331,32 @@ def _storage_description(variable: Any) -> dict[str, object]:
     }
 
 
-def _parameter_carriers(target_mlil: Any, parameter: str) -> list[dict[str, object]]:
+def _is_copy_of_parameter(instruction: Any, parameter: str) -> bool:
+    if _operation(instruction) not in _DEFINITIONS:
+        return False
+    source = _strip_extension(instruction.src)
+    if _operation(source) != "MLIL_VAR":
+        return False
+    return str(source.src.name) == parameter
+
+
+def _parameter_carriers(
+    target_mlil: MediumLevelILFunction, parameter: str
+) -> list[_ParameterCarrier]:
     """Definitions whose value is a plain copy of a variable named ``parameter``."""
-    carriers: list[dict[str, object]] = []
-    for instruction in target_mlil.instructions:
-        if _operation(instruction) not in _DEFINITIONS:
-            continue
-        source = _strip_extension(instruction.src)
-        if _operation(source) != "MLIL_VAR" or source.src.name != parameter:
-            continue
-        carriers.append(
-            {
-                "variable": _truncate(instruction.dest.name),
-                "address": hex(instruction.address),
-                "text": _truncate(str(instruction)),
-            }
+    copies = [
+        instruction
+        for instruction in target_mlil.instructions
+        if _is_copy_of_parameter(instruction, parameter)
+    ]
+    return [
+        _ParameterCarrier(
+            variable=_truncate(instruction.dest.name),
+            address=hex(instruction.address),
+            text=_truncate(str(instruction)),
         )
-    carriers.sort(key=lambda row: int(str(row["address"]), 16))
-    return carriers
+        for instruction in sorted(copies, key=lambda instruction: instruction.address)
+    ]
 
 
 @mcp.tool(read_only=True)
