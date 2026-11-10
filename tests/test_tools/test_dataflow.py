@@ -177,47 +177,116 @@ def _statement(address: int, index: int, text: str) -> FakeInstruction:
     return FakeInstruction("MLIL_NOP", address, instr_index=index, text=text)
 
 
-def _uses_view() -> tuple[FakeBinaryView, FakeVariable]:
+def _uses_view(
+    instructions: list[FakeInstruction],
+    definitions: dict[FakeVariable, list[FakeInstruction]],
+    uses: dict[FakeVariable, list[FakeInstruction]] | None = None,
+) -> FakeBinaryView:
+    mlil = FakeMLILInstructions(instructions, uses=uses, definitions=definitions)
+    return FakeBinaryView(functions=[FakeFunction("check", 0x1000, 0x1100, mlil=mlil)])
+
+
+def _read_of(variable: FakeVariable, address: int = 0x1030) -> FakeInstruction:
+    return branch(address, compare("MLIL_CMP_NE", var(variable), const(0x68)))
+
+
+def _run_uses(view: FakeBinaryView, **arguments: Any) -> dict[str, Any]:
+    _, uses = get_tool("rex_mlil_uses")
+    arguments.setdefault("function", 0x1000)
+    arguments.setdefault("address", 0x1020)
+    return uses(_call(view), **arguments)
+
+
+def _no_uses_report(name: str, definitions: list[str]) -> dict[str, Any]:
+    return {
+        "variable": name,
+        "definitions": definitions,
+        "total": 0,
+        "truncated": False,
+        "uses": [],
+    }
+
+
+def _two_use_view() -> FakeBinaryView:
     arg_40 = FakeVariable("arg_40")
-    use_branch = branch(0x1030, compare("MLIL_CMP_NE", var(arg_40), const(0x68)))
-    use_return = set_var(0x1040, FakeVariable("tmp"), var(arg_40))
+    use_branch = _read_of(arg_40, 0x1030)
+    copy = FakeVariable("tmp")
+    use_copy = set_var(0x1040, copy, var(arg_40))
     definition = set_var(
         0x1020, arg_40, sign_extend(load(add(var(FakeVariable("arg2")), const(0x11))))
     )
-    mlil = FakeMLILInstructions(
-        instructions=[definition, use_branch, use_return],
-        definitions={arg_40: [definition]},
-        uses={arg_40: [use_branch, use_return]},
+    return _uses_view(
+        [definition, use_branch, use_copy],
+        definitions={arg_40: [definition], copy: [use_copy]},
+        uses={arg_40: [use_copy, use_branch]},
     )
-    function = FakeFunction("check", 0x1000, 0x1100, mlil=mlil)
-    return FakeBinaryView(functions=[function]), arg_40
 
 
-def test_uses_list_every_read_of_the_defined_variable() -> None:
-    view, _ = _uses_view()
-    _, uses = get_tool("rex_mlil_uses")
-    result = uses(_call(view), function=0x1000, address=0x1020)
-    assert result["variable"] == "arg_40"
-    assert result["definition_site"] == "0x1020"
-    assert result["definitions"] == ["0x1020"]
-    assert [row["address"] for row in result["uses"]] == ["0x1030", "0x1040"]
-    assert result["total"] == 2
-    assert result["truncated"] is False
+def test_uses_report_the_exact_response_for_a_single_assignment() -> None:
+    assert _run_uses(_two_use_view()) == {
+        "function": {"start": "0x1000", "name": "check"},
+        "definition_site": "0x1020",
+        "variables": [
+            {
+                "variable": "arg_40",
+                "definitions": ["0x1020"],
+                "total": 2,
+                "truncated": False,
+                "uses": [
+                    {
+                        "address": "0x1030",
+                        "operation": "MLIL_IF",
+                        "text": "MLIL_IF",
+                    },
+                    {
+                        "address": "0x1040",
+                        "operation": "MLIL_SET_VAR",
+                        "text": "tmp = arg_40",
+                    },
+                ],
+            }
+        ],
+    }
 
 
-def test_uses_page_and_flag_truncation() -> None:
-    view, _ = _uses_view()
-    _, uses = get_tool("rex_mlil_uses")
-    result = uses(_call(view), function=0x1000, address=0x1020, limit=1)
-    assert [row["address"] for row in result["uses"]] == ["0x1030"]
-    assert result["truncated"] is True
+@pytest.mark.parametrize(
+    ("limit", "offset", "addresses", "truncated"),
+    [
+        (1, 0, ["0x1030"], True),
+        (2, 0, ["0x1030", "0x1040"], False),
+        (1, 1, ["0x1040"], False),
+        (1, 2, [], False),
+        (0, 0, [], True),
+    ],
+)
+def test_uses_page_each_variable_and_flag_truncation(
+    limit: int, offset: int, addresses: list[str], truncated: bool
+) -> None:
+    report = _run_uses(_two_use_view(), limit=limit, offset=offset)["variables"][0]
+    assert [row["address"] for row in report["uses"]] == addresses
+    assert report["truncated"] is truncated
+    assert report["total"] == 2
+
+
+def test_uses_page_every_defined_variable_independently() -> None:
+    high, low = FakeVariable("high"), FakeVariable("low")
+    split = FakeInstruction("MLIL_SET_VAR_SPLIT", 0x1020, high=high, low=low, src=const(1))
+    view = _uses_view(
+        [split, _read_of(high, 0x1030), _read_of(high, 0x1040), _read_of(low, 0x1050)],
+        definitions={high: [split], low: [split]},
+        uses={high: [_read_of(high, 0x1030), _read_of(high, 0x1040)], low: [_read_of(low, 0x1050)]},
+    )
+    reports = _run_uses(view, limit=1, offset=1)["variables"]
+    assert [(r["variable"], r["total"], r["truncated"]) for r in reports] == [
+        ("high", 2, False),
+        ("low", 1, False),
+    ]
+    assert [[row["address"] for row in r["uses"]] for r in reports] == [["0x1040"], []]
 
 
 def test_uses_reject_an_address_that_defines_nothing() -> None:
-    view, _ = _uses_view()
-    _, uses = get_tool("rex_mlil_uses")
     with pytest.raises(FakeToolError) as error:
-        uses(_call(view), function=0x1000, address=0x1030)
+        _run_uses(_two_use_view(), address=0x1030)
     assert error.value.code == "no_definition"
     assert error.value.message == (
         "no MLIL variable definition at 0x1030 in check; "
@@ -226,109 +295,193 @@ def test_uses_reject_an_address_that_defines_nothing() -> None:
     )
 
 
-def test_uses_accept_a_field_write_as_the_definition_site() -> None:
-    # A struct member write (MLIL_SET_VAR_FIELD) defines its dest variable, so its address
-    # must resolve like any other assignment instead of missing the variable.
-    arg2 = FakeVariable("arg2")
+def test_uses_report_a_field_write_the_core_records_though_vars_written_is_empty() -> None:
     holder = FakeVariable("holder")
     definition = FakeInstruction(
-        "MLIL_SET_VAR_FIELD", 0x1020, dest=holder, src=load(var(arg2)), offset=8
+        "MLIL_SET_VAR_FIELD", 0x1020, dest=holder, src=load(var(FakeVariable("arg2"))), offset=8
     )
-    use = branch(0x1030, compare("MLIL_CMP_NE", var(holder), const(0x68)))
-    mlil = FakeMLILInstructions(
-        instructions=[definition, use],
+    assert definition.vars_written == []
+    view = _uses_view(
+        [definition, _read_of(holder)],
         definitions={holder: [definition]},
-        uses={holder: [use]},
+        uses={holder: [_read_of(holder)]},
     )
-    function = FakeFunction("check", 0x1000, 0x1100, mlil=mlil)
-    view = FakeBinaryView(functions=[function])
-    _, uses = get_tool("rex_mlil_uses")
-    result = uses(_call(view), function=0x1000, address=0x1020)
-    assert result["variable"] == "holder"
-    assert result["definitions"] == ["0x1020"]
-    assert [row["address"] for row in result["uses"]] == ["0x1030"]
+    reports = _run_uses(view)["variables"]
+    assert [(r["variable"], r["definitions"], r["total"]) for r in reports] == [
+        ("holder", ["0x1020"], 1)
+    ]
 
 
-def test_uses_resolve_a_split_write_to_its_high_variable() -> None:
-    # A split write (MLIL_SET_VAR_SPLIT) defines a high:low pair at one site and has no
-    # dest operand; the high half is the variable the tool reports.
-    high = FakeVariable("high")
-    low = FakeVariable("low")
+def test_uses_report_both_halves_of_a_split_write_high_first() -> None:
+    high, low = FakeVariable("high"), FakeVariable("low")
     split = FakeInstruction("MLIL_SET_VAR_SPLIT", 0x1020, high=high, low=low, src=const(1))
-    use = branch(0x1030, compare("MLIL_CMP_NE", var(high), const(0x68)))
-    mlil = FakeMLILInstructions(
-        instructions=[split, use],
-        definitions={high: [split], low: [split]},
-        uses={high: [use]},
+    view = _uses_view(
+        [split, _read_of(low)],
+        definitions={low: [split], high: [split]},
+        uses={low: [_read_of(low)]},
     )
-    function = FakeFunction("check", 0x1000, 0x1100, mlil=mlil)
-    view = FakeBinaryView(functions=[function])
-    _, uses = get_tool("rex_mlil_uses")
-    result = uses(_call(view), function=0x1000, address=0x1020)
-    assert result["variable"] == "high"
-    assert result["definitions"] == ["0x1020"]
-    assert [row["address"] for row in result["uses"]] == ["0x1030"]
-
-
-def _call_uses_view(operation: str, outputs: list[FakeVariable]) -> FakeBinaryView:
-    operands: dict[str, Any] = {} if "SYSCALL" in operation else {"dest": const(0x2000)}
-    call = FakeInstruction(operation, 0x1020, output=outputs, **operands)
-    use = branch(0x1030, compare("MLIL_CMP_NE", var(outputs[0]), const(0x68))) if outputs else None
-    instructions = [call] if use is None else [call, use]
-    mlil = FakeMLILInstructions(
-        instructions=instructions,
-        definitions={output: [call] for output in outputs},
-        uses={outputs[0]: [use]} if use is not None else {},
-    )
-    return FakeBinaryView(functions=[FakeFunction("check", 0x1000, 0x1100, mlil=mlil)])
+    assert _run_uses(view)["variables"] == [
+        _no_uses_report("high", ["0x1020"]),
+        {
+            **_no_uses_report("low", ["0x1020"]),
+            "total": 1,
+            "uses": [{"address": "0x1030", "operation": "MLIL_IF", "text": "MLIL_IF"}],
+        },
+    ]
 
 
 @pytest.mark.parametrize(
     "operation", ["MLIL_CALL", "MLIL_CALL_UNTYPED", "MLIL_SYSCALL", "MLIL_SYSCALL_UNTYPED"]
 )
-def test_uses_accept_a_call_output_as_the_definition_site(operation: str) -> None:
-    view = _call_uses_view(operation, [FakeVariable("rax")])
-    _, uses = get_tool("rex_mlil_uses")
-    result = uses(_call(view), function=0x1000, address=0x1020)
-    assert result["variable"] == "rax"
-    assert result["definition_site"] == "0x1020"
-    assert result["definitions"] == ["0x1020"]
-    assert [row["address"] for row in result["uses"]] == ["0x1030"]
+def test_uses_report_a_call_output_as_the_definition(operation: str) -> None:
+    rax = FakeVariable("rax")
+    call = FakeInstruction(operation, 0x1020, output=[rax])
+    view = _uses_view([call, _read_of(rax)], {rax: [call]}, {rax: [_read_of(rax)]})
+    reports = _run_uses(view)["variables"]
+    assert [(r["variable"], r["definitions"], r["total"]) for r in reports] == [
+        ("rax", ["0x1020"], 1)
+    ]
 
 
-def test_uses_report_the_first_output_of_a_multi_output_call() -> None:
-    view = _call_uses_view("MLIL_CALL", [FakeVariable("rax"), FakeVariable("rcx")])
-    _, uses = get_tool("rex_mlil_uses")
-    result = uses(_call(view), function=0x1000, address=0x1020)
-    assert result["variable"] == "rax"
+@pytest.mark.parametrize("operation", ["MLIL_CALL", "MLIL_TAILCALL", "MLIL_INTRINSIC"])
+def test_uses_report_every_output_of_a_multi_output_instruction(operation: str) -> None:
+    rax, rcx, rdx = FakeVariable("rax"), FakeVariable("rcx"), FakeVariable("rdx")
+    call = FakeInstruction(operation, 0x1020, output=[rax, rcx, rdx])
+    view = _uses_view([call], {rdx: [call], rax: [call], rcx: [call]})
+    assert _run_uses(view)["variables"] == [
+        _no_uses_report("rax", ["0x1020"]),
+        _no_uses_report("rcx", ["0x1020"]),
+        _no_uses_report("rdx", ["0x1020"]),
+    ]
 
 
-def test_uses_reject_a_call_without_outputs_and_omit_it_from_the_listed_sites() -> None:
-    view = _call_uses_view("MLIL_CALL", [])
-    _, uses = get_tool("rex_mlil_uses")
+def test_uses_accept_a_tailcall_clobber_as_a_definition_site() -> None:
+    rax = FakeVariable("rax")
+    tailcall = FakeInstruction("MLIL_TAILCALL", 0x1020, output=[rax])
+    assert _run_uses(_uses_view([tailcall], {rax: [tailcall]}))["variables"] == [
+        _no_uses_report("rax", ["0x1020"])
+    ]
+
+
+def test_uses_report_a_forced_version_as_a_definition() -> None:
+    zmm0 = FakeVariable("zmm0_1")
+    forced = FakeInstruction("MLIL_FORCE_VER", 0x1020, dest=zmm0)
+    assert _run_uses(_uses_view([forced], {zmm0: [forced]}))["variables"] == [
+        _no_uses_report("zmm0_1", ["0x1020"])
+    ]
+
+
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        FakeInstruction("MLIL_CALL", 0x1020, output=[]),
+        FakeInstruction("MLIL_TAILCALL", 0x1020, output=[]),
+        FakeInstruction("MLIL_STORE", 0x1020),
+        FakeInstruction("MLIL_RET", 0x1020),
+    ],
+)
+def test_uses_reject_an_instruction_the_core_defines_nothing_at(
+    instruction: FakeInstruction,
+) -> None:
+    other = FakeVariable("other")
+    elsewhere = set_var(0x1010, other, const(1))
+    view = _uses_view([elsewhere, instruction], {other: [elsewhere]})
     with pytest.raises(FakeToolError) as error:
-        uses(_call(view), function=0x1000, address=0x1020)
+        _run_uses(view)
     assert error.value.code == "no_definition"
     assert error.value.message == (
         "no MLIL variable definition at 0x1020 in check; "
-        "variables are defined at: ; "
+        "variables are defined at: 0x1010; "
         "use rex_hlil_statements or bn_function_il to match an address to its variable"
     )
 
 
-def test_uses_reject_a_tailcall_even_though_it_lists_outputs() -> None:
-    view = _call_uses_view("MLIL_TAILCALL", [FakeVariable("rax")])
-    _, uses = get_tool("rex_mlil_uses")
+def test_uses_follow_the_core_recorded_definitions_not_the_operation_name() -> None:
+    rax = FakeVariable("rax")
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[rax])
     with pytest.raises(FakeToolError) as error:
-        uses(_call(view), function=0x1000, address=0x1020)
+        _run_uses(_uses_view([call], {}))
     assert error.value.code == "no_definition"
 
 
-def test_uses_list_a_call_output_site_among_the_defined_variable_sites() -> None:
-    call_view = _call_uses_view("MLIL_CALL", [FakeVariable("rax")])
-    _, uses = get_tool("rex_mlil_uses")
+def test_uses_order_variables_by_vars_written_then_by_core_record() -> None:
+    rax, rcx, extra = FakeVariable("rax"), FakeVariable("rcx"), FakeVariable("extra")
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[rax, rcx])
+    view = _uses_view([call], {extra: [call], rcx: [call], rax: [call]})
+    assert [r["variable"] for r in _run_uses(view)["variables"]] == ["rax", "rcx", "extra"]
+
+
+def test_uses_exclude_a_written_variable_the_core_records_no_definition_for() -> None:
+    rax, rcx = FakeVariable("rax"), FakeVariable("rcx")
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[rax, rcx])
+    view = _uses_view([call], {rax: [call]}, uses={rcx: []})
+    assert [r["variable"] for r in _run_uses(view)["variables"]] == ["rax"]
+
+
+def test_uses_list_a_field_written_variable_once_when_the_core_records_it_twice() -> None:
+    holder = FakeVariable("holder")
+    field = FakeInstruction("MLIL_SET_VAR_FIELD", 0x1020, dest=holder, src=const(1), offset=0)
+    view = _uses_view([field], {holder: [field, field]})
+    assert [r["variable"] for r in _run_uses(view)["variables"]] == ["holder"]
+
+
+def test_uses_list_a_variable_once_when_two_instructions_at_an_address_define_it() -> None:
+    holder = FakeVariable("holder")
+    low = FakeInstruction("MLIL_SET_VAR_FIELD", 0x1020, dest=holder, src=const(1), offset=0)
+    high = FakeInstruction("MLIL_SET_VAR_FIELD", 0x1020, dest=holder, src=const(2), offset=4)
+    view = _uses_view([low, high], {holder: [low, high]})
+    assert [r["variable"] for r in _run_uses(view)["variables"]] == ["holder"]
+
+
+def test_uses_merge_the_variables_of_every_instruction_at_one_address() -> None:
+    first, second = FakeVariable("first"), FakeVariable("second")
+    write_first = set_var(0x1020, first, const(1))
+    write_second = set_var(0x1020, second, const(2))
+    view = _uses_view([write_first, write_second], {first: [write_first], second: [write_second]})
+    assert [r["variable"] for r in _run_uses(view)["variables"]] == ["first", "second"]
+
+
+def test_uses_do_not_attribute_definitions_of_other_instructions() -> None:
+    first, second = FakeVariable("first"), FakeVariable("second")
+    write_first = set_var(0x1020, first, const(1))
+    write_second = set_var(0x1030, second, const(2))
+    view = _uses_view([write_first, write_second], {first: [write_first], second: [write_second]})
+    assert [r["variable"] for r in _run_uses(view)["variables"]] == ["first"]
+
+
+def test_uses_filter_to_the_named_defined_variable() -> None:
+    rax, rcx = FakeVariable("rax"), FakeVariable("rcx")
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[rax, rcx])
+    view = _uses_view([call], {rax: [call], rcx: [call]})
+    assert _run_uses(view, variable="rcx")["variables"] == [_no_uses_report("rcx", ["0x1020"])]
+
+
+def test_uses_filter_by_exact_name_not_prefix() -> None:
+    rax, rcx = FakeVariable("rax"), FakeVariable("rcx")
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[rax, rcx])
+    view = _uses_view([call], {rax: [call], rcx: [call]})
     with pytest.raises(FakeToolError) as error:
-        uses(_call(call_view), function=0x1000, address=0x1030)
+        _run_uses(view, variable="r")
+    assert error.value.code == "no_variable"
+
+
+def test_uses_reject_a_variable_not_defined_at_the_address() -> None:
+    rax, rcx = FakeVariable("rax"), FakeVariable("rcx")
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[rax, rcx])
+    view = _uses_view([call], {rax: [call], rcx: [call]})
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(view, variable="rdx")
+    assert error.value.code == "no_variable"
+    assert error.value.message == (
+        "no variable named 'rdx' is defined at 0x1020 in check; defined there: rax, rcx"
+    )
+
+
+def test_uses_list_a_call_output_site_among_the_defined_variable_sites() -> None:
+    rax = FakeVariable("rax")
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[rax])
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(_uses_view([call], {rax: [call]}), address=0x1030)
     assert "variables are defined at: 0x1020;" in error.value.message
 
 
@@ -337,7 +490,9 @@ def test_uses_missing_definition_counts_sites_past_the_listed_ones() -> None:
         set_var(0x1100 + index * 0x10, FakeVariable(f"v{index}"), const(index))
         for index in range(12)
     ]
-    function = FakeFunction("check", 0x1000, 0x1200, mlil=FakeMLILInstructions(definitions))
+    recorded = {definition.dest: [definition] for definition in definitions}
+    mlil = FakeMLILInstructions(definitions, definitions=recorded)
+    function = FakeFunction("check", 0x1000, 0x1200, mlil=mlil)
     view = FakeBinaryView(functions=[function])
     _, uses = get_tool("rex_mlil_uses")
     with pytest.raises(FakeToolError) as error:
@@ -569,8 +724,7 @@ def test_uses_render_a_use_whose_operation_has_no_name_attribute() -> None:
     definition = set_var(0x1020, arg_40, const(1))
     use = SimpleNamespace(operation=42, address=0x1030)
     mlil = FakeMLILInstructions(
-        # ty: ignore[invalid-argument-type] the degenerate use is deliberately not a FakeInstruction
-        instructions=[definition, use],
+        instructions=[definition],
         definitions={arg_40: [definition]},
         uses={arg_40: [use]},  # ty: ignore[invalid-argument-type]
     )
@@ -578,4 +732,4 @@ def test_uses_render_a_use_whose_operation_has_no_name_attribute() -> None:
     view = FakeBinaryView(functions=[function])
     _, uses = get_tool("rex_mlil_uses")
     result = uses(_call(view), function=0x1000, address=0x1020)
-    assert result["uses"][0]["operation"] == "42"
+    assert result["variables"][0]["uses"][0]["operation"] == "42"

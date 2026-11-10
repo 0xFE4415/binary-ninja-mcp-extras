@@ -487,6 +487,7 @@ def test_help_details_the_dataflow_tool_error_codes() -> None:
     uses = {parameter["name"]: parameter for parameter in _help("rex_mlil_uses")["parameters"]}
     assert uses["function"]["error_codes"] == ["no_mlil", "analysis_pending"]
     assert uses["address"]["error_codes"] == ["no_definition"]
+    assert uses["variable"]["error_codes"] == ["no_variable"]
     parameter = {
         parameter["name"]: parameter for parameter in _help("rex_parameter_variables")["parameters"]
     }

@@ -20,9 +20,15 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `rex_component_get` pages functions and returns exact `function_count` instead of
   `total`.
   `rex_function_constraints`, `rex_hlil_statements`, and `rex_mlil_uses` build their full
-  list and return exact `total`/`truncated`. `rex_mlil_uses` resolves the variable one
-  address assigns; a split write defines a high:low pair and the tool reports the high
-  half, and a call defines its first output.
+  list and return exact `total`/`truncated`. `rex_mlil_uses` takes definitions from the
+  core, not an operation list: a variable is defined at an instruction when
+  `get_var_definitions` lists it there. That covers assignments, split writes, field writes,
+  call, syscall, tailcall, and intrinsic outputs, and forced versions; an instruction the
+  core defines nothing at (a call without outputs, a store) is `no_definition`. It returns
+  `variables`, one entry per defined variable (in `vars_written` order, then any further
+  variable the core records, such as a field write's destination), each with its own
+  `definitions`, `total`, `truncated`, and `uses`. `limit` and `offset` page each entry's
+  uses, and `variable` keeps one name (`no_variable` if the instruction does not define it).
 - For `rex_string_search`, `rex_data_find`, `rx_data_find`, `rex_string_refs`, and
   `rex_uidf_list`, a truncated `total` is a lower bound: scanning stops at the first
   result past the page. `rex_xrefs_to` has the same rule for fetched refs; `rx_multi_find`

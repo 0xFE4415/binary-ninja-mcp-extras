@@ -67,7 +67,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_hlil_grep` | Regex search over rendered HLIL text, paged with a `next_offset` cursor. |
 | `rex_hlil_statements` | HLIL statements in block order, each tagged with its source address. |
 | `rex_function_constraints` | Branch comparisons against a constant, with the tested subject. |
-| `rex_mlil_uses` | Every read of the MLIL variable assigned at an address, plus its definitions. |
+| `rex_mlil_uses` | Every read of each MLIL variable the core defines at an address, plus its definitions. |
 | `rex_parameter_variables` | Map a parameter to its storage, MLIL variables, and carrying copies. |
 | `rex_constant_find` | Find functions whose rendered instructions reference a constant value. |
 | `rex_find_functions_by_pattern` | Map a byte pattern to the functions containing its matches. |

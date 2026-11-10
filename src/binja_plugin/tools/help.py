@@ -60,6 +60,7 @@ _PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
     ("rex_hlil_statements", "function"): ("no_hlil", "analysis_pending"),
     ("rex_mlil_uses", "address"): ("no_definition",),
     ("rex_mlil_uses", "function"): ("no_mlil", "analysis_pending"),
+    ("rex_mlil_uses", "variable"): ("no_variable",),
     ("rex_parameter_variables", "function"): ("no_mlil", "analysis_pending"),
     ("rex_parameter_variables", "parameter"): ("no_variable",),
     ("rex_kv_delete", "key"): ("invalid_key",),

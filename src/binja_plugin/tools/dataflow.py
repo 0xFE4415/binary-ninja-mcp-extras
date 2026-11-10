@@ -27,15 +27,6 @@ _COMPARISON_OPERATORS = {"MLIL_CMP_E": "==", "MLIL_CMP_NE": "!="}
 _EXTENSIONS = ("MLIL_SX", "MLIL_ZX")
 _CONSTANTS = ("MLIL_CONST", "MLIL_CONST_PTR")
 _DEFINITIONS = ("MLIL_SET_VAR", "MLIL_SET_VAR_SSA")
-_WRITES = _DEFINITIONS + (
-    "MLIL_SET_VAR_FIELD",
-    "MLIL_SET_VAR_SSA_FIELD",
-    "MLIL_SET_VAR_ALIASED",
-    "MLIL_SET_VAR_ALIASED_FIELD",
-    "MLIL_SET_VAR_SPLIT",
-    "MLIL_SET_VAR_SPLIT_SSA",
-)
-_CALLS = ("MLIL_CALL", "MLIL_CALL_UNTYPED", "MLIL_SYSCALL", "MLIL_SYSCALL_UNTYPED")
 
 
 def _operation(instruction: Any) -> str:
@@ -43,15 +34,22 @@ def _operation(instruction: Any) -> str:
     return name if isinstance(name, str) else str(instruction.operation)
 
 
-def _defined_variable(instruction: Any) -> Any:
-    """The variable an instruction assigns (a call's first output, a split's high half), or None."""
-    operation = _operation(instruction)
-    if operation in _CALLS:
-        return instruction.output[0] if instruction.output else None
-    if operation not in _WRITES:
-        return None
-    dest = getattr(instruction, "dest", None)
-    return dest if dest is not None else instruction.high
+def _definitions_by_instruction(target_mlil: Any) -> dict[int, list[Any]]:
+    """Every variable the core records a definition for, keyed by defining instruction index."""
+    defined: dict[int, list[Any]] = {}
+    for variable in target_mlil.vars:
+        for definition in target_mlil.get_var_definitions(variable):
+            defined.setdefault(definition.instr_index, []).append(variable)
+    return defined
+
+
+def _defined_variables(instruction: Any, defined: dict[int, list[Any]]) -> list[Any]:
+    """The variables the core defines at an instruction, in operand order where it states one."""
+    recorded = defined.get(instruction.instr_index, [])
+    written = list(instruction.vars_written)
+    return [variable for variable in written if variable in recorded] + [
+        variable for variable in recorded if variable not in written
+    ]
 
 
 def _strip_extension(expression: Any) -> Any:
@@ -219,20 +217,43 @@ def rex_hlil_statements(
     }
 
 
+def _variable_report(target_mlil: Any, variable: Any, limit: int, offset: int) -> dict[str, object]:
+    uses = sorted(target_mlil.get_var_uses(variable), key=lambda use: use.address)
+    rows = [
+        {
+            "address": hex(use.address),
+            "operation": _operation(use),
+            "text": _truncate(str(use)),
+        }
+        for use in uses
+    ]
+    return {
+        "variable": _truncate(variable.name),
+        "definitions": [
+            hex(definition.address) for definition in target_mlil.get_var_definitions(variable)
+        ],
+        "total": len(rows),
+        "truncated": offset + limit < len(rows),
+        "uses": rows[offset : offset + limit],
+    }
+
+
 @mcp.tool(read_only=True)
 def rex_mlil_uses(
     call: mcp.ToolCall,
     function: mcp.Address,
     address: mcp.Address,
+    variable: Annotated[str, mcp.NonEmpty()] | None = None,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> dict[str, object]:
-    """List every read of the MLIL variable assigned at an address, plus its definitions.
+    """List every read of each MLIL variable the core defines at an address, with its definitions.
 
     :param function: Address expression inside the target function.
-    :param address: Address of the MLIL instruction that assigns the variable.
-    :param limit: Maximum use sites to return.
-    :param offset: Use sites to skip before collecting results.
+    :param address: Address of an MLIL instruction that defines variables.
+    :param variable: Report only the defined variable with this name.
+    :param limit: Maximum use sites to return per variable.
+    :param offset: Use sites to skip per variable before collecting results.
     """
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
@@ -245,23 +266,17 @@ def rex_mlil_uses(
             f"function {_truncate(target.name)} has no MediumLevelIL yet; "
             "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry",
         )
-    defining = [
-        instruction
-        for instruction in target_mlil.instructions
-        if instruction.address == address and _defined_variable(instruction) is not None
-    ]
-    if not defining:
-        sites = sorted(
-            {
-                instruction.address
-                for instruction in target_mlil.instructions
-                if _defined_variable(instruction) is not None
-            }
-        )
-        shown = ", ".join(hex(site) for site in sites[:_MAX_DEFINITION_SITES])
+    definitions = _definitions_by_instruction(target_mlil)
+    defined_at: dict[int, list[Any]] = {}
+    for instruction in target_mlil.instructions:
+        variables = _defined_variables(instruction, definitions)
+        if variables:
+            defined_at.setdefault(instruction.address, []).extend(variables)
+    if address not in defined_at:
+        shown = ", ".join(hex(site) for site in sorted(defined_at)[:_MAX_DEFINITION_SITES])
         more = (
-            f" (+{len(sites) - _MAX_DEFINITION_SITES} more)"
-            if len(sites) > _MAX_DEFINITION_SITES
+            f" (+{len(defined_at) - _MAX_DEFINITION_SITES} more)"
+            if len(defined_at) > _MAX_DEFINITION_SITES
             else ""
         )
         raise mcp.ToolError(
@@ -270,26 +285,21 @@ def rex_mlil_uses(
             f"variables are defined at: {shown}{more}; "
             "use rex_hlil_statements or bn_function_il to match an address to its variable",
         )
-    variable = _defined_variable(defining[0])
-    uses = sorted(target_mlil.get_var_uses(variable), key=lambda use: use.address)
-    rows = [
-        {
-            "address": hex(use.address),
-            "operation": _operation(use),
-            "text": _truncate(str(use)),
-        }
-        for use in uses
-    ]
+    at_address = list(dict.fromkeys(defined_at[address]))
+    selected = [defined for defined in at_address if variable in (None, defined.name)]
+    if not selected:
+        names = ", ".join(_truncate(defined.name, 64) for defined in at_address)
+        raise mcp.ToolError(
+            "no_variable",
+            f"no variable named '{_truncate(str(variable))}' is defined at {address:#x} "
+            f"in {_truncate(target.name)}; defined there: {names}",
+        )
     return {
         "function": _function_entry(target),
-        "variable": _truncate(variable.name),
         "definition_site": hex(address),
-        "definitions": [
-            hex(definition.address) for definition in target_mlil.get_var_definitions(variable)
+        "variables": [
+            _variable_report(target_mlil, defined, limit, offset) for defined in selected
         ],
-        "total": len(rows),
-        "truncated": offset + limit < len(rows),
-        "uses": rows[offset : offset + limit],
     }
 
 
