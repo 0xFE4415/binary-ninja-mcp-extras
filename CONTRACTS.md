@@ -171,7 +171,7 @@ present only on some rows.
 - `rex_annotate_many`: `applied`, `failed`, `failed_count`, `total`, and `results` rows
   `{addr, ok, error?}`.
 - `rex_binary_close`: `closed` (always true; a failed close raises `close_failed`) and
-  `path`, the closed file's name (truncated).
+  `path`, the closed file's full filename as the core reports it (truncated).
 - `rex_call_paths`: `reachable`, `paths` (lists of function entries), `truncated`, and
   `explored` (functions expanded during the search).
 - `rex_component_add_functions`: `path`, `added_count`, `applied`, `failed_count`, `total`,
@@ -189,7 +189,8 @@ present only on some rows.
 - `rex_decompile_many`: `functions` of `{start, name, lines, truncated}`.
 - `rex_disasm_at`: `function`, `instructions` (`{address, text}`), `truncated`.
   `rex_disasm_many`: `windows` of `{address, index, function, instructions, truncated}`,
-  `errors` of `{index, address, error: {code, message}}`, `truncated`, `next_offset`.
+  `errors` of `{index, address, error: {code, message}}`, `truncated`, `next_offset` (null
+  unless `truncated`).
 - `rex_eval_python`: `stdout`, `stdout_truncated`, `stdout_key`, `stdout_length`, `result`,
   `result_truncated`, `result_key`, `result_length`, `error`, `error_truncated`,
   `error_location`. `rex_eval_result`: `key`, `value`, `total`, `truncated`,
@@ -201,10 +202,10 @@ present only on some rows.
 - `rex_function_constraints`: `function`, `total`, `truncated`, and `constraints` of
   `{address, operator, constant, char, subject, subject_text}`. `operator` is `==` or
   `!=`, `constant` is hex, and `char` is the printable ASCII character or null. `subject`
-  is `{kind: "load", base, offset}` (plus `text` when the address is not a base variable
-  plus a constant), `{kind: "variable", variable, definition?}` with `definition`
-  `{address, load}` when the variable's only definition is a load, or
-  `{kind: "expression", text}`.
+  is `{kind: "load", base, offset}` (`base` is null for an absolute address; both are null,
+  and `text` is added, when the address is not a base variable plus a constant),
+  `{kind: "variable", variable, definition?}` with `definition` `{address, load}` when the
+  variable's only definition is a load, or `{kind: "expression", text}`.
 - `rex_function_containing`: `functions` (at most 64) and `truncated`.
   `rex_function_define`: `start`, `name`, `analyzed`, `waited_ms`.
   `rex_function_define_many`: `defined` of `{start, name, analyzed}`, `failed` (addresses
@@ -229,18 +230,20 @@ present only on some rows.
   the raw core value), `definitions` (a flat list of addresses over all matching
   variables), and `carriers` of `{variable, address, text}`.
 - `rex_quick_main`: `entry_point`, `method` (`symbol`, `entry-arg`, or `entry-fallback`),
-  `main` (null when unresolved), `note`, `hint`, `function` (main, else the entry function),
-  `lines`, `truncated`.
+  `main` (null when unresolved), `note` and `hint` (each null when it has nothing to add),
+  `function` (main, else the entry function), `lines`, `truncated`.
 - `rex_redo`: `redone`, `undo_left`, `redo_left`. `rex_undo`: `undone`, `undo_left`,
   `redo_left`.
 - `rex_relocation_at`: `address`, `count`, and `relocations` of `{address, size, type,
-  addend, implicit_addend, pc_relative, target, reloc, symbol}`.
+  addend, implicit_addend, pc_relative, target, reloc, symbol}` (`symbol` is null when the
+  relocation has none).
 - `rex_report_show`: `title`, `length`, `preview`, `truncated`.
 - `rex_string_read_at`: `address`, `length`, `type`, `value`, `truncated`.
   `rex_string_search`: `total`, `truncated`, and `strings` of `{address, length, type,
   value}`. `rex_string_refs`: `total`, `truncated`, and `strings` of `{value, location,
   derived, refs, refs_truncated}`, `location` being `{type, address, length}` or null and
-  each ref `{function_start, function_name, address}`.
+  each ref `{function_start, function_name, address}` (the first two are null outside a
+  function).
 - `rex_struct_from_access`: `name`, `registered`, `width`, `member_count`, `members` of
   `{offset, name, type}`, `truncated`.
 - `rex_tag_list`: `total`, `truncated`, and `tags` of `{address, tag_type, data,
