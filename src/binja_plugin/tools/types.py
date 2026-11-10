@@ -101,11 +101,11 @@ def rex_type_library_export(
     kind: _EXPORT_KINDS = "types",
     filename: str = "",
 ) -> dict[str, object]:
-    """Export recovered types or objects into a new .bntl in the export root.
+    """Export types or objects into a new .bntl; each exported entry reports its rendered type.
 
     :param library_name: Name for the new type library.
     :param names: 1 to 128 type names to export from the view.
-    :param kind: Export type definitions ("types") or named objects ("objects").
+    :param kind: "types" or "objects" (functions, data variables; void-typed ones export as void).
     :param filename: Plain file name inside the export root; overwritten if it exists.
     """
     bv = call.binary_view
@@ -126,7 +126,7 @@ def rex_type_library_export(
             "no_arch", "the binary view has no architecture to create a type library for"
         )
     library = TypeLibrary.new(arch, library_name)
-    exported: list[str] = []
+    exported: list[dict[str, str]] = []
     failed: list[dict[str, str]] = []
     for name in names:
         if requested == "types":
@@ -142,7 +142,7 @@ def rex_type_library_export(
             bv.export_type_to_library(library, name, type_obj)
         else:
             bv.export_object_to_library(library, name, type_obj)
-        exported.append(name)
+        exported.append({"name": name, "type": _truncate(str(type_obj))})
     if not library.finalize():
         raise mcp.ToolError(
             "finalize_failed", f"could not finalize type library '{_truncate(library_name)}'"
@@ -167,7 +167,7 @@ def rex_type_library_export(
         "exported": exported,
         "failed": failed,
         # The uniform batch-summary keys (see rex_annotate_many): applied counts the
-        # exported names, failed_count the per-name failures echoed under ``failed``.
+        # exported entries, failed_count the per-name failures echoed under ``failed``.
         "applied": len(exported),
         "failed_count": len(failed),
         "total": len(names),

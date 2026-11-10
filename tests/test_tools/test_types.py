@@ -198,7 +198,10 @@ def test_type_library_export_writes_types_to_a_bntl(
         "path": str((root / "recovered.bntl").resolve()),
         "bytes_written": 4,
         "library": "recovered",
-        "exported": ["open", "color"],
+        "exported": [
+            {"name": "open", "type": "int open(char *path, int flags)"},
+            {"name": "color", "type": "enum color { RED, GREEN }"},
+        ],
         "failed": [],
         "applied": 2,
         "failed_count": 0,
@@ -229,7 +232,7 @@ def test_type_library_export_objects_exports_a_function_by_its_own_type(
     )
     _, export = get_tool("rex_type_library_export")
     result = export(_call(view), "recovered", ["open"], kind="objects", filename="objs.bntl")
-    assert result["exported"] == ["open"]
+    assert result["exported"] == [{"name": "open", "type": "int open(char *path, int flags)"}]
     assert result["failed"] == []
     assert view.exported_objects == [(view.exported_objects[0][0], "open", function.type)]
     assert view.exported_types == []
@@ -247,8 +250,86 @@ def test_type_library_export_objects_exports_a_data_variable_by_its_own_type(
     view.data_variable_types = {0x4000: table_type}
     _, export = get_tool("rex_type_library_export")
     result = export(_call(view), "recovered", ["g_table"], kind="objects", filename="objs.bntl")
-    assert result["exported"] == ["g_table"]
+    assert result["exported"] == [{"name": "g_table", "type": "int32_t[4]"}]
     assert view.exported_objects == [(view.exported_objects[0][0], "g_table", table_type)]
+
+
+def _void_object_view() -> FakeBinaryView:
+    view = FakeBinaryView(
+        arch=FakeArchitecture("x86_64"),
+        symbols=[
+            FakeSymbol(0x40031C, "DataSymbol", "__elf_interp"),
+            FakeSymbol(0x4000, "DataSymbol", "g_table"),
+        ],
+    )
+    view.data_variable_types = {
+        0x40031C: FakeType("void", "void"),
+        0x4000: FakeType("table_t", "int32_t[4]"),
+    }
+    return view
+
+
+def test_type_library_export_objects_exports_a_void_data_variable_and_reports_void(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    view = _void_object_view()
+    _, export = get_tool("rex_type_library_export")
+    result = export(_call(view), "recovered", ["__elf_interp"], kind="objects", filename="v.bntl")
+    assert result == {
+        "path": str((root / "v.bntl").resolve()),
+        "bytes_written": 4,
+        "library": "recovered",
+        "exported": [{"name": "__elf_interp", "type": "void"}],
+        "failed": [],
+        "applied": 1,
+        "failed_count": 0,
+        "total": 1,
+    }
+    assert [(name, str(type_obj)) for _, name, type_obj in view.exported_objects] == [
+        ("__elf_interp", "void")
+    ]
+
+
+def test_type_library_export_objects_tells_void_apart_from_typed_objects_in_one_batch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    _, export = get_tool("rex_type_library_export")
+    result = export(
+        _call(_void_object_view()),
+        "recovered",
+        ["g_table", "absent", "__elf_interp"],
+        kind="objects",
+        filename="v.bntl",
+    )
+    assert result["exported"] == [
+        {"name": "g_table", "type": "int32_t[4]"},
+        {"name": "__elf_interp", "type": "void"},
+    ]
+    assert result["failed"] == [
+        {"requested": "absent", "reason": "no function or data variable with this name in the view"}
+    ]
+    assert (result["applied"], result["failed_count"], result["total"]) == (2, 1, 3)
+
+
+@pytest.mark.parametrize(
+    ("type_string", "reported"),
+    [
+        ("t" * 512, "t" * 512),
+        ("t" * 513, "t" * 512 + "... [1 chars truncated]"),
+    ],
+)
+def test_type_library_export_bounds_the_reported_type_string(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, type_string: str, reported: str
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    view = FakeBinaryView(
+        arch=FakeArchitecture("x86_64"), types={"wide": FakeType("wide", type_string)}
+    )
+    _, export = get_tool("rex_type_library_export")
+    result = export(_call(view), "recovered", ["wide"], filename="w.bntl")
+    assert result["exported"] == [{"name": "wide", "type": reported}]
 
 
 def test_type_library_export_objects_fails_a_name_that_is_only_a_type(
@@ -307,7 +388,7 @@ def test_type_library_export_reports_missing_types(
     view = _typed_view()
     _, export = get_tool("rex_type_library_export")
     result = export(_call(view), "recovered", ["color", "absent"], filename="mixed.bntl")
-    assert result["exported"] == ["color"]
+    assert result["exported"] == [{"name": "color", "type": "enum color { RED, GREEN }"}]
     assert result["failed"] == [
         {"requested": "absent", "reason": "no type with this name in the view"}
     ]
