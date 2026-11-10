@@ -134,6 +134,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `key_too_large`, `value_too_large`, `data_too_large`, `name_too_large`, or
   `library_name_too_large`. Over-cap component paths, type-name list entries, and export
   filenames return `invalid_params` instead.
+- Hex byte patterns (`rex_data_find`, `rex_find_functions_by_pattern`, `rx_multi_find`)
+  are whitespace-separated bytes written as exactly two ASCII hex digits, or `??` for any
+  byte; whitespace inside a byte is ignored. Any other token (`+f`, `-1`, `0x`, `f_`,
+  non-ASCII digits, `?5`) returns `invalid_pattern` naming the token.
 - `rx_multi_find` accepts 1-64 patterns: an empty list returns `invalid_params`, a longer
   one `too_many_patterns`. Each entry is capped at 8,192 characters like `rex_data_find`'s
   `pattern`, and an over-cap entry returns `pattern_too_large` naming its index.

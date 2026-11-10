@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import string
 from itertools import batched
 
 
@@ -13,7 +14,8 @@ class HexPatternError(ValueError):
 def parse_hex_pattern(pattern: str) -> list[int | None]:
     """Parse a hex byte pattern into byte values, using None for wildcards.
 
-    Accepts optional whitespace between byte tokens and "AS ?? 05" style wildcards.
+    Accepts optional whitespace between byte tokens and "48 ?? 05" style wildcards;
+    each byte token is exactly two ASCII hex digits or "??".
 
     :param pattern: Hex pattern string, e.g. "48 8b ?? 05".
     :returns: One entry per byte; None marks a wildcard byte.
@@ -30,10 +32,9 @@ def parse_hex_pattern(pattern: str) -> list[int | None]:
 def _parse_byte_token(token: str) -> int | None:
     if token == "??":
         return None
-    try:
-        return int(token, 16)
-    except ValueError:
-        raise HexPatternError(f"invalid hex byte token '{token}'") from None
+    if not all(character in string.hexdigits for character in token):
+        raise HexPatternError(f"invalid hex byte token '{token}'")
+    return int(token, 16)
 
 
 def compile_hex_pattern(pattern: str) -> tuple[re.Pattern[bytes], int]:

@@ -127,6 +127,19 @@ def test_data_find_section_limit_and_errors() -> None:
     assert exc.value.message == "invalid hex byte token 'zz'"
 
 
+@pytest.mark.parametrize("tool_name", ["rex_data_find", "rex_find_functions_by_pattern"])
+@pytest.mark.parametrize("pattern", ["+f", "-1", "\u0664\u0668", "0x"])
+def test_pattern_tools_report_invalid_pattern_for_lenient_int_forms(
+    tool_name: str, pattern: str
+) -> None:
+    view = FakeBinaryView(segments=[FakeSegment(0x1000, 4)], memory={0x1000: b"\x0f\x0f\x0f\x0f"})
+    _, tool = get_tool(tool_name)
+    with pytest.raises(FakeToolError) as exc:
+        tool(_call(view), pattern=pattern)
+    assert exc.value.code == "invalid_pattern"
+    assert exc.value.message == f"invalid hex byte token '{pattern}'"
+
+
 def test_data_find_pagination_beyond_the_result_set() -> None:
     view = FakeBinaryView(segments=[FakeSegment(0x1000, 8)], memory={0x1000: b"\x90" * 8})
     _, find = get_tool("rex_data_find")

@@ -155,7 +155,7 @@ def rex_data_find(
 ) -> _DataFindResult:
     """Find all occurrences of a hex byte pattern in mapped memory.
 
-    :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; "??" matches any single byte.
+    :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; each byte is 2 ASCII hex digits or "??".
     :param section: Only search within this section.
     :param limit: Maximum matches to return.
     :param offset: Matches to skip before collecting results.
@@ -181,7 +181,7 @@ def rex_find_functions_by_pattern(
 ) -> _FindFunctionsResult:
     """Which functions contain a byte pattern; hit counts rank use of an instruction encoding.
 
-    :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; "??" matches any single byte.
+    :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; each byte is 2 ASCII hex digits or "??".
     :param limit: Maximum matching functions to return.
     :param offset: Matching functions to skip before collecting results.
     """
