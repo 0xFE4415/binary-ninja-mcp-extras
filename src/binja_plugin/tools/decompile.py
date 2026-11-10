@@ -16,6 +16,7 @@ from binja_plugin.tools import (
     _disasm_window,
     _drop,
     _ItemError,
+    _missing_il_message,
     _name_filter,
     _parse_address_entry,
     _render_function_disassembly,
@@ -185,7 +186,7 @@ def _entry_argument_main(
     """Find main as the __libc_start_main-style pointer argument of the entry function."""
     hlil = entry.hlil
     if hlil is None:
-        return None, "the entry function has no HLIL yet"
+        return None, f"the entry {_missing_il_message(entry, 'HLIL')}"
     for line in str(hlil).splitlines():
         if _MAIN_LIBC_MARKER not in line:
             continue

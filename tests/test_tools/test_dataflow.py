@@ -19,7 +19,13 @@ from helpers_dataflow import (
     var,
 )
 from helpers_uidf import FakeVariable, FakeVariableSourceType
-from helpers_view import FakeAnalysisSkipReason, FakeArchitecture, FakeBinaryView, FakeFunction
+from helpers_view import (
+    SKIP_CAUSES,
+    FakeAnalysisSkipReason,
+    FakeArchitecture,
+    FakeBinaryView,
+    FakeFunction,
+)
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -188,26 +194,6 @@ _MISSING_IL_SITES = [
     pytest.param("rex_uidf_clear", {"variable": "x"}, "no_mlil", "MediumLevelIL", id="uidf_clear"),
 ]
 
-_SKIP_CAUSES = {
-    FakeAnalysisSkipReason.NoSkipReason: "the core reports no reason",
-    FakeAnalysisSkipReason.AlwaysSkipReason: "its analysis_skip_override always skips it",
-    FakeAnalysisSkipReason.ExceedFunctionSizeSkipReason: (
-        "it exceeds the analysis.limits.maxFunctionSize limit"
-    ),
-    FakeAnalysisSkipReason.ExceedFunctionAnalysisTimeSkipReason: (
-        "its analysis exceeded the analysis.limits.maxFunctionAnalysisTime limit"
-    ),
-    FakeAnalysisSkipReason.ExceedFunctionUpdateCountSkipReason: (
-        "its analysis exceeded the analysis.limits.maxFunctionUpdateCount limit"
-    ),
-    FakeAnalysisSkipReason.NewAutoFunctionAnalysisSuppressedReason: (
-        "analysis of newly found functions is suppressed (analysis.suppressNewAutoFunctionAnalysis)"
-    ),
-    FakeAnalysisSkipReason.BasicAnalysisSkipReason: "analysis.mode is basic",
-    FakeAnalysisSkipReason.IntermediateAnalysisSkipReason: "analysis.mode is intermediate",
-    FakeAnalysisSkipReason.AnalysisPipelineSuspendedReason: "the analysis pipeline is suspended",
-}
-
 
 def _call_missing_il_site(
     tool_name: str, arguments: dict[str, Any], function: FakeFunction
@@ -219,7 +205,7 @@ def _call_missing_il_site(
 
 
 def test_skip_causes_cover_every_skip_reason() -> None:
-    assert set(_SKIP_CAUSES) == set(FakeAnalysisSkipReason)
+    assert set(SKIP_CAUSES) == set(FakeAnalysisSkipReason)
 
 
 @pytest.mark.parametrize(("tool_name", "arguments", "code", "level"), _MISSING_IL_SITES)
@@ -264,7 +250,7 @@ def test_a_skipped_function_reports_the_core_skip_reason(reason: FakeAnalysisSki
     )
     error = _call_missing_il_site("rex_function_constraints", {}, function)
     assert error.message == (
-        f"function bare has no MediumLevelIL: its analysis is skipped ({_SKIP_CAUSES[reason]}); "
+        f"function bare has no MediumLevelIL: its analysis is skipped ({SKIP_CAUSES[reason]}); "
         "waiting for analysis will not produce one"
     )
 

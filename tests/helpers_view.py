@@ -251,6 +251,27 @@ class FakeAnalysisSkipReason(enum.IntEnum):
     AnalysisPipelineSuspendedReason = 8
 
 
+SKIP_CAUSES: Final = {
+    FakeAnalysisSkipReason.NoSkipReason: "the core reports no reason",
+    FakeAnalysisSkipReason.AlwaysSkipReason: "its analysis_skip_override always skips it",
+    FakeAnalysisSkipReason.ExceedFunctionSizeSkipReason: (
+        "it exceeds the analysis.limits.maxFunctionSize limit"
+    ),
+    FakeAnalysisSkipReason.ExceedFunctionAnalysisTimeSkipReason: (
+        "its analysis exceeded the analysis.limits.maxFunctionAnalysisTime limit"
+    ),
+    FakeAnalysisSkipReason.ExceedFunctionUpdateCountSkipReason: (
+        "its analysis exceeded the analysis.limits.maxFunctionUpdateCount limit"
+    ),
+    FakeAnalysisSkipReason.NewAutoFunctionAnalysisSuppressedReason: (
+        "analysis of newly found functions is suppressed (analysis.suppressNewAutoFunctionAnalysis)"
+    ),
+    FakeAnalysisSkipReason.BasicAnalysisSkipReason: "analysis.mode is basic",
+    FakeAnalysisSkipReason.IntermediateAnalysisSkipReason: "analysis.mode is intermediate",
+    FakeAnalysisSkipReason.AnalysisPipelineSuspendedReason: "the analysis pipeline is suspended",
+}
+
+
 class FakeAnalysisProgress:
     """Mirrors binaryninja.binaryview.AnalysisProgress.
 

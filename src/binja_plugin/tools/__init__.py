@@ -272,23 +272,25 @@ _SKIP_CAUSES: Final[dict[AnalysisSkipReason, str]] = {
 }
 
 
-def _missing_il_error(
-    function: Function, level: Literal["MediumLevelIL", "HLIL"], code: Literal["no_mlil", "no_hlil"]
-) -> mcp.ToolError:
+def _missing_il_message(function: Function, level: Literal["MediumLevelIL", "HLIL"]) -> str:
     """Explain a missing IL: a skipped function never gets one, a pending one will."""
     name = _truncate(function.name)
     if function.analysis_skipped:
         cause = _SKIP_CAUSES[function.analysis_skip_reason]
-        return mcp.ToolError(
-            code,
+        return (
             f"function {name} has no {level}: its analysis is skipped ({cause}); "
-            "waiting for analysis will not produce one",
+            "waiting for analysis will not produce one"
         )
-    return mcp.ToolError(
-        code,
+    return (
         f"function {name} has no {level} yet; "
-        "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry",
+        "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry"
     )
+
+
+def _missing_il_error(
+    function: Function, level: Literal["MediumLevelIL", "HLIL"], code: Literal["no_mlil", "no_hlil"]
+) -> mcp.ToolError:
+    return mcp.ToolError(code, _missing_il_message(function, level))
 
 
 def _require_analyzed_function(bv: BinaryView, address: int) -> _Resolution:

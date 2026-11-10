@@ -934,7 +934,10 @@ def test_quick_main_fallback_notes_cover_the_unresolvable_entries() -> None:
     assert unterminated["note"] == expected_note
     # Entry never lifted: nothing to parse, HLIL comes back empty.
     unlifted = quick(FakeParsingToolCall(_quick_main_view(None)))
-    assert unlifted["note"] == "the entry function has no HLIL yet"
+    assert unlifted["note"] == (
+        "the entry function _start has no HLIL yet; "
+        "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry"
+    )
     assert unlifted["lines"] == []
     assert unlifted["truncated"] is False
 

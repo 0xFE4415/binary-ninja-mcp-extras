@@ -52,6 +52,8 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   new-function analysis, `analysis.mode`, or a suspended pipeline), and does not advise
   waiting. Otherwise analysis is pending and the message advises
   `bn_analysis_update_and_wait` or a bounded `rex_analysis_wait`.
+  `rex_quick_main` applies the same rule to its `note` when the entry function has no HLIL
+  and no `main` symbol exists: the note reads `the entry ` followed by that message.
 - An address can lie in several functions: a cold or outlined block belongs to its parent and
   to a function of its own. Every tool that resolves an address expression to a function
   (`rex_function_constraints`, `rex_hlil_statements`, `rex_mlil_uses`,
