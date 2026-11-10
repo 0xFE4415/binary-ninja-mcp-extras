@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal, NamedTuple, TypedDict
 
 from binaryninja import mcp
 
@@ -22,10 +22,50 @@ from binja_plugin.tools import (
     _write_export_file,
 )
 
-_MAX_EXPORT_DISASM_LINES = 512
-_MAX_EXPORT_SYMBOLS = 2048
+_MAX_EXPORT_DISASM_LINES: Final = 512
+_MAX_EXPORT_SYMBOLS: Final = 2048
 
-_EXPORT_FORMATS = Literal["csv", "json"]
+ExportFormat = Literal["csv", "json"]
+
+
+class _SymbolRow(NamedTuple):
+    address: int
+    symbol_type: str
+    name: str
+
+
+class _ExportDisasmResult(TypedDict):
+    path: str
+    bytes_written: int
+    lines: int
+    truncated: bool
+
+
+class _ExportSymbolsResult(TypedDict):
+    path: str
+    bytes_written: int
+    rows: int
+    truncated: bool
+    total: int
+
+
+def _symbols_csv(rows: list[_SymbolRow]) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(["symbol_address", "symbol_type", "name"])
+    for row in rows:
+        writer.writerow([hex(row.address), row.symbol_type, row.name])
+    return buffer.getvalue()
+
+
+def _symbols_json(rows: list[_SymbolRow]) -> str:
+    return json.dumps(
+        [
+            {"symbol_address": hex(row.address), "symbol_type": row.symbol_type, "name": row.name}
+            for row in rows
+        ],
+        indent=2,
+    )
 
 
 @mcp.tool(destructive=True)
@@ -36,7 +76,7 @@ def rex_export_disasm(
     after: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DISASM_CONTEXT)] = 8,
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_EXPORT_DISASM_LINES)] = 200,
     filename: str = "",
-) -> dict[str, object]:
+) -> _ExportDisasmResult:
     """Export one analyzed function's disassembly window to a file.
 
     :param address: Address expression inside the target function.
@@ -73,9 +113,9 @@ def rex_export_symbols(
     end: int,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_EXPORT_SYMBOLS)] = 500,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
-    format: _EXPORT_FORMATS = "csv",
+    format: ExportFormat = "csv",
     filename: str = "",
-) -> dict[str, object]:
+) -> _ExportSymbolsResult:
     """Export the symbols in an address range to a file.
 
     :param start: Start of the address range, inclusive.
@@ -103,25 +143,10 @@ def rex_export_symbols(
     ordered = sorted(symbols, key=lambda symbol: symbol.address)
     total = len(ordered)
     window = [
-        (symbol.address, symbol.type.name, symbol.name)
+        _SymbolRow(symbol.address, symbol.type.name, symbol.name)
         for symbol in ordered[offset : offset + limit]
     ]
-
-    def serialize(rows: list[tuple[int, str, str]]) -> str:
-        if requested == "csv":
-            buffer = io.StringIO()
-            writer = csv.writer(buffer, lineterminator="\n")
-            writer.writerow(["symbol_address", "symbol_type", "name"])
-            for address, symbol_type, name in rows:
-                writer.writerow([hex(address), symbol_type, name])
-            return buffer.getvalue()
-        return json.dumps(
-            [
-                {"symbol_address": hex(address), "symbol_type": symbol_type, "name": name}
-                for address, symbol_type, name in rows
-            ],
-            indent=2,
-        )
+    serialize = _symbols_csv if requested == "csv" else _symbols_json
 
     text, dropped = _fit_to_export_cap(serialize, window)
     resolved = _resolve_export_path(filename)

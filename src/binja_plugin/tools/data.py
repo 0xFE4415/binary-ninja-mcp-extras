@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Literal, TypedDict
+from itertools import chain
+from typing import TYPE_CHECKING, Annotated, Final, Literal, TypedDict
 
 from binaryninja import mcp
 from binaryninja.enums import LowLevelILOperation
@@ -12,9 +13,9 @@ from binja_plugin.tools import _MAX_LIMIT, _paginate, _truncate, _validate_range
 if TYPE_CHECKING:
     from binaryninja.binaryview import ReferenceSource, Relocation
 
-_MAX_DATA_READ_BYTES = 0x100000
+_MAX_DATA_READ_BYTES: Final = 0x100000
 
-_CALL_OPERATIONS = (
+_CALL_OPERATIONS: Final = (
     LowLevelILOperation.LLIL_CALL,
     LowLevelILOperation.LLIL_TAILCALL,
 )
@@ -38,6 +39,31 @@ class _RelocationEntry(TypedDict):
     target: str
     reloc: str
     symbol: str | None
+
+
+class _DataReference(TypedDict):
+    source: str
+
+
+class _XrefsToResult(TypedDict):
+    total: int
+    truncated: bool
+    code_refs: list[_CodeReferenceEntry]
+    data_refs: list[_DataReference]
+
+
+class _DataReadResult(TypedDict):
+    address: str
+    length: int
+    bytes_read: int
+    data: str
+    complete: bool
+
+
+class _RelocationAtResult(TypedDict):
+    address: str
+    count: int
+    relocations: list[_RelocationEntry]
 
 
 def _xref_kind(reference: ReferenceSource) -> Literal["call", "code"]:
@@ -79,7 +105,7 @@ def rex_xrefs_to(
     addr: mcp.Address,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
-) -> dict[str, object]:
+) -> _XrefsToResult:
     """Code and data references to an address; either list may be empty.
 
     :param addr: Referenced address.
@@ -95,15 +121,14 @@ def rex_xrefs_to(
         bv.get_code_refs(addr, max_items=_MAX_LIMIT + 1), key=lambda ref: ref.address
     )
     data_refs = sorted(bv.get_data_refs(addr, max_items=_MAX_LIMIT + 1))
-    combined = [("code", reference) for reference in code_refs] + [
-        ("data", source) for source in data_refs
-    ]
-    page, total, truncated = _paginate(combined, offset, limit)
+    page, total, truncated = _paginate(chain(code_refs, data_refs), offset, limit)
     return {
         "total": total,
         "truncated": truncated,
-        "code_refs": [_code_ref_entry(reference) for kind, reference in page if kind == "code"],
-        "data_refs": [{"source": hex(source)} for kind, source in page if kind == "data"],
+        "code_refs": [
+            _code_ref_entry(reference) for reference in page if not isinstance(reference, int)
+        ],
+        "data_refs": [{"source": hex(source)} for source in page if isinstance(source, int)],
     }
 
 
@@ -112,7 +137,7 @@ def rex_data_read(
     call: mcp.ToolCall,
     addr: mcp.Address,
     length: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DATA_READ_BYTES)],
-) -> dict[str, object]:
+) -> _DataReadResult:
     """Read mapped bytes at an address, with relocations applied.
 
     :param addr: Address to read from.
@@ -130,7 +155,7 @@ def rex_data_read(
 
 
 @mcp.tool(read_only=True)
-def rex_relocation_at(call: mcp.ToolCall, addr: mcp.Address) -> dict[str, object]:
+def rex_relocation_at(call: mcp.ToolCall, addr: mcp.Address) -> _RelocationAtResult:
     """List the relocations covering an address; an empty list means none.
 
     :param addr: Address of the relocation, or any address the relocation covers.
