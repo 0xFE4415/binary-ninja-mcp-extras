@@ -19,6 +19,7 @@ import pytest
 from helpers_uidf import FakeRegisterValueType, FakeVariableSourceType
 from helpers_view import (
     TYPE_LIBRARIES_ON_DISK,
+    FakeAnalysisSkipReason,
     FakeAnalysisState,
     FakeBasicBlock,
     FakeBinaryView,
@@ -280,6 +281,7 @@ def install_fake_binaryninja() -> None:
 
     enums_module = types.ModuleType("binaryninja.enums")
     setattr(enums_module, "AnalysisState", FakeAnalysisState)
+    setattr(enums_module, "AnalysisSkipReason", FakeAnalysisSkipReason)
     setattr(enums_module, "RegisterValueType", FakeRegisterValueType)
     setattr(enums_module, "TypeClass", FakeTypeClass)
     setattr(enums_module, "SymbolType", FakeSymbolType)

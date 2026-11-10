@@ -28,6 +28,7 @@ from binja_plugin.tools import (
     _FunctionEntry,
     _is_json_object,
     _ItemError,
+    _missing_il_error,
     _paginate,
     _render_hlil_lines,
     _require_analyzed_function,
@@ -295,11 +296,7 @@ def _collect_mlil_definitions(
     """Return every (variable, definition) pair whose variable name matches ``name``."""
     mlil = target.mlil
     if mlil is None:
-        raise mcp.ToolError(
-            "no_mlil",
-            f"function {_truncate(target.name)} has no MediumLevelIL yet; "
-            "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry",
-        )
+        raise _missing_il_error(target, "MediumLevelIL", "no_mlil")
     matches = [
         (variable, definition)
         for variable in target.vars

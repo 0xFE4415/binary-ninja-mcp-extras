@@ -23,6 +23,18 @@ class AnalysisState(IntEnum):
     ExtendedAnalyzeState = 6
 
 
+class AnalysisSkipReason(IntEnum):
+    NoSkipReason = 0
+    AlwaysSkipReason = 1
+    ExceedFunctionSizeSkipReason = 2
+    ExceedFunctionAnalysisTimeSkipReason = 3
+    ExceedFunctionUpdateCountSkipReason = 4
+    NewAutoFunctionAnalysisSuppressedReason = 5
+    BasicAnalysisSkipReason = 6
+    IntermediateAnalysisSkipReason = 7
+    AnalysisPipelineSuspendedReason = 8
+
+
 class RegisterValueType(IntEnum):
     UndeterminedValue = 0
     EntryValue = 1

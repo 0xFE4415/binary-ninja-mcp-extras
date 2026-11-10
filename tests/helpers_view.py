@@ -160,6 +160,20 @@ class FakeAnalysisState(enum.IntEnum):
     ExtendedAnalyzeState = 6
 
 
+class FakeAnalysisSkipReason(enum.IntEnum):
+    """Mirrors binaryninja.enums.AnalysisSkipReason."""
+
+    NoSkipReason = 0
+    AlwaysSkipReason = 1
+    ExceedFunctionSizeSkipReason = 2
+    ExceedFunctionAnalysisTimeSkipReason = 3
+    ExceedFunctionUpdateCountSkipReason = 4
+    NewAutoFunctionAnalysisSuppressedReason = 5
+    BasicAnalysisSkipReason = 6
+    IntermediateAnalysisSkipReason = 7
+    AnalysisPipelineSuspendedReason = 8
+
+
 class FakeAnalysisProgress:
     """Mirrors binaryninja.binaryview.AnalysisProgress.
 
@@ -222,8 +236,12 @@ class FakeFunction:
         vars: list[FakeVariable] | None = None,
         mlil: FakeMediumLevelIL | FakeMLILInstructions | None = None,
         arch: FakeArchitecture | None = None,
+        analysis_skipped: bool = False,
+        analysis_skip_reason: FakeAnalysisSkipReason = FakeAnalysisSkipReason.NoSkipReason,
     ) -> None:
         self.arch = arch if arch is not None else FakeArchitecture("x86_64")
+        self.analysis_skipped = analysis_skipped
+        self.analysis_skip_reason = analysis_skip_reason
         self.name = name
         self.start = start
         self.end = end

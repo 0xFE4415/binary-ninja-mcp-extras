@@ -344,7 +344,12 @@ def _defined_error_codes() -> set[str]:
     helpers that raise on a handler's behalf: _validate_text's too-large code and
     _require_containing_function's containment code.
     """
-    code_positions = {"ToolError": 0, "_validate_text": 3, "_require_containing_function": 2}
+    code_positions = {
+        "ToolError": 0,
+        "_validate_text": 3,
+        "_require_containing_function": 2,
+        "_missing_il_error": 2,
+    }
     codes: set[str] = set()
     for path in Path(binja_plugin.__file__).parent.rglob("*.py"):
         for node in _walk_definitions(ast.parse(path.read_text(encoding="utf-8"))):
@@ -377,6 +382,7 @@ _RAISING_HELPER_CODE_POSITIONS = {
     "_require_containing_function": 2,
     "_raise_containment_miss": 2,
     "_run_undo_stack_step": 2,
+    "_missing_il_error": 2,
 }
 
 # Codes a handler reaches but reports in-band or without a parameter to own them, so the

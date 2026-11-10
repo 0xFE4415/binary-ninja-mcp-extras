@@ -17,6 +17,7 @@ from binja_plugin.tools import (
     _MAX_LIMIT,
     _MAX_NAME_CANDIDATES,
     _function_entry,
+    _missing_il_error,
     _require_analyzed_function,
     _truncate,
     _validate_range,
@@ -219,11 +220,7 @@ def rex_function_constraints(
     target = _require_analyzed_function(bv, function)
     target_mlil = target.mlil
     if target_mlil is None:
-        raise mcp.ToolError(
-            "no_mlil",
-            f"function {_truncate(target.name)} has no MediumLevelIL yet; "
-            "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry",
-        )
+        raise _missing_il_error(target, "MediumLevelIL", "no_mlil")
     rows = _iter_branch_constraints(target_mlil)
     return {
         "function": _function_entry(target),
@@ -252,11 +249,7 @@ def rex_hlil_statements(
     target = _require_analyzed_function(bv, function)
     hlil = target.hlil
     if hlil is None:
-        raise mcp.ToolError(
-            "no_hlil",
-            f"function {_truncate(target.name)} has no HLIL yet; "
-            "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry",
-        )
+        raise _missing_il_error(target, "HLIL", "no_hlil")
     rows = [
         {
             "address": hex(instruction.address),
@@ -338,11 +331,7 @@ def rex_mlil_uses(
     target = _require_analyzed_function(bv, function)
     target_mlil = target.mlil
     if target_mlil is None:
-        raise mcp.ToolError(
-            "no_mlil",
-            f"function {_truncate(target.name)} has no MediumLevelIL yet; "
-            "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry",
-        )
+        raise _missing_il_error(target, "MediumLevelIL", "no_mlil")
     definitions = _definitions_by_instruction(target_mlil)
     defined_at: dict[int, list[Variable]] = {}
     for instruction in target_mlil.instructions:
@@ -438,11 +427,7 @@ def rex_parameter_variables(
     target = _require_analyzed_function(bv, function)
     target_mlil = target.mlil
     if target_mlil is None:
-        raise mcp.ToolError(
-            "no_mlil",
-            f"function {_truncate(target.name)} has no MediumLevelIL yet; "
-            "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry",
-        )
+        raise _missing_il_error(target, "MediumLevelIL", "no_mlil")
     matches = [variable for variable in target.vars if variable.name == parameter]
     if not matches:
         names = sorted({variable.name for variable in target.vars})

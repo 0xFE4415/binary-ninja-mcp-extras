@@ -37,6 +37,14 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   "composite_parameter", storage}` with the raw core value. `limit` and `offset` page
   each entry's uses, and `variable` keeps every variable with that name, same-named ones
   included (`no_variable` if the instruction defines none).
+- `no_mlil` (`rex_function_constraints`, `rex_mlil_uses`, `rex_parameter_variables`, and the
+  uidf setters and clearers that resolve a variable name) and `no_hlil`
+  (`rex_hlil_statements`) distinguish a skipped function from a pending one. When the core
+  reports `analysis_skipped`, the message says analysis is skipped, names the cause from
+  `analysis_skip_reason` (user override, size, time, or update-count limit, suppressed
+  new-function analysis, `analysis.mode`, or a suspended pipeline), and does not advise
+  waiting. Otherwise analysis is pending and the message advises
+  `bn_analysis_update_and_wait` or a bounded `rex_analysis_wait`.
 - For `rex_string_search`, `rex_data_find`, `rx_data_find`, `rex_string_refs`, and
   `rex_uidf_list`, a truncated `total` is a lower bound: scanning stops at the first
   result past the page. `rex_xrefs_to` has the same rule for fetched refs; `rx_multi_find`

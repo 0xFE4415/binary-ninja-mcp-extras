@@ -3,6 +3,7 @@ from typing import Any
 
 from binaryninja.architecture import Architecture
 from binaryninja.basicblock import BasicBlock
+from binaryninja.enums import AnalysisSkipReason
 from binaryninja.highlevelil import HighLevelILFunction
 from binaryninja.mediumlevelil import MediumLevelILFunction
 from binaryninja.types import Type, TypeBuilder
@@ -31,6 +32,8 @@ class Function:
     callees: list[Function]
     hlil: HighLevelILFunction | None
     mlil: MediumLevelILFunction | None
+    analysis_skipped: bool
+    analysis_skip_reason: AnalysisSkipReason
     comment: str
     type: Type
     basic_blocks: Iterable[BasicBlock]

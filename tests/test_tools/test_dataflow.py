@@ -19,7 +19,7 @@ from helpers_dataflow import (
     var,
 )
 from helpers_uidf import FakeVariable, FakeVariableSourceType
-from helpers_view import FakeArchitecture, FakeBinaryView, FakeFunction
+from helpers_view import FakeAnalysisSkipReason, FakeArchitecture, FakeBinaryView, FakeFunction
 
 from binja_plugin.tools import dataflow as dataflow_tools
 
@@ -171,6 +171,130 @@ def test_hlil_statements_without_hlil_fail_with_no_hlil() -> None:
         statements(_call(view), function=0x2000)
     assert error.value.code == "no_hlil"
     assert "run bn_analysis_update_and_wait" in error.value.message
+
+
+_MISSING_IL_SITES = [
+    pytest.param("rex_function_constraints", {}, "no_mlil", "MediumLevelIL", id="constraints"),
+    pytest.param("rex_hlil_statements", {}, "no_hlil", "HLIL", id="hlil_statements"),
+    pytest.param("rex_mlil_uses", {"address": 0x2004}, "no_mlil", "MediumLevelIL", id="uses"),
+    pytest.param(
+        "rex_parameter_variables", {"parameter": "arg2"}, "no_mlil", "MediumLevelIL", id="parameter"
+    ),
+    pytest.param(
+        "rex_uidf_set", {"variable": "x", "value": "1"}, "no_mlil", "MediumLevelIL", id="uidf_set"
+    ),
+    pytest.param("rex_uidf_clear", {"variable": "x"}, "no_mlil", "MediumLevelIL", id="uidf_clear"),
+]
+
+_SKIP_CAUSES = {
+    FakeAnalysisSkipReason.NoSkipReason: "the core reports no reason",
+    FakeAnalysisSkipReason.AlwaysSkipReason: "its analysis_skip_override always skips it",
+    FakeAnalysisSkipReason.ExceedFunctionSizeSkipReason: (
+        "it exceeds the analysis.limits.maxFunctionSize limit"
+    ),
+    FakeAnalysisSkipReason.ExceedFunctionAnalysisTimeSkipReason: (
+        "its analysis exceeded the analysis.limits.maxFunctionAnalysisTime limit"
+    ),
+    FakeAnalysisSkipReason.ExceedFunctionUpdateCountSkipReason: (
+        "its analysis exceeded the analysis.limits.maxFunctionUpdateCount limit"
+    ),
+    FakeAnalysisSkipReason.NewAutoFunctionAnalysisSuppressedReason: (
+        "analysis of newly found functions is suppressed (analysis.suppressNewAutoFunctionAnalysis)"
+    ),
+    FakeAnalysisSkipReason.BasicAnalysisSkipReason: "analysis.mode is basic",
+    FakeAnalysisSkipReason.IntermediateAnalysisSkipReason: "analysis.mode is intermediate",
+    FakeAnalysisSkipReason.AnalysisPipelineSuspendedReason: "the analysis pipeline is suspended",
+}
+
+
+def _call_missing_il_site(
+    tool_name: str, arguments: dict[str, Any], function: FakeFunction
+) -> FakeToolError:
+    _, tool = get_tool(tool_name)
+    with pytest.raises(FakeToolError) as error:
+        tool(_call(FakeBinaryView(functions=[function])), function=0x2000, **arguments)
+    return error.value
+
+
+def test_skip_causes_cover_every_skip_reason() -> None:
+    assert set(_SKIP_CAUSES) == set(FakeAnalysisSkipReason)
+
+
+@pytest.mark.parametrize(("tool_name", "arguments", "code", "level"), _MISSING_IL_SITES)
+def test_a_function_with_analysis_pending_is_told_to_wait(
+    tool_name: str, arguments: dict[str, Any], code: str, level: str
+) -> None:
+    error = _call_missing_il_site(
+        tool_name, arguments, FakeFunction("bare", 0x2000, 0x2100, vars=[FakeVariable("x")])
+    )
+    assert error.code == code
+    assert error.message == (
+        f"function bare has no {level} yet; "
+        "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry"
+    )
+
+
+@pytest.mark.parametrize(("tool_name", "arguments", "code", "level"), _MISSING_IL_SITES)
+def test_a_skipped_function_is_not_told_to_wait(
+    tool_name: str, arguments: dict[str, Any], code: str, level: str
+) -> None:
+    function = FakeFunction(
+        "bare",
+        0x2000,
+        0x2100,
+        vars=[FakeVariable("x")],
+        analysis_skipped=True,
+        analysis_skip_reason=FakeAnalysisSkipReason.AlwaysSkipReason,
+    )
+    error = _call_missing_il_site(tool_name, arguments, function)
+    assert error.code == code
+    assert error.message == (
+        f"function bare has no {level}: its analysis is skipped "
+        "(its analysis_skip_override always skips it); "
+        "waiting for analysis will not produce one"
+    )
+
+
+@pytest.mark.parametrize("reason", list(FakeAnalysisSkipReason), ids=lambda reason: reason.name)
+def test_a_skipped_function_reports_the_core_skip_reason(reason: FakeAnalysisSkipReason) -> None:
+    function = FakeFunction(
+        "bare", 0x2000, 0x2100, analysis_skipped=True, analysis_skip_reason=reason
+    )
+    error = _call_missing_il_site("rex_function_constraints", {}, function)
+    assert error.message == (
+        f"function bare has no MediumLevelIL: its analysis is skipped ({_SKIP_CAUSES[reason]}); "
+        "waiting for analysis will not produce one"
+    )
+
+
+@pytest.mark.parametrize("reason", list(FakeAnalysisSkipReason), ids=lambda reason: reason.name)
+def test_a_reason_without_a_skip_does_not_stop_the_wait_advice(
+    reason: FakeAnalysisSkipReason,
+) -> None:
+    function = FakeFunction(
+        "bare", 0x2000, 0x2100, analysis_skipped=False, analysis_skip_reason=reason
+    )
+    error = _call_missing_il_site("rex_hlil_statements", {}, function)
+    assert error.message == (
+        "function bare has no HLIL yet; "
+        "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry"
+    )
+
+
+def test_a_skipped_function_name_is_truncated_in_the_message() -> None:
+    function = FakeFunction(
+        "n" * 600,
+        0x2000,
+        0x2100,
+        analysis_skipped=True,
+        analysis_skip_reason=FakeAnalysisSkipReason.ExceedFunctionSizeSkipReason,
+    )
+    error = _call_missing_il_site("rex_function_constraints", {}, function)
+    assert error.message == (
+        f"function {'n' * 512}... [88 chars truncated] has no MediumLevelIL: "
+        "its analysis is skipped (it exceeds the analysis.limits.maxFunctionSize limit); "
+        "waiting for analysis will not produce one"
+    )
 
 
 def _statement(address: int, index: int, text: str) -> FakeInstruction:

@@ -14,10 +14,11 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterable, Iterator
 from itertools import islice
 from pathlib import Path
-from typing import Final, NoReturn, TypedDict, TypeIs
+from typing import Final, Literal, NoReturn, TypedDict, TypeIs
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
+from binaryninja.enums import AnalysisSkipReason
 from binaryninja.function import Function
 
 _READ_CHUNK: Final = 4 * 1024 * 1024
@@ -190,6 +191,46 @@ def _require_containing_function(
     if not functions:
         _raise_containment_miss(bv, address, code, described)
     return functions[0]
+
+
+_SKIP_CAUSES: Final[dict[AnalysisSkipReason, str]] = {
+    AnalysisSkipReason.NoSkipReason: "the core reports no reason",
+    AnalysisSkipReason.AlwaysSkipReason: "its analysis_skip_override always skips it",
+    AnalysisSkipReason.ExceedFunctionSizeSkipReason: (
+        "it exceeds the analysis.limits.maxFunctionSize limit"
+    ),
+    AnalysisSkipReason.ExceedFunctionAnalysisTimeSkipReason: (
+        "its analysis exceeded the analysis.limits.maxFunctionAnalysisTime limit"
+    ),
+    AnalysisSkipReason.ExceedFunctionUpdateCountSkipReason: (
+        "its analysis exceeded the analysis.limits.maxFunctionUpdateCount limit"
+    ),
+    AnalysisSkipReason.NewAutoFunctionAnalysisSuppressedReason: (
+        "analysis of newly found functions is suppressed (analysis.suppressNewAutoFunctionAnalysis)"
+    ),
+    AnalysisSkipReason.BasicAnalysisSkipReason: "analysis.mode is basic",
+    AnalysisSkipReason.IntermediateAnalysisSkipReason: "analysis.mode is intermediate",
+    AnalysisSkipReason.AnalysisPipelineSuspendedReason: "the analysis pipeline is suspended",
+}
+
+
+def _missing_il_error(
+    function: Function, level: Literal["MediumLevelIL", "HLIL"], code: Literal["no_mlil", "no_hlil"]
+) -> mcp.ToolError:
+    """Explain a missing IL: a skipped function never gets one, a pending one will."""
+    name = _truncate(function.name)
+    if function.analysis_skipped:
+        cause = _SKIP_CAUSES[function.analysis_skip_reason]
+        return mcp.ToolError(
+            code,
+            f"function {name} has no {level}: its analysis is skipped ({cause}); "
+            "waiting for analysis will not produce one",
+        )
+    return mcp.ToolError(
+        code,
+        f"function {name} has no {level} yet; "
+        "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry",
+    )
 
 
 def _require_analyzed_function(bv: BinaryView, address: int) -> Function:
