@@ -18,17 +18,12 @@ from binja_plugin.tools import (
     _validate_text,
 )
 
-# Type-library tools: one call moves at most this many type names, and each name is
-# capped before it reaches the type system — QualifiedNames have no core-side length
-# bound and persist in the type database or the .bntl.
+# QualifiedNames have no core-side length bound and persist, so each name is capped.
 _MAX_TYPE_LIBRARY_NAMES = 128
 _MAX_TYPE_NAME_CHARS = 255
 ExportKind = Literal["types", "objects"]
-# rex_struct_from_access echoes at most this many members; the struct is defined in full
-# regardless, the cap bounds only the echoed list.
 _MAX_STRUCT_MEMBERS = 128
-# Source passed to Type.generate_auto_type_id, so the auto types this tool defines are
-# identifiable in the type system as originating here.
+# Marks the auto types this tool defines as originating here.
 _STRUCT_TYPE_SOURCE = "rex_struct"
 
 
@@ -203,8 +198,7 @@ def rex_type_library_export(
     _validate_text("library_name", library_name, _MAX_TYPE_NAME_CHARS, "library_name_too_large")
     _validate_type_names(names)
     _validate_export_path(filename)
-    # The schema-side Literal and the body-side check below must agree; widening to str
-    # keeps the body check statically reachable for direct handler invocation.
+    # Widened to str so the body check stays reachable by direct calls; match the Literal.
     requested: str = kind
     if requested not in ("types", "objects"):
         raise mcp.ToolError(
@@ -272,8 +266,7 @@ def rex_type_library_export(
         "library": _truncate(library_name),
         "exported": exported,
         "failed": failed,
-        # The uniform batch-summary keys (see rex_annotate_many): applied counts the
-        # exported entries, failed_count the per-name failures echoed under ``failed``.
+        # applied counts exported entries, failed_count the per-name failures under ``failed``.
         "applied": len(exported),
         "failed_count": len(failed),
         "total": len(names),
@@ -307,15 +300,13 @@ def rex_type_library_import(
         if type_obj is None:
             failed.append({"requested": name, "reason": "not provided by this type library"})
             continue
-        # The return value is a NamedTypeReference whose name is the deconflicted name
-        # the core actually inserted.
+        # The return value is a NamedTypeReference named by the deconflicted name the core inserted.
         imported.append({"requested": name, "resolved": str(type_obj.name)})
     return {
         "library": _truncate(library.name) if library.name is not None else None,
         "imported": imported,
         "failed": failed,
-        # The uniform batch-summary keys (see rex_annotate_many): applied counts the
-        # imported names, failed_count the per-name failures echoed under ``failed``.
+        # applied counts imported names, failed_count the per-name failures under ``failed``.
         "applied": len(imported),
         "failed_count": len(failed),
         "total": len(names),

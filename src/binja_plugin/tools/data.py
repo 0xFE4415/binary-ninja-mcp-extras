@@ -115,8 +115,7 @@ def rex_xrefs_to(
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
-    # The core's reference order is not guaranteed sorted; sort before slicing so the
-    # window is address-ordered, not a first-fit subset of whatever the core yielded.
+    # The core's reference order is unsorted; sort before slicing so the window is address-ordered.
     code_refs = sorted(
         bv.get_code_refs(addr, max_items=_MAX_LIMIT + 1), key=lambda ref: ref.address
     )

@@ -19,19 +19,13 @@ from binja_plugin.tools import (
 if TYPE_CHECKING:
     from binaryninja.types import Type
 
-# rex_annotate_many caps: 128 items bound one call's mutation cost and its echoed result
-# rows; the string caps bound what reaches the core per field. The name cap is far below
-# any sane symbol length, the type cap matches the pattern-string cap (both feed a
-# parser), and the comment cap matches the tag-data cap.
+# The prototype cap matches the pattern cap (both feed a parser), the comment cap the tag cap.
 _MAX_ANNOTATE_ITEMS = 128
 _MAX_ANNOTATE_NAME_CHARS = 256
 _MAX_ANNOTATE_COMMENT_CHARS = 65536
 _MAX_ANNOTATE_PROTOTYPE_CHARS = 8192
 _ANNOTATE_FIELDS = frozenset({"addr", "name", "comment", "prototype"})
-# Schema-side description of one rex_annotate_many item. The bundled mcp layer cannot
-# describe object arrays structurally: mcp.Schema hands the item through as decoded JSON
-# and the handler validates every field, so this schema is what the client sees while
-# the checks below are what actually rejects.
+# The mcp layer cannot describe object arrays: the client sees this, the handler checks.
 _ANNOTATE_ITEMS_SCHEMA: dict[str, object] = {
     "type": "object",
     "properties": {
@@ -74,8 +68,7 @@ class _AnnotationPlan:
     """One fully validated annotation, staged for the batch transaction's apply phase."""
 
     function: Function
-    # The parsed address the item named: comments land exactly here, while name and
-    # prototype are function-level and always apply to the whole function.
+    # Comments land at this exact address; name and prototype apply to the whole function.
     address: int
     name: str | None = None
     comment: str | None = None
@@ -141,8 +134,6 @@ def _annotate_apply_plans(bv: BinaryView, staged: list[_AnnotationPlan]) -> None
         with bv.undoable_transaction():
             for plan in staged:
                 if plan.comment is not None:
-                    # The comment lands at the exact address the item named, not as the
-                    # function-level comment snapped to the start.
                     plan.function.set_comment_at(plan.address, plan.comment)
                 if plan.parsed_type is not None:
                     plan.function.set_user_type(plan.parsed_type)
@@ -150,8 +141,7 @@ def _annotate_apply_plans(bv: BinaryView, staged: list[_AnnotationPlan]) -> None
                 if plan.name is not None:
                     plan.function.name = plan.name
     except Exception as error:
-        # undoable_transaction reverted the whole batch core-side before this runs;
-        # saying so keeps a caller from retrying a half-applied batch.
+        # The transaction already reverted the batch; saying so stops a retry of a half-applied one.
         raise mcp.ToolError("annotate_failed", f"batch rolled back: {error}") from None
 
 
@@ -195,8 +185,7 @@ def _annotate_resolve(
         except Exception as error:
             return _annotate_function_error(address, f"bad type: {_truncate(str(error))}"), None
     resolution = _resolve_containing(bv, containing)
-    # A comment lands at the exact address the item named; the other fields are
-    # function-level and apply to the start, so the row echoes where it landed.
+    # A comment lands at the named address, other fields at the function start; the row echoes it.
     annotated = address if fields.comment is not None else resolution.function.start
     return (
         {"addr": hex(annotated), "ok": True, "function": resolution.entry},
@@ -236,8 +225,7 @@ def rex_annotate_many(
     if staged:
         _annotate_apply_plans(bv, staged)
     applied = sum(1 for row in results if row["ok"])
-    # Every batch tool answers the same applied/failed_count/total summary; "failed" is
-    # this tool's legacy count key, kept so existing callers do not break.
+    # "failed" is this tool's legacy count key, kept so existing callers do not break.
     return {
         "applied": applied,
         "failed": len(results) - applied,

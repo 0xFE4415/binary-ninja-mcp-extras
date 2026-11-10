@@ -23,21 +23,14 @@ _MAX_KV_KEY_CHARS = 128
 _MAX_TAG_DATA_CHARS = 65536
 _MAX_TAG_TYPE_CHARS = 64
 
-# rex_report_show: the core receives title and markdown as unbounded strings and renders
-# them in a GUI popup named by the title, so both are capped — the markdown to keep one
-# agent call from pushing megabytes into the viewer, the title because it labels the tab.
+# The core renders title and markdown unbounded in a GUI popup, so both are capped.
 _MAX_REPORT_TITLE_CHARS = 256
 _MAX_REPORT_CONTENT_CHARS = 65536
 
 _METADATA_PREFIX = "rex/"
 _TAG_ICON = "\u25c6"
 
-# rex_undo/rex_redo echo post-operation stack depths (never the entry text) so an agent
-# can stop when the depth stops changing. The stack is the file's undo database, shared
-# with the GUI user. Which plugin writes leave an undo entry is documented only for
-# rex_annotate_many (one batch = one entry); tag/metadata/type-library/memory writes are
-# undocumented in the API source, so settle each with a one-call undo_left experiment on
-# a live core before relying on rollback.
+# Only rex_annotate_many documents its undo entries; check other writes via undo_left live.
 
 
 class _KvKeyResult(TypedDict):
@@ -179,9 +172,7 @@ def rex_report_show(
     bv = call.binary_view
     _validate_text("title", title, _MAX_REPORT_TITLE_CHARS, "title_too_large")
     _validate_text("markdown", markdown, _MAX_REPORT_CONTENT_CHARS, "content_too_large")
-    # On command-line hosts the default interaction handler displays only the plaintext
-    # variant, and an empty plaintext shows nothing; the markdown is its own plaintext so
-    # the report survives the degradation.
+    # CLI hosts show only the plaintext variant, so the markdown doubles as its own plaintext.
     bv.show_markdown_report(title, markdown, markdown)
     preview, truncated = _truncate_with_flag(markdown)
     return {"title": title, "length": len(markdown), "preview": preview, "truncated": truncated}
@@ -211,8 +202,6 @@ def rex_tag_list(
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
     tags = [_tag_entry(address, tag) for address, tag in call.binary_view.get_tags()]
-    # Like the other listing tools: total covers the whole listing, truncated marks a
-    # window that ends before it, and the page is [offset, offset + limit).
     return {
         "total": len(tags),
         "truncated": offset + limit < len(tags),

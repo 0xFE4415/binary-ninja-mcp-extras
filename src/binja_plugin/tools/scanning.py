@@ -24,18 +24,13 @@ from binja_plugin.tools import (
 # rex_constant_find matches displayed constants, which are at most 64-bit values.
 _MAX_CONSTANT_VALUE = 2**64 - 1
 
-# Raw pattern-string cap for rex_data_find: bounds the regex compile and the per-chunk
-# read inflation (read_size grows with the pattern length) before any of that happens.
+# Bounds the regex compile and the per-chunk read size, which grows with the pattern length.
 _MAX_PATTERN_CHARS = 8192
 
-# rex_find_functions_by_pattern example matches per function: triage wants a handful of
-# hit addresses; rex_data_find already returns full match lists. One extra address is
-# collected so `addresses_truncated` can tell an exact cap from clipped examples.
+# One extra address is collected so `addresses_truncated` tells an exact cap from clipped examples.
 _MAX_FIND_FUNCTIONS_EXAMPLES = 5
 
-# rex_constant_find example reference addresses per function: a hot constant concentrated
-# in one function stays bounded. One extra address is collected so `addresses_truncated`
-# can tell an exact cap from clipped examples.
+# A hot constant in one function stays bounded; one extra address is collected as above.
 _MAX_CONSTANT_ADDRESSES = 6
 
 
@@ -145,8 +140,7 @@ def rex_constant_find(
         }
         for start, group in _drop(groups.items(), offset)
     ]
-    # Count seen, like _paginate: exact when the scan completed, so a page past the end
-    # carries the total it undershot; a lower bound once truncated stops the scan early.
+    # Count seen, like _paginate: exact when the scan finished, a lower bound once truncated.
     return {"total": len(groups) + int(truncated), "truncated": truncated, "functions": functions}
 
 
@@ -205,8 +199,7 @@ def rex_find_functions_by_pattern(
         entry = hits.get(function.start)
         if entry is None:
             if len(hits) >= offset + limit:
-                # The first matching function past the window proves more exist; stop
-                # the scan there instead of counting the rest.
+                # The first matching function past the window proves more exist; stop scanning.
                 truncated = True
                 break
             entry = hits[function.start] = _FunctionHits(_truncate(function.name))
@@ -223,6 +216,5 @@ def rex_find_functions_by_pattern(
         }
         for start, entry in _drop(hits.items(), offset)
     ]
-    # Count seen, like _paginate: exact when the scan completed, so a page past the end
-    # carries the total it undershot; a lower bound once truncated stops the scan early.
+    # Count seen, like _paginate: exact when the scan finished, a lower bound once truncated.
     return {"total": len(hits) + int(truncated), "truncated": truncated, "functions": functions}

@@ -25,9 +25,7 @@ _MAX_CALL_PATHS = 64
 _MAX_FUNCTION_ENTRIES = 64
 _MAX_DEFINE_BATCH = 128
 
-# The define tools' analysis wait polls in ~100 ms slices like rex_analysis_wait; a
-# defined function counts as analyzed once the engine has produced its first basic
-# block, which is the same gate the decompile and disassembly tools go through.
+# A defined function counts as analyzed once the engine produces its first basic block.
 _DEFINE_WAIT_SLICE_MS = 100
 _MAX_DEFINE_WAIT_MS = 600000
 
@@ -73,11 +71,6 @@ def _pending_functions(functions: list[Function]) -> list[Function]:
 def _settle_analysis(
     functions: list[Function], wait: bool, timeout_ms: int
 ) -> tuple[list[Function], int]:
-    """Return the functions still without a basic block and the elapsed wall time.
-
-    With ``wait`` set, the unanalyzed functions are polled in ~100 ms slices until every
-    one has a block or the deadline passes; without it the state is sampled once.
-    """
     if not wait:
         return _pending_functions(functions), 0
     started = time.monotonic()
@@ -136,15 +129,13 @@ def rex_call_paths(
             if neighbor.start == target.start:
                 paths.append([_function_entry(item) for item in [*path, neighbor]])
                 if len(paths) >= max_paths:
-                    # One function's call sites can list the target several times; stop
-                    # appending so the result never exceeds max_paths.
+                    # Call sites can list the target several times; stop appending at max_paths.
                     hit_path_cap = True
                     break
             elif neighbor.start not in visited:
                 visited.add(neighbor.start)
                 queue.append((neighbor, [*path, neighbor]))
-    # hit_path_cap is the only truncation signal: paths can never exceed max_paths (the inner
-    # loop breaks first), and reaching max_paths only happens through that same append.
+    # hit_path_cap is the only truncation signal: paths never exceed max_paths.
     return {
         "from_function": source_resolution.entry,
         "to_function": target_resolution.entry,

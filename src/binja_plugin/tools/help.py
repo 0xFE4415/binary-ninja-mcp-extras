@@ -30,10 +30,7 @@ _CATEGORY_USE_WHEN: dict[str, str] = {
     "help": "Discover the toolbox.",
 }
 
-# Error codes the handlers define per parameter, beyond the schema checks the mcp layer
-# applies before a handler runs. The registry records only the JSON Schema, not these —
-# they live in the handler bodies — so the map is maintained by hand and pinned against
-# the handler sources by tests/test_tools/test_help.py.
+# Hand-maintained: the registry records only the JSON Schema; tests pin this map to the handlers.
 _PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
     ("rex_call_paths", "from_addr"): ("no_function", "analysis_pending"),
     ("rex_call_paths", "to_addr"): ("no_function", "analysis_pending"),

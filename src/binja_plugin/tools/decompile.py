@@ -37,40 +37,28 @@ if TYPE_CHECKING:
 _MAX_HLIL_GREP_LIMIT = 200
 _MAX_HLIL_GREP_FUNCTIONS = 5000
 
-# rex_hlil_grep per-match context: bounded so the three-matches-per-function cap keeps
-# the echoed lines per function a few dozen at most.
 _MAX_HLIL_GREP_CONTEXT = 8
-# rex_decompile_many caps: the batch size bounds one call's decompilation cost, the
-# line cap the echoed text per function.
 _MAX_DECOMPILE_BATCH = 1024
 _MAX_DECOMPILE_LINES = 512
 
-# rex_disasm_many caps: the batch size and per-window line cap bound one call's render
-# and echo, and the cross-window budget paginates so one call cannot return an
-# unbounded dump.
 _MAX_DISASM_BATCH = 64
 _MAX_DISASM_MANY_LINES = 512
 _MAX_DISASM_MANY_TOTAL_LINES = 1024
 
-# rex_quick_main's resolution chain: function symbols first, then the __libc_start_main
-# pointer argument of the entry stub, then an explicitly named entry-function fallback.
 _MAIN_SYMBOL_NAMES = ("main", "_main")
 _MAIN_LIBC_MARKER = "libc_start_main"
 _MAIN_FALLBACK_NOTE = (
     "no main symbol and no parsable __libc_start_main pointer in the entry function"
 )
 
-# A trap ends the basic block, so analysis stops there: bytes after it belong to no
-# function even though a handler can resume execution past the trap (the same
-# block-ending blind spot _containment_miss_hint names).
+# A trap ends the block, so bytes after it belong to no function even if a handler resumes there.
 _TRAP_MNEMONICS = frozenset({"int3", "breakpoint", "ud2"})
 _QUICK_MAIN_TRAP_HINT = (
     "function ends in {mnemonic}; if a SIGTRAP-style handler resumes past it, execution "
     "reaches code outside this function — inspect with rex_disasm_at and rex_function_define"
 )
 
-# Precompiled once: _argument_address runs per rendered call argument, so the compiled
-# pattern must not go through the re-module cache on every call.
+# Precompiled: _argument_address runs per call argument and should skip the re cache.
 _HEX_ADDRESS_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
 
 
@@ -396,9 +384,7 @@ def rex_hlil_grep(
     window_full = limit == 0
     for index, function in enumerate(_drop(bv.functions, offset), offset):
         if scanned >= max_functions:
-            # The render budget ran out with functions left unscanned. Whether matching
-            # functions remain is unknown either way, so `truncated` stays untouched:
-            # only a rendered past-page match may set it.
+            # Budget ran out with functions unscanned: only a past-page match sets `truncated`.
             scan_incomplete = True
             next_offset = index
             break
@@ -413,8 +399,7 @@ def rex_hlil_grep(
         matched = [line_index for line_index, line in enumerate(source_lines) if search(line)]
         if window_full:
             if matched:
-                # One matching function past the page proves more matches exist; stop
-                # the scan there instead of collecting the rest.
+                # One matching function past the page proves more exist; stop scanning there.
                 truncated = True
                 next_offset = index
                 break
@@ -444,8 +429,7 @@ def _trap_terminator(function: Function) -> str | None:
     if not lines:
         return None
     last_address = lines[-1][0]
-    # Lines at the last address include the instruction and its annotation
-    # continuations; only the instruction's mnemonic decides.
+    # Lines at the last address include annotation continuations; only the mnemonic decides.
     last_lines = takewhile(lambda line: line[0] == last_address, reversed(lines))
     for _, text in last_lines:
         tokens = text.split()

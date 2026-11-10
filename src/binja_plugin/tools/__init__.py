@@ -23,27 +23,17 @@ from binaryninja.function import Function
 
 _READ_CHUNK = 4 * 1024 * 1024
 _MAX_CHARS = 512
-# Hard caps for list sizes and echoed strings: user-supplied size parameters are
-# range-checked against these in the tool bodies — matching the schema-side
-# Minimum/Maximum annotations — so out-of-range values are rejected even when handlers
-# are invoked directly.
+# Range-checked in the tool bodies as well as the schema, so direct handler calls are bounded.
 _MAX_LIMIT = 500
 
-# Candidate variable names an error message may echo before it switches to a "+N more"
-# suffix: bounded so one misspelled name can never flood the MCP response.
+# Bounds the candidate names an error message echoes, so one misspelled name cannot flood it.
 _MAX_NAME_CANDIDATES = 40
 
-# rex_disasm_at window sizes: bounded so one call can never request an unbounded
-# instruction render, whatever the containing function's size.
 _MAX_DISASM_CONTEXT = 4096
 
-# Functions listed per alternative list of a resolved function entry: bounded so a
-# pathological overlap or name collision cannot flood the response.
 _MAX_RESOLUTION_ALTERNATIVES = 64
 
-# rex_export_* tools: sweeps write to one fixed directory and echo only a summary, so a
-# large export can never flood the MCP response. The byte cap bounds each file; the
-# window caps bound how much a single call selects before serialization.
+# Export sweeps write to one fixed directory and echo only a summary.
 _EXPORT_ROOT = Path.home() / ".binaryninja" / "exports"
 _MAX_EXPORT_COMPONENT_BYTES = 255
 _MAX_EXPORT_FILE_BYTES = 4 * 1024 * 1024
@@ -90,9 +80,7 @@ def _compile_user_regex(
     pattern: str,
     ignore_case: bool = False,
 ) -> re.Pattern[str]:
-    # Compilation and matching run on Python's re with no timeout, so a pattern with
-    # catastrophic backtracking can stall the scan; untrusted input belongs in
-    # substring mode.
+    # re has no timeout and can backtrack forever, so untrusted input belongs in substring mode.
     flags = re.IGNORECASE if ignore_case else 0
     try:
         return re.compile(pattern, flags)
@@ -117,8 +105,7 @@ def _resolve_section(bv: BinaryView, name: str) -> tuple[int, int]:
 
 def _skip(iterator: Iterator[object], offset: int) -> int:
     """Consume and discard up to ``offset`` items, returning how many actually existed."""
-    # zip over range, not islice: the offset is unbounded and islice rejects values
-    # above sys.maxsize.
+    # zip over range, not islice: islice rejects offsets above sys.maxsize.
     return sum(1 for _ in zip(range(offset), iterator))
 
 
@@ -139,17 +126,9 @@ def _paginate[Item](items: Iterable[Item], offset: int, limit: int) -> tuple[lis
 
 
 def _containment_miss_hint(bv: BinaryView, address: int) -> str:
-    """Explain a containment miss, or return "" when the view offers nothing specific.
-
-    The two cases worth naming are the ones a caller can act on: an address no segment
-    maps, and an address one byte past a function's end. The latter is what a block-ending
-    instruction (int3, ret, jmp) leaves behind: analysis stops at the terminator, so the
-    following bytes belong to no function even though execution may continue there.
-    """
     if not bv.is_valid_offset(address):
         return "the address is not mapped by any segment"
-    # Overlapping function ranges (mis-split code) can hide the owner of address - 1 behind
-    # a larger neighbor, so check every function that contains the preceding byte.
+    # Overlapping functions can hide the owner of address - 1, so check every one containing it.
     previous = next(
         (
             candidate
@@ -170,11 +149,7 @@ def _containment_miss_hint(bv: BinaryView, address: int) -> str:
 
 
 def _raise_containment_miss(bv: BinaryView, address: int, code: str, described: str) -> NoReturn:
-    """Reject a containment miss with the caller's error code and the best available reason.
-
-    A defined function the engine has not analyzed yet is invisible to containment lookups,
-    so that case gets its own diagnostic instead of a misleading "no function" answer.
-    """
+    # A defined but unanalyzed function is invisible to containment lookups.
     pending = bv.get_function_at(address)
     if pending is not None:
         raise mcp.ToolError(
@@ -240,11 +215,7 @@ def _resolve_containing(bv: BinaryView, containing: list[Function]) -> _Resoluti
 def _require_containing_function(
     bv: BinaryView, address: int, code: str, described: str
 ) -> _Resolution:
-    """Resolve ``address`` to one containing function, or reject with the caller's convention.
-
-    ``code`` is deliberate: scan-style tools answer ``no_function`` for a containment
-    miss, argument-validating tools treat the same miss as ``invalid_params``.
-    """
+    # Scan tools answer no_function for a miss, argument validators invalid_params.
     containing = bv.get_functions_containing(address)
     if not containing:
         _raise_containment_miss(bv, address, code, described)
@@ -327,11 +298,6 @@ def _parse_address_entry(call: mcp.ToolCall, index: int, entry: object, noun: st
 
 
 def _parse_address_batch(call: mcp.ToolCall, entries: object, maximum: int, noun: str) -> list[int]:
-    """Parse a tool's list of address expressions to integers.
-
-    Every entry is parsed before anything is handed back, so a bad entry anywhere in the
-    batch cannot leave a partial result behind.
-    """
     if not isinstance(entries, list):
         raise mcp.ToolError("invalid_params", f"{noun} must be a list of address expressions")
     if not 1 <= len(entries) <= maximum:
@@ -368,8 +334,7 @@ def _iter_pattern_matches(
 ) -> Iterator[int]:
     """Yield absolute match addresses, optionally clipped to a section range."""
     for segment in bv.segments:
-        # binaryview.Segment.readable is the view's readability for the segment's range
-        # (the SegmentFlag bit); skipping here saves the whole walk, not just the reads.
+        # Skipping an unreadable segment saves the whole walk, not just the reads.
         if not segment.readable:
             continue
         start, end = int(segment.start), segment.start + segment.length
@@ -410,9 +375,7 @@ def _disasm_window(
     lines: list[tuple[int, str]], address: int, before: int, after: int
 ) -> tuple[int, int]:
     """Return the [start, end) slice of ``lines`` for the before/after window at ``address``."""
-    # The anchor is the last line at or before the address: at a shared address that is
-    # the labeled instruction rather than the label, and past the last instruction it is
-    # the final rendered line.
+    # The anchor is the last line at or before the address: at a shared one, the instruction.
     anchor = max(bisect_right(lines, address, key=lambda entry: entry[0]) - 1, 0)
     start = max(0, anchor - before)
     end = min(len(lines), anchor + 1 + after)
@@ -451,11 +414,7 @@ def _validate_export_path(filename: str) -> None:
 
 
 def _resolve_export_path(filename: str) -> Path:
-    """Join an already-validated filename with the export root and resolve it.
-
-    The containment check must run after resolve(): a symlink planted inside the
-    export root would otherwise redirect the write outside it, past the lexical checks.
-    """
+    # Containment is checked after resolve(): a symlink inside the root must not redirect the write.
     try:
         _EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
         resolved_root = _EXPORT_ROOT.resolve()
@@ -495,11 +454,7 @@ def _fit_to_export_cap[ExportRow](
     return serialize(window), True
 
 
-# The category modules import the shared helpers defined above from this namespace, so
-# these imports must stay below those definitions. Importing them registers every tool
-# with the mcp layer; the re-exports keep ``binja_plugin.tools.<name>`` working exactly
-# as it did when the tools lived in one module — including the per-tool caps the
-# property tests read through this namespace.
+# These imports register every tool and must stay below the helpers they import from here.
 
 from .analysis import rex_analysis_wait, rex_binary_close
 from .annotations import rex_annotate_many

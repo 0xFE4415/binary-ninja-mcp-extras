@@ -40,8 +40,7 @@ from binja_plugin.tools import (
 if TYPE_CHECKING:
     from binaryninja.variable import PossibleValueSet
 
-# rex_uidf_set settles the reanalysis an informed value schedules before rendering HLIL,
-# polling like rex_analysis_wait; the deadline bounds one call's hold on the server thread.
+# rex_uidf_set polls for reanalysis before rendering HLIL; the deadline bounds the hold.
 _UIDF_ANALYSIS_SLICE_MS = 100
 _MAX_UIDF_ANALYSIS_WAIT_MS = 10000
 _MAX_UIDF_BATCH = 128
@@ -71,8 +70,7 @@ _UIDF_ITEMS_SCHEMA: dict[str, object] = {
     "required": ["variable", "value"],
 }
 
-# The states BinaryView.parse_possiblevalueset documents a string grammar for; the schema
-# advertises exactly these, so a state with no documented syntax is never offered.
+# States with a documented parse_possiblevalueset grammar; the schema offers only these.
 _VALUE_STATES: dict[str, RegisterValueType] = {
     "ConstantValue": RegisterValueType.ConstantValue,
     "ConstantPointerValue": RegisterValueType.ConstantPointerValue,

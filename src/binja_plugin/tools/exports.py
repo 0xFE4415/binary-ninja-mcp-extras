@@ -136,14 +136,12 @@ def rex_export_symbols(
     if start >= end:
         raise mcp.ToolError("invalid_params", "end must be greater than start")
     _validate_export_path(filename)
-    # The schema-side Literal and the body-side check below must agree; widening to str
-    # keeps the body check statically reachable for direct handler invocation.
+    # Widened to str so the body check stays reachable by direct calls; match the Literal.
     requested: str = format
     if requested not in ("csv", "json"):
         raise mcp.ToolError("invalid_params", f"format must be 'csv' or 'json', not '{requested}'")
     symbols = bv.get_symbols(start, end - start)
-    # Core symbol order is not guaranteed sorted; sort before slicing so the file holds
-    # a true window of the address-ordered listing, not an unsorted first-fit subset.
+    # Core symbol order is unsorted; sort before slicing so the file holds a true window.
     ordered = sorted(symbols, key=lambda symbol: symbol.address)
     total = len(ordered)
     window = [

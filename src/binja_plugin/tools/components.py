@@ -22,8 +22,7 @@ if TYPE_CHECKING:
     from binaryninja.binaryview import BinaryView
     from binaryninja.component import Component
 
-# rex_component_* lexical bounds: component names persist in the database and paths are
-# echoed back whole in every response, so both get length caps before reaching the core.
+# Names persist in the database and paths echo whole, so both get length caps.
 _MAX_COMPONENT_NAME_CHARS = 128
 _MAX_COMPONENT_PATH_CHARS = 512
 # rex_component_get child-component echo cap; functions are paginated instead.
@@ -94,8 +93,7 @@ def _resolve_component(view: BinaryView, path: str) -> Component:
 
 def _component_child_path(parent_path: str, display_name: str) -> str:
     """Join a child's display name onto its parent path; top-level children get "/name"."""
-    # Validation guarantees at most one trailing slash — exactly the root's — so
-    # removesuffix is an exact match, where a strip-set would act silently on any tail.
+    # At most one trailing slash (the root's), so removesuffix is exact where a strip-set is not.
     prefix = parent_path.removesuffix("/")
     return f"{prefix}/{display_name}"
 
@@ -125,8 +123,7 @@ def rex_component_add_functions(
     return {
         "path": path,
         "added_count": added_count,
-        # The uniform batch-summary keys (see rex_annotate_many); added_count is this
-        # tool's legacy name for applied, kept so existing callers do not break.
+        # added_count is the legacy name for applied, kept so existing callers do not break.
         "applied": added_count,
         "failed_count": len(results) - added_count,
         "total": len(results),
@@ -145,9 +142,7 @@ def rex_component_create(
     :param name: Name of the new component; must not be empty or contain '/'.
     :param parent_path: Absolute parent path; empty or '/' creates a top-level component.
     """
-    # Over-cap strings reject with the plugin's per-parameter *_too_large code family,
-    # not the integer-argument invalid_params convention, so the same mistake maps to
-    # the same code class in every tool.
+    # Over-cap strings use the *_too_large code family, not invalid_params, in every tool.
     _validate_text("name", name, _MAX_COMPONENT_NAME_CHARS, "name_too_large")
     if "/" in name:
         # "/" is the path delimiter, so a name containing one can never be addressed by path.

@@ -29,9 +29,7 @@ if TYPE_CHECKING:
 
 _MAX_STRING_READ_CHARS = 4096
 
-# rex_string_refs: the per-string code-ref echo cap. The core calls themselves are
-# bounded by max_items = cap + 1, so truncation is detected without enumerating past
-# what the response can echo.
+# Core calls use max_items = cap + 1, so truncation is detected without enumerating past the cap.
 _MAX_STRING_REFS = 64
 
 StringType = Literal["AsciiString", "Utf16String", "Utf32String", "Utf8String"]
@@ -117,8 +115,7 @@ def rex_string_refs(
     matches_text = _text_matcher(pattern, regex, ignore_case)
 
     def keep(string: StringReference | DerivedString) -> bool:
-        # str() on the wrapped value is total: the API layer falls back to charmap
-        # decoding when the bytes are not UTF-8.
+        # str() is total: the API layer falls back to charmap decoding for non-UTF-8 bytes.
         return matches_text(str(string.value))
 
     def entry_builders() -> Iterator[Callable[[], dict[str, object]]]:

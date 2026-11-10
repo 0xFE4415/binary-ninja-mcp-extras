@@ -24,11 +24,7 @@ _MAX_EVAL_RESULT_CHARS = 16384
 _MAX_EVAL_LOCATION_CHARS = 200
 _EVAL_FILENAME = "<rex_eval_python>"
 
-# Spilled oversized echoes: when rex_eval_python's stdout or result is clipped, the full
-# text is kept in process memory (never the view's database) so rex_eval_result can page
-# it back. The store keeps the most recent few spills and dies with the server process;
-# a spill larger than the per-spill cap is not kept at all, and the clipped echo is then
-# the only copy.
+# Clipped eval echoes spill to process memory (a few recent ones) for rex_eval_result.
 _MAX_EVAL_SPILLS = 8
 _MAX_EVAL_SPILL_CHARS = 4 * 1024 * 1024
 _MAX_EVAL_RESULT_PAGE_CHARS = 65536
@@ -76,18 +72,13 @@ class _MemoryWriteResult(TypedDict):
 
 
 def _spill_echo(text: str, cap: int, kind: str) -> _Echo:
-    """Echo ``text`` clipped to ``cap`` characters, spilling the full text when clipped.
-
-    The spill key is set only when the full text is retrievable through rex_eval_result.
-    """
     if len(text) <= cap:
         return _Echo(text, False, None, len(text))
     echo = text[:cap] + f"... [{len(text) - cap} chars truncated]"
     spill_complete = len(text) <= _MAX_EVAL_SPILL_CHARS
     key = f"{kind}-{next(_SPILL_SEQUENCE)}" if spill_complete else None
     if key is not None:
-        # Keys come from a process-wide counter, so every store is a fresh entry and
-        # dropping the first key evicts the oldest spill a caller can still page back.
+        # Keys come from a counter, so the first key is always the oldest spill.
         _EVAL_SPILLS[key] = text
         while len(_EVAL_SPILLS) > _MAX_EVAL_SPILLS:
             del _EVAL_SPILLS[next(iter(_EVAL_SPILLS))]
@@ -136,8 +127,7 @@ def rex_eval_python(call: mcp.ToolCall, code: str) -> _EvalPythonResult:
         with contextlib.redirect_stdout(buffer):
             exec(compile(code, _EVAL_FILENAME, "exec"), namespace)
         if "result" in namespace:
-            # repr() inside the try: a raising __repr__ must take the error path below, not
-            # escape the handler and drop the captured stdout.
+            # repr() inside the try: a raising __repr__ takes the error path and keeps the stdout.
             raw_result = repr(namespace["result"])
     except (Exception, SystemExit, KeyboardInterrupt) as error:
         # Keep failures out of the mcp layer's uncapped str(error) ToolError path.
