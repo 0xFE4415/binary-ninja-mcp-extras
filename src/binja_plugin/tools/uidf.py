@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Final, Literal, NotRequired, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -25,6 +25,8 @@ from binja_plugin.tools import (
     _MAX_LIMIT,
     _MAX_NAME_CANDIDATES,
     _function_entry,
+    _FunctionEntry,
+    _is_json_object,
     _paginate,
     _render_hlil_lines,
     _require_analyzed_function,
@@ -32,13 +34,16 @@ from binja_plugin.tools import (
     _validate_range,
 )
 
+if TYPE_CHECKING:
+    from binaryninja.variable import PossibleValueSet
+
 # rex_uidf_set settles the reanalysis an informed value schedules before rendering HLIL,
 # polling like rex_analysis_wait; the deadline bounds one call's hold on the server thread.
-_UIDF_ANALYSIS_SLICE_MS = 100
-_MAX_UIDF_ANALYSIS_WAIT_MS = 10000
-_MAX_UIDF_BATCH = 128
+_UIDF_ANALYSIS_SLICE_MS: Final = 100
+_MAX_UIDF_ANALYSIS_WAIT_MS: Final = 10000
+_MAX_UIDF_BATCH: Final = 128
 
-_UIDF_ITEMS_SCHEMA: dict[str, Any] = {
+_UIDF_ITEMS_SCHEMA: Final[dict[str, object]] = {
     "type": "object",
     "properties": {
         "variable": {"type": "string", "minLength": 1},
@@ -65,7 +70,7 @@ _UIDF_ITEMS_SCHEMA: dict[str, Any] = {
 
 # The states BinaryView.parse_possiblevalueset documents a string grammar for; the schema
 # advertises exactly these, so a state with no documented syntax is never offered.
-_VALUE_STATES: dict[str, RegisterValueType] = {
+_VALUE_STATES: Final[dict[str, RegisterValueType]] = {
     "ConstantValue": RegisterValueType.ConstantValue,
     "ConstantPointerValue": RegisterValueType.ConstantPointerValue,
     "StackFrameOffset": RegisterValueType.StackFrameOffset,
@@ -86,9 +91,81 @@ ValueState = Literal[
 ]
 
 
+class _ValueDescription(TypedDict):
+    state: str
+    rendered: str
+
+
+class _ItemError(TypedDict):
+    code: str
+    message: str
+
+
+class _UidfRow(TypedDict):
+    index: int
+    variable: str
+    definition_site: NotRequired[str]
+    value: NotRequired[_ValueDescription]
+    ok: bool
+    error: NotRequired[_ItemError]
+
+
+class _UidfEntry(TypedDict):
+    function: _FunctionEntry
+    variable: str
+    definition_site: str
+    architecture: str
+    state: str
+    value: str
+
+
+class _UidfSetResult(TypedDict):
+    function: _FunctionEntry
+    variable: str
+    definition_site: str
+    value: _ValueDescription
+    analysis_complete: bool
+    lines: list[str]
+    truncated: bool
+
+
+class _UidfSetManyResult(TypedDict):
+    function: _FunctionEntry
+    applied: int
+    failed: int
+    total: int
+    results: list[_UidfRow]
+    analysis_complete: bool
+    lines: list[str]
+    truncated: bool
+
+
+class _UidfClearAllResult(TypedDict):
+    function: _FunctionEntry
+    variable: None
+    cleared: int
+
+
+class _UidfClearVariableResult(TypedDict):
+    function: _FunctionEntry
+    variable: str
+    cleared: int
+    definition_sites: int
+
+
+class _UidfListResult(TypedDict):
+    total: int
+    truncated: bool
+    values: list[_UidfEntry]
+
+
+def _describe_value(value: PossibleValueSet) -> _ValueDescription:
+    return {"state": value.type.name, "rendered": _truncate(str(value))}
+
+
 def _parse_uidf_value(
     bv: BinaryView, value: str, state: str, site: MediumLevelILInstruction
-) -> Any:
+) -> PossibleValueSet:
     value_state = _require_value_state(state)
     try:
         return bv.parse_possiblevalueset(value, value_state, here=site.address)
@@ -96,13 +173,35 @@ def _parse_uidf_value(
         raise mcp.ToolError("invalid_params", f"Invalid value parameter 'value': {error}") from None
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class _UIDFSetPlan:
     index: int
     variable_name: str
     variable: Variable
     site: MediumLevelILInstruction
-    value: Any
+    value: PossibleValueSet
+
+    def applied_row(self) -> _UidfRow:
+        return {
+            "index": self.index,
+            "variable": _truncate(self.variable_name),
+            "definition_site": hex(self.site.address),
+            "value": _describe_value(self.value),
+            "ok": True,
+        }
+
+    def set_failed_row(self, error: Exception) -> _UidfRow:
+        return {
+            "index": self.index,
+            "variable": _truncate(self.variable_name),
+            "definition_site": hex(self.site.address),
+            "value": _describe_value(self.value),
+            "ok": False,
+            "error": {
+                "code": "set_failed",
+                "message": f"could not inform '{_truncate(self.variable_name)}': {error}",
+            },
+        }
 
 
 def _uidf_item_def_address(call: mcp.ToolCall, raw_site: object) -> int | None:
@@ -125,19 +224,16 @@ def _stage_uidf_item(
     bv: BinaryView,
     target: Function,
     index: int,
-    item: Any,
-) -> tuple[dict[str, object], _UIDFSetPlan | None]:
+    item: object,
+) -> _UIDFSetPlan | _UidfRow:
     """Validate and parse one batch item without mutating the function."""
-    if not isinstance(item, dict):
-        return (
-            {
-                "index": index,
-                "variable": _truncate(repr(item)),
-                "ok": False,
-                "error": {"code": "invalid_params", "message": "each item must be a JSON object"},
-            },
-            None,
-        )
+    if not _is_json_object(item):
+        return {
+            "index": index,
+            "variable": _truncate(repr(item)),
+            "ok": False,
+            "error": {"code": "invalid_params", "message": "each item must be a JSON object"},
+        }
     label = str(item.get("variable", "<invalid item>"))
     try:
         allowed = {"variable", "value", "def_address", "state"}
@@ -156,26 +252,22 @@ def _stage_uidf_item(
             raise mcp.ToolError("invalid_params", "state must be a string")
         site_variable, site = _select_definition_site(target, variable_name, def_address)
         parsed = _parse_uidf_value(bv, value, state, site)
-        return (
-            {
-                "index": index,
-                "variable": _truncate(variable_name),
-                "definition_site": hex(site.address),
-                "value": {"state": parsed.type.name, "rendered": _truncate(str(parsed))},
-                "ok": True,
-            },
-            _UIDFSetPlan(index, variable_name, site_variable, site, parsed),
-        )
+        return _UIDFSetPlan(index, variable_name, site_variable, site, parsed)
     except mcp.ToolError as error:
-        return (
-            {
-                "index": index,
-                "variable": _truncate(label),
-                "ok": False,
-                "error": {"code": error.code, "message": error.message},
-            },
-            None,
-        )
+        return {
+            "index": index,
+            "variable": _truncate(label),
+            "ok": False,
+            "error": {"code": error.code, "message": error.message},
+        }
+
+
+def _apply_plan(target: Function, plan: _UIDFSetPlan) -> _UidfRow:
+    try:
+        target.set_user_var_value(plan.variable, plan.site.address, plan.value, after=True)
+    except Exception as error:
+        return plan.set_failed_row(error)
+    return plan.applied_row()
 
 
 def _wait_analysis_settled(bv: BinaryView) -> bool:
@@ -240,7 +332,7 @@ def _collect_mlil_definitions(
     return matches
 
 
-def _iter_uidf_entries(targets: list[Function]) -> Iterator[dict[str, object]]:
+def _iter_uidf_entries(targets: list[Function]) -> Iterator[_UidfEntry]:
     return (
         {
             "function": _function_entry(target),
@@ -292,7 +384,7 @@ def rex_uidf_set(
     def_address: mcp.Address | None = None,
     state: ValueState = "ConstantValue",
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
-) -> dict[str, object]:
+) -> _UidfSetResult:
     """Inform an MLIL value; a key-table base pointer as ConstantPointerValue folds its byte checks.
 
     :param function: Address expression inside the target function.
@@ -320,7 +412,7 @@ def rex_uidf_set(
         "function": _function_entry(target),
         "variable": _truncate(variable),
         "definition_site": hex(site.address),
-        "value": {"state": parsed.type.name, "rendered": _truncate(str(parsed))},
+        "value": _describe_value(parsed),
         "analysis_complete": analysis_complete,
         "lines": lines,
         "truncated": truncated,
@@ -331,9 +423,9 @@ def rex_uidf_set(
 def rex_uidf_set_many(
     call: mcp.ToolCall,
     function: mcp.Address,
-    items: list[Annotated[Any, mcp.Schema(_UIDF_ITEMS_SCHEMA)]],
+    items: list[Annotated[object, mcp.Schema(_UIDF_ITEMS_SCHEMA)]],
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
-) -> dict[str, object]:
+) -> _UidfSetManyResult:
     """Inform several MLIL values in one reanalysis: a byte-check family's operands all at once.
 
     :param function: Address expression inside the target function.
@@ -349,26 +441,12 @@ def rex_uidf_set_many(
         raise mcp.ToolError(
             "invalid_params", f"items must contain between 1 and {_MAX_UIDF_BATCH} entries"
         )
-    results: list[dict[str, object]] = []
-    staged: list[_UIDFSetPlan] = []
-    for index, item in enumerate(items):
-        row, plan = _stage_uidf_item(call, bv, target, index, item)
-        results.append(row)
-        if plan is not None:
-            staged.append(plan)
-
-    applied = 0
-    for plan in staged:
-        try:
-            target.set_user_var_value(plan.variable, plan.site.address, plan.value, after=True)
-            applied += 1
-        except Exception as error:
-            results[plan.index]["ok"] = False
-            results[plan.index]["error"] = {
-                "code": "set_failed",
-                "message": f"could not inform '{_truncate(plan.variable_name)}': {error}",
-            }
-
+    staged = [_stage_uidf_item(call, bv, target, index, item) for index, item in enumerate(items)]
+    results = [
+        _apply_plan(target, outcome) if isinstance(outcome, _UIDFSetPlan) else outcome
+        for outcome in staged
+    ]
+    applied = sum(1 for row in results if row["ok"])
     analysis_complete = True
     if applied:
         bv.update_analysis()
@@ -392,7 +470,7 @@ def rex_uidf_clear(
     call: mcp.ToolCall,
     function: mcp.Address,
     variable: Annotated[str, mcp.NonEmpty()] | None = None,
-) -> dict[str, object]:
+) -> _UidfClearAllResult | _UidfClearVariableResult:
     """Clear user variable values: one MLIL variable's sites, or all of a function's.
 
     :param function: Address expression inside the target function.
@@ -443,7 +521,7 @@ def rex_uidf_list(
     function: mcp.Address | None = None,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
-) -> dict[str, object]:
+) -> _UidfListResult:
     """List informed user variable values for one function or the whole view.
 
     :param function: Address expression inside the function to list; omit for every function.
