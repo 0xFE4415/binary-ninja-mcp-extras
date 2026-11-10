@@ -67,7 +67,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_hlil_grep` | Regex search over rendered HLIL text, paged with a `next_offset` cursor. |
 | `rex_hlil_statements` | HLIL statements in block order, each tagged with its source address. |
 | `rex_function_constraints` | Branch comparisons against a constant, with the tested subject. |
-| `rex_mlil_uses` | Every read of each MLIL variable the core defines at an address, with its storage (register, stack offset, flag), type and definitions. |
+| `rex_mlil_uses` | Every read of each MLIL variable the core defines at an address; reports the `function`, the `definition_site`, and per variable its `storage` (register, stack offset, flag), `type`, `definitions` (a flat list of addresses) and paged `uses`. |
 | `rex_parameter_variables` | Map a parameter to its storage, MLIL variables, and carrying copies. |
 | `rex_constant_find` | Find functions whose disassembly lines hold a constant value, not raw bytes or IL. |
 | `rex_find_functions_by_pattern` | Map a byte pattern to the functions containing its matches. |
@@ -104,7 +104,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_uidf_clear` | Clear one MLIL variable's informed values, or all of a function's. |
 | `rex_struct_from_access` | Infer a struct from recorded offset accesses and define it. |
 | `rex_type_library_import` | Attach a `.bntl` and import a bounded list of its type names. |
-| `rex_type_library_export` | Export view types or objects into a new `.bntl` in the export root; each exported entry reports its type; objects also report the chosen `address` and the other same-name `alternatives`. |
+| `rex_type_library_export` | Export view types or objects into a new `.bntl` in the export root; each exported entry reports its type; objects also report the chosen `address` and the other same-name `alternatives`. Reports the written file's `path` and `bytes_written`, and the `library` name. |
 | `rex_component_create` | Create a component, optionally nested under a parent path. |
 | `rex_component_add_functions` | Put resolved functions into a component. |
 | `rex_tag_set` | Attach a GUI-visible tag at an address, creating the tag type on demand. |
@@ -113,7 +113,7 @@ scanners. Read the destructive table before you let an agent run those tools.
 | `rex_export_disasm` | Write one function's disassembly window to a file. |
 | `rex_export_symbols` | Write an address range's symbols to a CSV or JSON file. |
 | `rex_eval_python` | Run arbitrary Binary Ninja Python; binds `bv`, `call`, `binaryninja`/`bn`. Errors read `Type: message` (module-qualified outside builtins) with the failing line in `error_location`. |
-| `rex_binary_close` | Discard unsaved changes and close the view. |
+| `rex_binary_close` | Discard unsaved changes and close the view; reports `closed` and the file's `path`. |
 | `rex_undo` | Undo the view's last transaction; reports post-op stack depths. |
 | `rex_redo` | Redo the last undone transaction; reports post-op stack depths. |
 
