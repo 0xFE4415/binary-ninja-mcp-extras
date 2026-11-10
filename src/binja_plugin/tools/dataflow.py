@@ -349,6 +349,12 @@ def rex_mlil_uses(
         variables = _defined_variables(instruction, definitions)
         if variables:
             defined_at.setdefault(instruction.address, []).extend(variables)
+    if not defined_at:
+        raise mcp.ToolError(
+            "no_definition",
+            f"no MLIL variable definition at {address:#x} in {_truncate(target.name)}; "
+            "the function defines no MLIL variables",
+        )
     if address not in defined_at:
         shown = ", ".join(hex(site) for site in sorted(defined_at)[:_MAX_DEFINITION_SITES])
         more = (

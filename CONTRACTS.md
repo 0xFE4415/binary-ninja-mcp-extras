@@ -24,7 +24,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   core, not an operation list: a variable is defined at an instruction when
   `get_var_definitions` lists it there. That covers assignments, split writes, field writes,
   call, syscall, tailcall, and intrinsic outputs, and forced versions; an instruction the
-  core defines nothing at (a call without outputs, a store) is `no_definition`. It returns
+  core defines nothing at (a call without outputs, a store) is `no_definition`; its
+  message lists up to 10 addresses that do define variables (`(+N more)` past that), or
+  says the function defines no MLIL variables when there are none. It returns
   `variables`, one entry per defined variable (in `vars_written` order, then any further
   variable the core records, such as a field write's destination), each with its own
   `storage`, `type`, `definitions`, `total`, `truncated`, and `uses`. Two distinct

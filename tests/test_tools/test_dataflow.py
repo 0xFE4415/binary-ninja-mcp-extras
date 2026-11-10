@@ -304,6 +304,44 @@ def test_uses_reject_an_address_that_defines_nothing() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "instructions",
+    [[], [branch(0x1020, compare("MLIL_CMP_NE", const(1), const(2)))]],
+    ids=["no_instructions", "instructions_without_definitions"],
+)
+def test_uses_say_plainly_when_the_function_defines_no_variables(
+    instructions: list[FakeInstruction],
+) -> None:
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(_uses_view(instructions, {}), address=0x1020)
+    assert error.value.code == "no_definition"
+    assert error.value.message == (
+        "no MLIL variable definition at 0x1020 in check; the function defines no MLIL variables"
+    )
+
+
+@pytest.mark.parametrize(
+    ("site_count", "more"),
+    [(1, ""), (10, ""), (11, " (+1 more)")],
+)
+def test_uses_missing_definition_lists_the_sites_up_to_the_cap(site_count: int, more: str) -> None:
+    definitions = [
+        set_var(0x1100 + index * 0x10, FakeVariable(f"v{index}"), const(index))
+        for index in range(site_count)
+    ]
+    recorded = {definition.dest: [definition] for definition in definitions}
+    mlil = FakeMLILInstructions(definitions, definitions=recorded)
+    view = FakeBinaryView(functions=[FakeFunction("check", 0x1000, 0x1200, mlil=mlil)])
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(view, address=0x1008)
+    listed = ", ".join(hex(0x1100 + index * 0x10) for index in range(min(site_count, 10)))
+    assert error.value.message == (
+        "no MLIL variable definition at 0x1008 in check; "
+        f"variables are defined at: {listed}{more}; "
+        "use rex_hlil_statements or bn_function_il to match an address to its variable"
+    )
+
+
 def test_uses_report_a_field_write_the_core_records_though_vars_written_is_empty() -> None:
     holder = FakeVariable("holder")
     definition = FakeInstruction(
