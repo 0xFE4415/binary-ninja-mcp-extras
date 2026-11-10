@@ -6,6 +6,12 @@ class Type:
     def generate_auto_type_id(source: str, name: Any) -> str: ...
 
 
+class TypeBuilder: ...
+
+
+class QualifiedName: ...
+
+
 class NamedTypeReferenceType(Type):
     # import_library_type returns one of these per its docstring; the name is the
     # deconflicted name the core actually inserted.

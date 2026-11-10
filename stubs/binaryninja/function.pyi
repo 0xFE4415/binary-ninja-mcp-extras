@@ -1,7 +1,7 @@
 from typing import Any
 
 from binaryninja.mediumlevelil import MediumLevelILFunction
-from binaryninja.types import Type
+from binaryninja.types import Type, TypeBuilder
 from binaryninja.variable import ArchAndAddr, PossibleValueSet, Variable
 
 
@@ -19,7 +19,8 @@ class Function:
     basic_blocks: Any
     vars: list[Variable]
 
-    def set_user_type(self, value: Any) -> None: ...
+    def set_comment_at(self, addr: int, comment: str) -> None: ...
+    def set_user_type(self, value: str | Type | TypeBuilder) -> None: ...
     def set_user_var_value(
         self, var: Variable, def_addr: int, value: PossibleValueSet, after: bool = True
     ) -> None: ...

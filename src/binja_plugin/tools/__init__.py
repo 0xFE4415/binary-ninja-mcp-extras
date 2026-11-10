@@ -14,7 +14,7 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterable, Iterator
 from itertools import islice
 from pathlib import Path
-from typing import Any, NoReturn, TypedDict
+from typing import Any, NoReturn, TypedDict, TypeIs
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
@@ -42,6 +42,10 @@ _MAX_DISASM_CONTEXT = 4096
 _EXPORT_ROOT = Path.home() / ".binaryninja" / "exports"
 _MAX_EXPORT_COMPONENT_BYTES = 255
 _MAX_EXPORT_FILE_BYTES = 4 * 1024 * 1024
+
+
+def _is_json_object(value: object) -> TypeIs[dict[str, object]]:
+    return isinstance(value, dict)
 
 
 def _validate_range(name: str, value: int, minimum: int, maximum: int | None = None) -> int:

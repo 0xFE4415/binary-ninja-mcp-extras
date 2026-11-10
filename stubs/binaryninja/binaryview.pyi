@@ -10,7 +10,7 @@ from binaryninja.enums import (
 )
 from binaryninja.filemetadata import FileMetadata
 from binaryninja.function import Function
-from binaryninja.types import NamedTypeReferenceType, StructureType, Type
+from binaryninja.types import NamedTypeReferenceType, QualifiedName, StructureType, Type
 from binaryninja.variable import PossibleValueSet
 
 
@@ -157,7 +157,7 @@ class BinaryView:
     def remove_metadata(self, key: str) -> None: ...
     def parse_type_string(
         self, text: str, import_dependencies: bool = True
-    ) -> tuple[Any, Any]: ...
+    ) -> tuple[Type, QualifiedName]: ...
     def parse_possiblevalueset(
         self, value: str, state: RegisterValueType, here: int = 0
     ) -> PossibleValueSet: ...
