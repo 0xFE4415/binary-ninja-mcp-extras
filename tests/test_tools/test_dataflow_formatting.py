@@ -124,37 +124,102 @@ _STACK_ADVICE = (
 )
 
 
-def _argument(source_type: FakeVariableSourceType) -> FakeVariable:
-    return FakeVariable("arg", source_type=source_type)
+_REGISTER = FakeVariableSourceType.RegisterVariableSourceType
+_STACK = FakeVariableSourceType.StackVariableSourceType
+_FLAG = FakeVariableSourceType.FlagVariableSourceType
+
+
+def _variable_named(name: str, source_type: FakeVariableSourceType) -> FakeVariable:
+    return FakeVariable(name, source_type=source_type)
+
+
+def _no_definition_message(name: str) -> str:
+    return f"MLIL variable '{name}' in check has no MediumLevelIL definition sites"
+
+
+def _assert_advice(
+    variables: list[FakeVariable], parameters: list[FakeVariable], name: str, advice: str
+) -> None:
+    function = FakeFunction(
+        "check",
+        0x1000,
+        0x1100,
+        vars=variables,
+        parameter_vars=parameters,
+        mlil=FakeMediumLevelIL({}),
+    )
+    for tool_name, arguments in (
+        ("rex_uidf_set", (0x1004, name, "1")),
+        ("rex_uidf_clear", (0x1004, name)),
+    ):
+        assert _error_message(tool_name, function, *arguments) == (
+            "no_variable",
+            _no_definition_message(name) + advice,
+        )
+
+
+def test_register_parameter_without_definitions_gets_the_register_advice() -> None:
+    argc = _variable_named("argc", _REGISTER)
+    _assert_advice([argc], [argc], "argc", _REGISTER_ADVICE)
+
+
+def test_stack_parameter_without_definitions_gets_the_stack_advice() -> None:
+    argument = _variable_named("arg8", _STACK)
+    _assert_advice([argument], [argument], "arg8", _STACK_ADVICE)
 
 
 @pytest.mark.parametrize(
-    ("variables", "advice"),
-    [
-        ([_argument(FakeVariableSourceType.RegisterVariableSourceType)], _REGISTER_ADVICE),
-        ([_argument(FakeVariableSourceType.StackVariableSourceType)], _STACK_ADVICE),
-        ([_argument(FakeVariableSourceType.FlagVariableSourceType)], ""),
-        (
-            [
-                _argument(FakeVariableSourceType.StackVariableSourceType),
-                _argument(FakeVariableSourceType.RegisterVariableSourceType),
-            ],
-            "",
-        ),
-    ],
+    ("name", "source_type"),
+    [("rbx", _REGISTER), ("fsbase", _REGISTER), ("category", _STACK), ("cond0", _FLAG)],
 )
-def test_variable_without_definitions_gets_advice_matching_its_source_type(
-    variables: list[FakeVariable], advice: str
+def test_non_parameter_without_definitions_gets_no_advice(
+    name: str, source_type: FakeVariableSourceType
 ) -> None:
-    function = FakeFunction("check", 0x1000, 0x1100, vars=variables, mlil=FakeMediumLevelIL({}))
+    local = _variable_named(name, source_type)
+    other_parameter = _variable_named("argc", _REGISTER)
+    _assert_advice([local, other_parameter], [other_parameter], name, "")
+
+
+def test_parameter_of_another_source_type_gets_no_advice() -> None:
+    flag = _variable_named("flag", _FLAG)
+    _assert_advice([flag], [flag], "flag", "")
+
+
+def test_same_named_parameter_and_local_get_no_advice() -> None:
+    parameter, local = _variable_named("v", _REGISTER), _variable_named("v", _REGISTER)
+    _assert_advice([parameter, local], [parameter], "v", "")
+
+
+def test_same_named_parameters_of_different_source_types_get_no_advice() -> None:
+    register, stack = _variable_named("v", _REGISTER), _variable_named("v", _STACK)
+    _assert_advice([register, stack], [register, stack], "v", "")
+
+
+def test_variable_names_match_exactly_not_by_prefix_or_substring() -> None:
+    prefixed = _variable_named("arg1", _STACK)
+    suffixed = _variable_named("xarg", _STACK)
+    wrapped = _variable_named("xargx", _STACK)
+    function = FakeFunction(
+        "check",
+        0x1000,
+        0x1100,
+        vars=[prefixed, suffixed, wrapped],
+        parameter_vars=[prefixed, suffixed, wrapped],
+        mlil=FakeMediumLevelIL({}),
+    )
     for tool_name, arguments in (
         ("rex_uidf_set", (0x1004, "arg", "1")),
         ("rex_uidf_clear", (0x1004, "arg")),
     ):
-        assert _error_message(tool_name, function, *arguments) == (
-            "no_variable",
-            "MLIL variable 'arg' in check has no MediumLevelIL definition sites" + advice,
-        )
+        code, message = _error_message(tool_name, function, *arguments)
+        assert code == "no_variable"
+        assert message.startswith("no MLIL variable named 'arg' in check; variables: ")
+
+
+def test_exact_name_advice_ignores_longer_same_prefix_variables() -> None:
+    exact = _variable_named("arg", _REGISTER)
+    longer = _variable_named("arg1", _STACK)
+    _assert_advice([exact, longer], [exact, longer], "arg", _REGISTER_ADVICE)
 
 
 def _constraint_row(condition: Any) -> dict[str, Any]:
@@ -170,6 +235,9 @@ def _constraint_row(condition: Any) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("wrapped", "expected"),
     [
+        (const(1, size=0), "0x1"),
+        (const(0, size=0), "0x0"),
+        (zero_extend(const(1, size=0)), "0x1"),
         (zero_extend(const(0xFFFFFFFF, size=4)), "0xffffffff"),
         (zero_extend(const(-1, size=4)), "0xffffffff"),
         (sign_extend(const(-1, size=4)), "0xffffffff"),
@@ -191,9 +259,21 @@ def test_constraint_constant_width_is_the_constant_operands_inside_extensions(
         (const(-0x1000, size=8), "0xfffffffffffff000"),
         (const(0x403198, size=8), "0x403198"),
         (zero_extend(const(-0x1000, size=4)), "0xfffff000"),
+        (sign_extend(const(-0x1000, size=4)), "0xfffffffffffff000"),
+        (sign_extend(const(0xFFFFF000, size=4)), "0xfffffffffffff000"),
+        (sign_extend(const(0x1000, size=4)), "0x1000"),
+        (sign_extend(const(0x7FFFFFFF, size=4)), "0x7fffffff"),
+        (sign_extend(const(0x80000000, size=4)), "0xffffffff80000000"),
+        (zero_extend(sign_extend(const(-1, size=1), size=2), size=8), "0xffff"),
+        (sign_extend(sign_extend(const(-1, size=1), size=2), size=8), "0xffffffffffffffff"),
+        (const(0x10, size=0), "0x10"),
+        (sign_extend(const(1, size=0)), "0x1"),
+        (zero_extend(const(1, size=4), size=0), "0x1"),
     ],
 )
-def test_absolute_load_address_is_unsigned_at_its_width(address: Any, expected: str) -> None:
+def test_absolute_load_address_is_the_unsigned_value_the_expression_computes(
+    address: Any, expected: str
+) -> None:
     row = _constraint_row(compare("MLIL_CMP_E", load(address), const(1)))
     assert row["subject"] == {"kind": "load", "base": None, "offset": expected}
 
@@ -210,7 +290,18 @@ def test_absolute_load_address_is_unsigned_at_its_width(address: Any, expected: 
         (const(0x80000000, size=4), "-0x80000000"),
         (const(0x7F, size=1), "0x7f"),
         (const(0, size=4), "0x0"),
-        (zero_extend(const(0xFFFFFFF8, size=4)), "-0x8"),
+        (zero_extend(const(0xFFFFFFF8, size=4)), "0xfffffff8"),
+        (zero_extend(const(-8, size=4)), "0xfffffff8"),
+        (sign_extend(const(0xFFFFFFF8, size=4)), "-0x8"),
+        (sign_extend(const(-8, size=4)), "-0x8"),
+        (sign_extend(const(8, size=4)), "0x8"),
+        (zero_extend(sign_extend(const(-8, size=4), size=8), size=8), "-0x8"),
+        (zero_extend(sign_extend(const(-8, size=1), size=4), size=8), "0xfffffff8"),
+        (const(5, size=0), "0x5"),
+        (const(-5, size=0), "-0x5"),
+        (zero_extend(const(5, size=0)), "0x5"),
+        (zero_extend(const(5, size=4), size=0), "0x5"),
+        (sign_extend(const(-5, size=4), size=0), "-0x5"),
     ],
 )
 def test_load_displacement_is_signed_two_complement_at_its_width(
@@ -287,3 +378,9 @@ def test_load_with_a_variable_displacement_states_no_offset() -> None:
         "offset": None,
         "text": "base + index",
     }
+
+
+def test_extended_variable_address_is_a_base_with_a_zero_offset() -> None:
+    address = zero_extend(var(FakeVariable("pointer")))
+    row = _constraint_row(compare("MLIL_CMP_E", load(address), const(1)))
+    assert row["subject"] == {"kind": "load", "base": "pointer", "offset": "0x0"}

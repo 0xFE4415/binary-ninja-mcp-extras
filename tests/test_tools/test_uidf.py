@@ -552,6 +552,7 @@ def test_uidf_set_rejects_unknown_variables() -> None:
     )
     # A variable the function knows but never defines in the MLIL is equally unusable, and
     # the message must not claim the name is unknown while listing it among candidates.
+    main.parameter_vars = [_variable(main, "argc")]
     with pytest.raises(FakeToolError) as exc:
         uidf_set(_call(view), 0x1100, "argc", "1")
     assert exc.value.code == "no_variable"

@@ -332,6 +332,7 @@ class FakeFunction:
         callers: list[FakeFunction] | None = None,
         callees: list[FakeFunction] | None = None,
         vars: list[FakeVariable] | None = None,
+        parameter_vars: list[FakeVariable] | None = None,
         mlil: FakeMediumLevelIL | FakeMLILInstructions | None = None,
         arch: FakeArchitecture | None = None,
         extra_ranges: tuple[tuple[int, int], ...] = (),
@@ -357,6 +358,7 @@ class FakeFunction:
         self.type: FakeType | None = None
         self.user_type_error: Exception | None = None
         self.vars = vars if vars is not None else []
+        self.parameter_vars = parameter_vars if parameter_vars is not None else []
         self.mlil = mlil
         # UIDF state: informed values keyed (variable, def-site address), the calls the
         # tools made, and per-operation error injection.

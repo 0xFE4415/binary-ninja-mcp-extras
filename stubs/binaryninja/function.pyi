@@ -40,6 +40,7 @@ class Function:
     type: Type
     basic_blocks: Iterable[BasicBlock]
     vars: list[Variable]
+    parameter_vars: Iterable[Variable]
 
     def set_comment_at(self, addr: int, comment: str) -> None: ...
     def set_user_type(self, value: str | Type | TypeBuilder) -> None: ...

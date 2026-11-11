@@ -309,17 +309,20 @@ def _collect_mlil_definitions(
     named = [variable for variable in target.vars if variable.name == name]
     if not named:
         raise _unknown_variable_error(target, name)
-    source_types = {variable.source_type for variable in named}
+    parameters = list(target.parameter_vars)
     advice = ""
-    if source_types == {VariableSourceType.StackVariableSourceType}:
-        advice = (
-            "; stack-passed arguments cannot be informed, inform the register that loads the value"
-        )
-    if source_types == {VariableSourceType.RegisterVariableSourceType}:
-        advice = (
-            "; a register parameter is live from function entry, inform a variable that "
-            "copies it (rex_parameter_variables lists the copies)"
-        )
+    if all(variable in parameters for variable in named):
+        source_types = {variable.source_type for variable in named}
+        if source_types == {VariableSourceType.StackVariableSourceType}:
+            advice = (
+                "; stack-passed arguments cannot be informed, "
+                "inform the register that loads the value"
+            )
+        if source_types == {VariableSourceType.RegisterVariableSourceType}:
+            advice = (
+                "; a register parameter is live from function entry, inform a variable that "
+                "copies it (rex_parameter_variables lists the copies)"
+            )
     raise mcp.ToolError(
         "no_variable",
         f"MLIL variable '{_truncate(name)}' in {_truncate(target.name)} has no "

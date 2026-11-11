@@ -116,12 +116,17 @@ def _strip_extension(expression: Any) -> Any:
 
 
 def _constant_bits(expression: Any) -> tuple[int, int] | None:
-    """The constant inside any extensions as (value masked to its own width, width in bits)."""
+    """The constant inside any extensions as (value masked to its own width, width in bits).
+
+    A width of 0 means the core gave the constant no size, so its value is kept as stated.
+    """
     expression = _strip_extension(expression)
     if _operation(expression) not in _CONSTANTS:
         return None
-    width = 8 * int(expression.size)
-    return int(expression.constant) & ((1 << width) - 1), width
+    value, width = int(expression.constant), 8 * int(expression.size)
+    if width == 0:
+        return value, 0
+    return value & ((1 << width) - 1), width
 
 
 def _unsigned_constant(expression: Any) -> int | None:
@@ -131,14 +136,27 @@ def _unsigned_constant(expression: Any) -> int | None:
     return bits[0]
 
 
-def _signed_constant(expression: Any) -> int | None:
-    bits = _constant_bits(expression)
-    if bits is None:
+def _as_signed(value: int, width: int) -> int:
+    if width == 0 or not value >> (width - 1):
+        return value
+    return value - (1 << width)
+
+
+def _extended_constant(expression: Any) -> tuple[int, int] | None:
+    """The value an expression computes from a constant through zx/sx, as (value, width)."""
+    operation = _operation(expression)
+    if operation not in _EXTENSIONS:
+        return _constant_bits(expression)
+    inner = _extended_constant(expression.src)
+    if inner is None:
         return None
-    value, width = bits
-    if value >> (width - 1):
-        return value - (1 << width)
-    return value
+    value, inner_width = inner
+    if operation == "MLIL_SX":
+        value = _as_signed(value, inner_width)
+    width = 8 * int(expression.size)
+    if width == 0:
+        return value, 0
+    return value & ((1 << width) - 1), width
 
 
 def _describe_load(expression: Any) -> dict[str, object] | None:
@@ -146,13 +164,15 @@ def _describe_load(expression: Any) -> dict[str, object] | None:
     expression = _strip_extension(expression)
     if _operation(expression) != "MLIL_LOAD":
         return None
+    absolute = _extended_constant(expression.src)
+    if absolute is not None:
+        return {"kind": "load", "base": None, "offset": hex(absolute[0])}
     address = _strip_extension(expression.src)
-    constant = _unsigned_constant(address)
-    if constant is not None:
-        return {"kind": "load", "base": None, "offset": hex(constant)}
     base, offset = address, 0
     if _operation(address) == "MLIL_ADD":
-        base, offset = _strip_extension(address.left), _signed_constant(address.right)
+        base = _strip_extension(address.left)
+        displacement = _extended_constant(address.right)
+        offset = None if displacement is None else _as_signed(*displacement)
     if _operation(base) == "MLIL_VAR" and offset is not None:
         return {"kind": "load", "base": _truncate(base.src.name), "offset": hex(offset)}
     return {"kind": "load", "base": None, "offset": None, "text": _truncate(str(address))}
