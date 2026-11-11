@@ -77,7 +77,7 @@ _PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
     ("rex_tag_set", "tag_type"): ("tag_type_not_found", "tag_type_too_large"),
     ("rex_type_library_export", "filename"): ("invalid_params", "path_escape", "export_failed"),
     ("rex_type_library_export", "kind"): ("invalid_params",),
-    ("rex_type_library_export", "library_name"): ("library_name_too_large",),
+    ("rex_type_library_export", "library_name"): ("invalid_params", "library_name_too_large"),
     ("rex_type_library_export", "names"): ("invalid_params",),
     ("rex_type_library_import", "path"): ("library_not_found",),
     ("rex_uidf_clear", "function"): ("analysis_pending",),
@@ -86,7 +86,7 @@ _PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
     ("rex_uidf_set", "def_address"): ("definition_not_found",),
     ("rex_uidf_set", "function"): ("analysis_pending",),
     ("rex_uidf_set", "variable"): ("no_mlil", "no_variable", "ambiguous_definition"),
-    ("rex_uidf_set_many", "function"): ("analysis_pending",),
+    ("rex_uidf_set_many", "function"): ("analysis_pending", "invalid_params"),
     ("rex_uidf_set_many", "items"): (
         "invalid_params",
         "no_mlil",

@@ -410,8 +410,7 @@ _RAISING_HELPER_CODE_POSITIONS = {
     "_missing_il_error": 2,
 }
 
-# Codes a handler reaches but reports in-band or without a parameter to own them, so the
-# per-parameter table does not list them.
+# Reached codes no parameter owns (per-window errors, the entry point), so help leaves them out.
 _UNLISTED_REACHABLE_CODES = {
     "rex_disasm_many": {"analysis_pending"},
     "rex_quick_main": {"no_function"},
@@ -508,6 +507,35 @@ _INVALID_PARAMS_UNLISTED_TOOLS = frozenset(
     }
 )
 
+_INVALID_PARAMS_GAPS_AT_INTRODUCTION = frozenset(
+    {
+        "rex_annotate_many",
+        "rex_component_add_functions",
+        "rex_component_create",
+        "rex_component_get",
+        "rex_decompile_many",
+        "rex_disasm_at",
+        "rex_disasm_many",
+        "rex_function_constraints",
+        "rex_function_define_many",
+        "rex_help",
+        "rex_hlil_statements",
+        "rex_mlil_uses",
+        "rex_parameter_variables",
+        "rex_report_show",
+        "rex_struct_from_access",
+        "rex_type_library_import",
+        "rex_uidf_clear",
+        "rex_uidf_list",
+        "rex_uidf_set",
+    }
+)
+
+
+def test_the_invalid_params_gap_list_never_gains_a_tool() -> None:
+    assert _INVALID_PARAMS_UNLISTED_TOOLS <= _INVALID_PARAMS_GAPS_AT_INTRODUCTION
+
+
 # Integer range violations are documented by the schema minimum and maximum, not error_codes.
 _RANGE_CHECK_HELPERS = frozenset({"_validate_range"})
 
@@ -534,7 +562,7 @@ def test_a_tool_raising_invalid_params_lists_it_unless_it_is_a_known_gap(tool_na
         ("rex_function_containing", "addr", ["no_function", "analysis_pending"]),
         ("rex_component_add_functions", "functions", ["analysis_pending"]),
         ("rex_uidf_list", "function", ["analysis_pending"]),
-        ("rex_uidf_set_many", "function", ["analysis_pending"]),
+        ("rex_uidf_set_many", "function", ["analysis_pending", "invalid_params"]),
         ("rex_function_define_many", "addresses", []),
     ],
 )
@@ -658,8 +686,10 @@ def test_an_export_cannot_be_called_without_a_filename(tool_name: str) -> None:
 
 _INVALID_PARAMS_LISTINGS = {
     *((tool, "filename") for tool in _EXPORT_FILENAME_TOOLS),
+    ("rex_type_library_export", "library_name"),
     ("rex_type_library_export", "names"),
     ("rex_type_library_export", "kind"),
+    ("rex_uidf_set_many", "function"),
     ("rex_uidf_set_many", "items"),
 }
 
@@ -771,3 +801,38 @@ def test_help_lists_exactly_the_codes_a_uidf_set_many_item_can_raise() -> None:
         "definition_not_found",
         "set_failed",
     ]
+
+
+@pytest.mark.parametrize(
+    ("library_name", "code"), [("", "invalid_params"), ("x" * 5000, "library_name_too_large")]
+)
+def test_a_bad_type_library_name_raises_a_code_help_lists(
+    library_name: str, code: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    assert _type_library_export_error(monkeypatch, tmp_path, library_name=library_name).code == code
+    parameters = {
+        parameter["name"]: parameter for parameter in _help("rex_type_library_export")["parameters"]
+    }
+    assert code in parameters["library_name"]["error_codes"]
+    assert parameters["library_name"]["error_codes"] == [
+        "invalid_params",
+        "library_name_too_large",
+    ]
+
+
+def test_help_lists_the_codes_a_uidf_set_many_function_can_raise() -> None:
+    _, uidf_set_many = get_tool("rex_uidf_set_many")
+    items = [{"variable": "rax_1", "value": "1"}]
+    codes = set()
+    for view, address in [
+        (_uidf_batch_view(), 0x9999),
+        (FakeBinaryView(pending_functions=[FakeFunction("sub_4000", 0x4000, 0x4010)]), 0x4000),
+    ]:
+        with pytest.raises(FakeToolError) as error:
+            uidf_set_many(FakeParsingToolCall(view), address, items)
+        codes.add(error.value.code)
+    assert codes == {"invalid_params", "analysis_pending"}
+    parameters = {
+        parameter["name"]: parameter for parameter in _help("rex_uidf_set_many")["parameters"]
+    }
+    assert parameters["function"]["error_codes"] == ["analysis_pending", "invalid_params"]

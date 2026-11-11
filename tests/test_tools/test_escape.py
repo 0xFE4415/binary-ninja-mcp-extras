@@ -322,19 +322,55 @@ def test_eval_python_stops_a_cyclic_exception_chain_at_the_first_repeat() -> Non
     assert _failing(own_cause)["error"] == "ValueError: a"
 
 
-def test_eval_python_names_at_most_eight_chained_exceptions() -> None:
-    code = (
-        "chain = ValueError('e19')\n"
-        "for number in range(18, -1, -1):\n"
+def _cause_chain_code(length: int) -> str:
+    return (
+        f"chain = ValueError('e{length - 1}')\n"
+        f"for number in range({length - 2}, -1, -1):\n"
         "    link = ValueError(f'e{number}')\n"
         "    link.__cause__ = chain\n"
         "    chain = link\n"
         "raise chain"
     )
-    expected = "ValueError: e0" + "".join(f"; caused by ValueError: e{n}" for n in range(1, 9))
-    result = _failing(code)
-    assert result["error"] == expected
+
+
+def _cause_chain_text(links: int) -> str:
+    return "ValueError: e0" + "".join(f"; caused by ValueError: e{n}" for n in range(1, links + 1))
+
+
+def test_eval_python_marks_a_chain_cut_after_eight_links() -> None:
+    result = _failing(_cause_chain_code(20))
+    assert result["error"] == _cause_chain_text(8) + "; ..."
     assert result["error_truncated"] is False
+    assert _failing(_cause_chain_code(10))["error"] == _cause_chain_text(8) + "; ..."
+
+
+def test_eval_python_does_not_mark_a_chain_that_ends_within_eight_links() -> None:
+    assert _failing(_cause_chain_code(9))["error"] == _cause_chain_text(8)
+    assert _failing(_cause_chain_code(8))["error"] == _cause_chain_text(7)
+
+
+def test_eval_python_does_not_mark_a_cycle_closing_at_the_eight_link_bound() -> None:
+    code = (
+        "errors = [ValueError(f'e{number}') for number in range(9)]\n"
+        "for number in range(8):\n"
+        "    errors[number].__cause__ = errors[number + 1]\n"
+        "errors[8].__cause__ = errors[3]\n"
+        "raise errors[0]"
+    )
+    assert _failing(code)["error"] == _cause_chain_text(8)
+
+
+def test_eval_python_prefers_the_cause_over_an_unsuppressed_context() -> None:
+    code = (
+        "try:\n"
+        "    raise OSError('ctx')\n"
+        "except OSError:\n"
+        "    error = ValueError('a')\n"
+        "    error.__cause__ = KeyError('b')\n"
+        "    error.__suppress_context__ = False\n"
+        "    raise error"
+    )
+    assert _failing(code)["error"] == "ValueError: a; caused by KeyError: 'b'"
 
 
 def test_eval_python_truncates_a_long_cause_at_the_echo_cap() -> None:
@@ -373,6 +409,65 @@ def test_eval_python_reports_the_code_of_a_tool_error_in_a_chain() -> None:
     assert (
         result["error"] == f"ValueError: wrapped; caused by {_tool_error_kind()}: no_variable: gone"
     )
+
+
+@pytest.mark.parametrize(
+    ("setup", "expected"),
+    [
+        (
+            "class Skipped(mcp.ToolError):\n"
+            "    def __init__(self):\n"
+            "        Exception.__init__(self, 'plain message')\n"
+            "error = Skipped()",
+            "Skipped: plain message",
+        ),
+        ("error = mcp.ToolError(None, 'plain message')", "helpers.FakeToolError: plain message"),
+        ("error = mcp.ToolError(7, 'plain message')", "helpers.FakeToolError: plain message"),
+        ("error = mcp.ToolError('', 'plain message')", "helpers.FakeToolError: plain message"),
+        (
+            "class Mute:\n"
+            "    def __bool__(self):\n"
+            "        raise RuntimeError('no bool')\n"
+            "error = mcp.ToolError(Mute(), '')",
+            "helpers.FakeToolError",
+        ),
+        (
+            "class Mute:\n"
+            "    def __format__(self, spec):\n"
+            "        raise RuntimeError('no format')\n"
+            "error = mcp.ToolError(Mute(), 'plain message')",
+            "helpers.FakeToolError: plain message",
+        ),
+        (
+            "class Mute(str):\n"
+            "    def __format__(self, spec):\n"
+            "        raise RuntimeError('no format')\n"
+            "error = mcp.ToolError(Mute('no_mlil'), 'plain message')",
+            "helpers.FakeToolError: <message unavailable>",
+        ),
+        (
+            "class Mute(str):\n"
+            "    def __bool__(self):\n"
+            "        raise RuntimeError('no bool')\n"
+            "error = mcp.ToolError(Mute('no_mlil'), '')",
+            "helpers.FakeToolError: <message unavailable>",
+        ),
+    ],
+)
+def test_eval_python_falls_back_to_the_plain_message_for_a_tool_error_without_a_usable_code(
+    setup: str, expected: str
+) -> None:
+    result = _failing("from binaryninja import mcp\n" + setup + "\nraise error")
+    assert result["error"] == expected
+    assert result["error_truncated"] is False
+
+
+def test_eval_python_names_only_the_code_of_a_chained_tool_error_without_a_message() -> None:
+    result = _failing(
+        "from binaryninja import mcp\n"
+        "raise ValueError('wrapped') from mcp.ToolError('no_variable', '')"
+    )
+    assert result["error"] == f"ValueError: wrapped; caused by {_tool_error_kind()}: no_variable"
 
 
 def test_eval_python_survives_a_tool_error_whose_message_cannot_render() -> None:

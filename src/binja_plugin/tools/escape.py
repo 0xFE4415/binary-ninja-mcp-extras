@@ -93,14 +93,21 @@ def _exception_kind(error: BaseException) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
+def _tool_error_detail(error: mcp.ToolError) -> str:
+    message = str(error)
+    code = getattr(error, "code", None)
+    if not isinstance(code, str) or not code:
+        return message
+    return f"{code}: {message}" if message else code
+
+
 def _describe_one_error(error: BaseException) -> str:
     kind = _exception_kind(error)
     try:
         if isinstance(error, SystemExit):
             detail = f"exit status {error.code!r}"
         elif isinstance(error, mcp.ToolError):
-            message = str(error)
-            detail = f"{error.code}: {message}" if message else error.code
+            detail = _tool_error_detail(error)
         else:
             detail = str(error)
     except Exception:
@@ -116,19 +123,26 @@ def _linked_error(error: BaseException) -> tuple[str, BaseException] | None:
     return None
 
 
+def _unseen_link(error: BaseException, seen: set[int]) -> tuple[str, BaseException] | None:
+    link = _linked_error(error)
+    if link is None or id(link[1]) in seen:
+        return None
+    return link
+
+
 def _describe_error(error: BaseException) -> str:
     description = _describe_one_error(error)
     seen = {id(error)}
     current = error
     for _ in range(_MAX_EVAL_CHAINED_ERRORS):
-        link = _linked_error(current)
+        link = _unseen_link(current, seen)
         if link is None:
-            break
+            return description
         relation, current = link
-        if id(current) in seen:
-            break
         seen.add(id(current))
         description += f"; {relation} {_describe_one_error(current)}"
+    if _unseen_link(current, seen) is not None:
+        description += "; ..."
     return description
 
 
