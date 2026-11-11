@@ -73,10 +73,16 @@ RX_MULTI_FIND = FakeNativeTool(
     {
         "type": "object",
         "properties": {
-            "limit": _LIMIT_SCHEMA,
-            "offset": _OFFSET_SCHEMA,
+            "limit": {**_LIMIT_SCHEMA, "description": "Maximum matches to return per pattern."},
+            "offset": {
+                **_OFFSET_SCHEMA,
+                "description": "Matches to skip per pattern before collecting results.",
+            },
             "patterns": {
-                "description": 'Hex byte patterns, e.g. ["48 8b ?? 05"].',
+                "description": (
+                    'Hex byte patterns, e.g. ["48 8b ?? 05"]; '
+                    'each byte is 2 ASCII hex digits or "??".'
+                ),
                 "type": "array",
                 "items": {"type": "string", "maxLength": _MAX_PATTERN_CHARS},
                 "minItems": 1,

@@ -172,16 +172,16 @@ def _error_location(error: BaseException, code: str) -> _ErrorLocation | None:
             for frame, lineno in traceback.walk_tb(error.__traceback__)
             if frame.f_code.co_filename == _EVAL_FILENAME
         ]
+        if not lines:
+            return None
+        source_lines = re.split(r"\r\n|\r|\n", code)
+        # Code the caller compiles under the same filename can report any line, or none.
+        if not 1 <= lines[-1] <= len(source_lines):
+            return None
+        text = source_lines[lines[-1] - 1].strip()
+        return {"line": lines[-1], "text": _truncate(text, _MAX_EVAL_LOCATION_CHARS)}
     except Exception:
         return None
-    if not lines:
-        return None
-    source_lines = re.split(r"\r\n|\r|\n", code)
-    # Code the caller compiles under the same filename can report a line outside their own source.
-    if not 1 <= lines[-1] <= len(source_lines):
-        return None
-    text = source_lines[lines[-1] - 1].strip()
-    return {"line": lines[-1], "text": _truncate(text, _MAX_EVAL_LOCATION_CHARS)}
 
 
 @mcp.tool(destructive=True)

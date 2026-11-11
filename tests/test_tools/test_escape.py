@@ -998,3 +998,26 @@ def test_eval_python_omits_a_location_before_the_first_line() -> None:
     result = _failing(code)
     assert result["error"] == "ZeroDivisionError: division by zero"
     assert result["error_location"] is None
+
+
+_UNLOCATED_LINE_CODES = {
+    "negative-ast-line": (
+        "import ast\ntree = ast.parse('1/0')\nfor node in ast.walk(tree):\n"
+        "    if hasattr(node, 'lineno'):\n        node.lineno = node.end_lineno = -5\n"
+        "exec(compile(tree, '<rex_eval_python>', 'exec'))"
+    ),
+    "empty-line-table": (
+        "exec(compile('1/0', '<rex_eval_python>', 'exec').replace(co_linetable=b''))"
+    ),
+    "huge-first-line": (
+        "exec(compile('1/0', '<rex_eval_python>', 'exec').replace(co_firstlineno=2**31 - 1))"
+    ),
+}
+
+
+@pytest.mark.parametrize("code", _UNLOCATED_LINE_CODES.values(), ids=_UNLOCATED_LINE_CODES.keys())
+def test_eval_python_keeps_stdout_when_the_traceback_has_no_usable_line_number(code: str) -> None:
+    result = _failing_in_band("print('kept')\n" + code)
+    assert result["error"] == "ZeroDivisionError: division by zero"
+    assert result["error_location"] is None
+    assert result["stdout"] == "kept\n"

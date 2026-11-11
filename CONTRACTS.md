@@ -105,9 +105,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   reaching every hit of functions in the page (for example a cold block placed after its
   function); `addresses_truncated` only reports the cap on what was seen.
   `rex_constant_find` lists functions, and picks each function's
-  example addresses, in the core's hit order, which is not address order. Both tools key
-  a function by start address and architecture, so two rows can share a `start` for
-  different architectures, and the rows then usually differ in `name`.
+  example addresses, in the core's hit order, which is not address order.
+  `rex_constant_find` and `rex_find_functions_by_pattern` key a function by start address
+  and architecture, so two rows can share a `start` for different architectures, and the
+  rows then usually differ in `name`.
   `rex_hlil_grep` returns no `total`; it additionally returns `scan_incomplete`, set when
   the `max_functions` render budget ran out before the whole view was scanned: nothing
   was proven about matches past the page, so more may exist even though `truncated` is

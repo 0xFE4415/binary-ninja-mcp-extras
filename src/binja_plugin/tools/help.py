@@ -164,7 +164,7 @@ def _tools_by_category(registered: dict[str, mcp.Tool]) -> dict[str, list[str]]:
             for name, member in vars(module).items()
             if name in registered and member.__module__ == module.__name__
         )
-    native_names = registered.keys() & _NATIVE_TOOL_NAMES
+    native_names = (name for name in registered if not name.startswith(_TOOL_PREFIX))
     categories[_NATIVE_TOOL_CATEGORY] = sorted([*categories[_NATIVE_TOOL_CATEGORY], *native_names])
     categorized: set[str] = set()
     for names in categories.values():
