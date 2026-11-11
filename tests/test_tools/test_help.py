@@ -253,6 +253,19 @@ def test_help_details_types_defaults_and_bounds() -> None:
     ]
 
 
+def test_help_states_that_call_paths_defaults_to_callers_and_reachability_needs_callees() -> None:
+    detail = _help("rex_call_paths")
+    assert detail["description"] == (
+        "Bounded BFS for call paths; direction defaults to callers, "
+        'so "A reaches B?" needs callees.'
+    )
+    by_name = {parameter["name"]: parameter for parameter in detail["parameters"]}
+    assert by_name["direction"]["default"] == "callers"
+    assert by_name["direction"]["description"] == (
+        'Default "callers": to_addr reaches from_addr; "callees": the reverse.'
+    )
+
+
 def test_help_details_required_flags_and_per_parameter_error_codes() -> None:
     by_name = {parameter["name"]: parameter for parameter in _help("rex_data_find")["parameters"]}
     assert by_name["pattern"]["required"] is True
@@ -526,6 +539,8 @@ _EXPORT_FILENAME_CODES = [
     ("back\\slash.txt", "invalid_params"),
     ("nul\x00byte.txt", "invalid_params"),
     ("x" * 256, "invalid_params"),
+    (".", "invalid_params"),
+    ("sub/", "invalid_params"),
     ("link.txt", "path_escape"),
     ("occupied.txt", "export_failed"),
 ]

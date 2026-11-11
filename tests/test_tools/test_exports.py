@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from helpers import (
+    DIRECTORY_NAME_MESSAGE,
     NO_ALTERNATIVES,
     FakeToolError,
     _call,
@@ -336,6 +337,11 @@ def test_export_disasm_rejects_a_symlink_escaping_the_export_root(
         "nul\x00byte.txt",
         "x" * 256,
         "",
+        ".",
+        "./",
+        "sub/",
+        "sub/.",
+        "./.",
     ],
 )
 def test_export_tools_reject_unsafe_filenames(
@@ -359,6 +365,11 @@ def test_validate_export_path_rejects_each_violation_with_a_clear_message() -> N
         ("back\\slash.txt", "filename must not contain backslashes"),
         ("nul\x00byte.txt", "filename must not contain NUL bytes"),
         ("up/../down.txt", "filename must not contain '..' path components"),
+        (".", DIRECTORY_NAME_MESSAGE),
+        ("./", DIRECTORY_NAME_MESSAGE),
+        ("sub/", DIRECTORY_NAME_MESSAGE),
+        ("sub/.", DIRECTORY_NAME_MESSAGE),
+        ("a//", DIRECTORY_NAME_MESSAGE),
         ("x" * 256, f"filename component exceeds {tools._MAX_EXPORT_COMPONENT_BYTES} bytes"),
     ]
     for filename, message in cases:
@@ -370,6 +381,28 @@ def test_validate_export_path_rejects_each_violation_with_a_clear_message() -> N
     tools._validate_export_path("plain.txt")
     tools._validate_export_path("y" * 251 + ".txt")
     tools._validate_export_path("sub/plain.txt")
+    tools._validate_export_path("./plain.txt")
+    tools._validate_export_path("sub/./plain.txt")
+    tools._validate_export_path(".hidden")
+    tools._validate_export_path("...")
+    tools._validate_export_path("plain.")
+
+
+def test_export_tools_reject_a_directory_name_before_any_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    _, export_disasm = get_tool("rex_export_disasm")
+    with pytest.raises(FakeToolError) as exc:
+        export_disasm(_call(_disasm_view()), 0x1104, filename=".")
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == DIRECTORY_NAME_MESSAGE
+    _, export_symbols = get_tool("rex_export_symbols")
+    with pytest.raises(FakeToolError) as exc:
+        export_symbols(_call(_symbol_view()), 0x1000, 0x4000, filename=".")
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == DIRECTORY_NAME_MESSAGE
+    assert not root.exists()
 
 
 def _symbol_view() -> FakeBinaryView:

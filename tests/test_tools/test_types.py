@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from helpers import (
+    DIRECTORY_NAME_MESSAGE,
     FakeToolError,
     _call,
     _use_export_root,
@@ -884,6 +885,11 @@ def test_type_library_export_rejects_invalid_inputs(
             "invalid_params",
         ),
         ({"filename": ""}, "filename must not be empty", "invalid_params"),
+        (
+            {"filename": "."},
+            DIRECTORY_NAME_MESSAGE,
+            "invalid_params",
+        ),
     ):
         arguments = {"library_name": "recovered", "filename": "x.bntl", **violation}
         with pytest.raises(FakeToolError) as exc:

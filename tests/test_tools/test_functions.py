@@ -463,18 +463,57 @@ def test_call_paths_reports_one_path_per_intermediate_and_sorts_neighbors() -> N
     ]
 
 
-def test_call_paths_caps_paths_per_node() -> None:
+@pytest.mark.parametrize("direction", ["callers", "callees"])
+def test_call_paths_lists_a_path_once_when_call_sites_repeat_the_target(direction: str) -> None:
     main = FakeFunction("main", 0x1100, 0x1200)
     handler = FakeFunction("handler", 0x2000, 0x2100)
     sink = FakeFunction("sink", 0x3000, 0x3100)
-    main.callers = [handler]
-    # Real BinaryView call-graph properties list one entry per call site, so the target can
-    # appear several times in one neighbors list.
-    handler.callers = [sink, sink, sink]
+    # The core lists one entry per call site, so a repeated callee is a repeated edge.
+    setattr(main, direction, [handler, handler])
+    setattr(handler, direction, [sink, sink, sink])
     view = FakeBinaryView(functions=[main, handler, sink])
     _, paths = get_tool("rex_call_paths")
-    result = paths(_call(view), 0x1100, 0x3000, max_paths=2)
-    assert len(result["paths"]) == 2
+    result = paths(_call(view), 0x1100, 0x3000, direction=direction, max_paths=5)
+    assert [[step["name"] for step in path] for path in result["paths"]] == [
+        ["main", "handler", "sink"]
+    ]
+    assert result["truncated"] is False
+    assert result["explored"] == 2
+
+
+@pytest.mark.parametrize("direction", ["callers", "callees"])
+def test_call_paths_repeated_edges_do_not_use_up_the_path_cap(direction: str) -> None:
+    main = FakeFunction("main", 0x1100, 0x1200)
+    first = FakeFunction("first", 0x2000, 0x2100)
+    second = FakeFunction("second", 0x2200, 0x2300)
+    sink = FakeFunction("sink", 0x3000, 0x3100)
+    setattr(main, direction, [first, second])
+    setattr(first, direction, [sink, sink, sink])
+    setattr(second, direction, [sink])
+    view = FakeBinaryView(functions=[main, first, second, sink])
+    _, paths = get_tool("rex_call_paths")
+    result = paths(_call(view), 0x1100, 0x3000, direction=direction, max_paths=3)
+    assert [[step["name"] for step in path] for path in result["paths"]] == [
+        ["main", "first", "sink"],
+        ["main", "second", "sink"],
+    ]
+    assert result["truncated"] is False
+
+
+def test_call_paths_stops_at_the_path_cap_and_reports_it() -> None:
+    main = FakeFunction("main", 0x1100, 0x1200)
+    first = FakeFunction("first", 0x2000, 0x2100)
+    second = FakeFunction("second", 0x2200, 0x2300)
+    sink = FakeFunction("sink", 0x3000, 0x3100)
+    main.callers = [first, second]
+    first.callers = [sink]
+    second.callers = [sink]
+    view = FakeBinaryView(functions=[main, first, second, sink])
+    _, paths = get_tool("rex_call_paths")
+    result = paths(_call(view), 0x1100, 0x3000, max_paths=1)
+    assert [[step["name"] for step in path] for path in result["paths"]] == [
+        ["main", "first", "sink"]
+    ]
     assert result["truncated"] is True
 
 

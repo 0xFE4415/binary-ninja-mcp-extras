@@ -325,7 +325,8 @@ present only on some rows.
 - The `filename` of `rex_export_disasm`, `rex_export_symbols`, and `rex_type_library_export`
   is a required parameter with no default, and the advertised schema lists it under
   `required`. It raises `invalid_params` for an empty name, an absolute path, a backslash, a
-  NUL byte, a `..` component, or a component over 255 bytes. `path_escape` is raised only after
+  NUL byte, a `..` component, a name that ends in `.` or `/` (it names a directory, not a
+  file), or a component over 255 bytes. `path_escape` is raised only after
   resolution, when a symlink inside the export root points outside it, and
   `export_failed` when the root or file cannot be written. `rex_help` lists these three
   codes for the parameter.
@@ -369,9 +370,11 @@ Usage strategies that do not fit a tool's one-line description.
   the whole view before the search ends. Use it to enumerate every function touching a
   magic value; when the value lives in data rather than code, use `rex_data_find` or
   `rx_multi_find` instead.
-- `rex_call_paths` with `direction=callers` from a sink answers "who can reach this"
-  without hand-walking xrefs; `direction=callees` from a source answers "what can this
-  reach". Both directions are bounded by `max_depth` and `max_paths`.
+- `rex_call_paths` defaults to `direction=callers`: from a sink it answers "who can reach
+  this" without hand-walking xrefs. "Does main reach X?" needs `direction=callees` from
+  main, which answers "what can this reach". Both directions are bounded by `max_depth` and
+  `max_paths`. A function called from several sites is one edge, so a path is never listed
+  twice.
 - `rex_struct_from_access` only sees offset accesses analysis has already recorded, so
   run it after the dereferencing code is analyzed; it registers the inferred struct
   under an auto type id.

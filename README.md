@@ -79,7 +79,7 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_quick_main` | Show the entry point, `main`, and the HLIL of `main`. |
 | `rex_analysis_wait` | Wait for analysis, with a time limit. |
 | `rex_uidf_list` | List user variable values for one function or the whole view. |
-| `rex_call_paths` | Find call paths between two functions, within set bounds. |
+| `rex_call_paths` | Find call paths between two functions; "A reaches B" needs `callees`. |
 | `rex_function_containing` | List every function that contains an address. |
 | `rex_component_get` | Show a component's functions and child components. |
 | `rex_string_read_at` | Read the detected string at an address. |

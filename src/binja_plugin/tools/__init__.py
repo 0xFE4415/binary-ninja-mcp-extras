@@ -404,6 +404,10 @@ def _validate_export_path(filename: str) -> None:
     parts = filename.split("/")
     if ".." in parts:
         raise mcp.ToolError("invalid_params", "filename must not contain '..' path components")
+    if parts[-1] in ("", "."):
+        raise mcp.ToolError(
+            "invalid_params", "filename must end in a file name, not '.' or a trailing '/'"
+        )
     for part in parts:
         if len(part.encode("utf-8")) > _MAX_EXPORT_COMPONENT_BYTES:
             # NAME_MAX applies per component, not to the joined path.
