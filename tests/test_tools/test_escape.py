@@ -113,6 +113,15 @@ def _failing(code: str) -> dict[str, Any]:
     return evaluate(_call(_view_with_functions()), code)
 
 
+def _failing_in_band(code: str) -> dict[str, Any]:
+    escaped_type = ""
+    try:
+        return _failing(code)
+    except Exception as escaped:
+        escaped_type = type(escaped).__name__
+    pytest.fail(f"error rendering escaped as {escaped_type}", pytrace=False)
+
+
 @pytest.mark.parametrize(
     ("code", "error"),
     [
@@ -557,9 +566,76 @@ _HOSTILE_STR = (
 def test_eval_python_renders_every_link_even_when_its_strings_misbehave(
     setup: str, expected: str
 ) -> None:
-    result = _failing("from binaryninja import mcp\n" + _HOSTILE_STR + setup + "\nraise error")
+    result = _failing_in_band(
+        "from binaryninja import mcp\n" + _HOSTILE_STR + setup + "\nraise error"
+    )
     assert result["error"] == expected
     assert result["error_truncated"] is False
+
+
+_HOSTILE_LINK_ERROR = (
+    "class Hostile(Exception):\n    @property\n    def {name}(self):\n        {body}\n"
+)
+
+
+_HOSTILE_RAISES = {
+    "alone": ("raise Hostile('x')", "Hostile: x"),
+    "in a handler": (
+        "try:\n    raise OSError('c')\nexcept OSError:\n    raise Hostile('x')",
+        "Hostile: x",
+    ),
+    "as a cause": (
+        "try:\n"
+        "    raise Hostile('x')\n"
+        "except Hostile as inner:\n"
+        "    raise KeyError('k') from inner",
+        "KeyError: 'k'; caused by Hostile: x",
+    ),
+}
+
+
+@pytest.mark.parametrize("raised", list(_HOSTILE_RAISES))
+@pytest.mark.parametrize(
+    ("name", "body"),
+    [
+        ("__cause__", "raise RuntimeError('no cause')"),
+        ("__cause__", "return 7"),
+        ("__context__", "raise RuntimeError('no context')"),
+        ("__context__", "return 7"),
+        ("__suppress_context__", "raise RuntimeError('no suppress')"),
+    ],
+)
+def test_eval_python_ends_the_chain_where_a_link_cannot_be_read(
+    name: str, body: str, raised: str
+) -> None:
+    raise_code, expected = _HOSTILE_RAISES[raised]
+    result = _failing_in_band(_HOSTILE_LINK_ERROR.format(name=name, body=body) + raise_code)
+    assert result["error"] == expected
+    assert result["error_truncated"] is False
+
+
+@pytest.mark.parametrize(
+    "body", ["raise RuntimeError('no traceback')", "return 7"], ids=["raises", "not-a-traceback"]
+)
+def test_eval_python_omits_the_location_when_the_traceback_cannot_be_read(body: str) -> None:
+    code = _HOSTILE_LINK_ERROR.format(name="__traceback__", body=body) + "raise Hostile('x')"
+    result = _failing_in_band(code)
+    assert result["error"] == "Hostile: x"
+    assert result["error_location"] is None
+
+
+@pytest.mark.parametrize("escaping", [KeyboardInterrupt, SystemExit, GeneratorExit])
+def test_eval_python_lets_a_base_exception_raised_while_rendering_propagate(
+    escaping: type[BaseException],
+) -> None:
+    code = (
+        f"class Fatal(Exception):\n"
+        f"    def __str__(self):\n"
+        f"        raise {escaping.__name__}()\n"
+        f"raise Fatal()"
+    )
+    with pytest.raises(escaping):
+        _failing(code)
 
 
 def test_eval_python_names_only_the_code_of_a_chained_tool_error_without_a_message() -> None:

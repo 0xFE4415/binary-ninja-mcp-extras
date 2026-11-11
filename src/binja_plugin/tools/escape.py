@@ -129,10 +129,15 @@ def _describe_one_error(error: BaseException) -> str:
 
 
 def _linked_error(error: BaseException) -> tuple[str, BaseException] | None:
-    if error.__cause__ is not None:
-        return "caused by", error.__cause__
-    if error.__context__ is not None and not error.__suppress_context__:
-        return "while handling", error.__context__
+    try:
+        cause = getattr(error, "__cause__")
+        if cause is not None:
+            return ("caused by", cause) if isinstance(cause, BaseException) else None
+        context = getattr(error, "__context__")
+        if context is not None and not error.__suppress_context__:
+            return ("while handling", context) if isinstance(context, BaseException) else None
+    except Exception:
+        return None
     return None
 
 
@@ -161,11 +166,14 @@ def _describe_error(error: BaseException) -> str:
 
 def _error_location(error: BaseException, code: str) -> _ErrorLocation | None:
     """The innermost line of the caller's own code on the error's traceback, or None."""
-    lines = [
-        lineno
-        for frame, lineno in traceback.walk_tb(error.__traceback__)
-        if frame.f_code.co_filename == _EVAL_FILENAME
-    ]
+    try:
+        lines = [
+            lineno
+            for frame, lineno in traceback.walk_tb(error.__traceback__)
+            if frame.f_code.co_filename == _EVAL_FILENAME
+        ]
+    except Exception:
+        return None
     if not lines:
         return None
     text = re.split(r"\r\n|\r|\n", code)[lines[-1] - 1].strip()

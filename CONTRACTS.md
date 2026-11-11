@@ -142,9 +142,11 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   module is `builtins` and it reads as its bare qualname (`Custom: x`,
   `make.<locals>.Inner: n`). A `SystemExit` reads `SystemExit: exit status <repr of code>`. A
   `ToolError` reads `<type>: <code>: <message>` (just the code when the message is empty; the
-  plain message when it has no usable string code). Rendering never raises: a message that
-  cannot render reads `<message unavailable>`, and a type name that cannot reads
-  `<unknown exception type>`.
+  plain message when it has no usable string code). Rendering does not raise an `Exception`: a
+  message that cannot render reads `<message unavailable>`, a type name that cannot reads
+  `<unknown exception type>`, and a chain link that cannot be read ends the chain. A
+  `BaseException` that is not an `Exception` (such as `KeyboardInterrupt`) raised while
+  rendering still propagates.
   Chained exceptions follow the outermost one. Each link is chosen as Python chooses it:
   `; caused by <error>` for the explicit cause, else `; while handling <error>` for the
   implicit context unless it is suppressed (`raise X from Y` or `from None`). Each link
@@ -152,9 +154,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   final `; ...` when more follow. The whole text is
   capped like other echoes (`error_truncated`), so the type is never the part cut.
   `error_location` is `{line, text}` for the innermost line of the submitted code on the
-  traceback (text stripped, capped at 200 characters), or null on success and for
-  syntax errors, whose message already names the line. The code is compiled as
-  `<rex_eval_python>`.
+  traceback (text stripped, capped at 200 characters), or null on success, for syntax
+  errors (whose message already names the line), and when the traceback cannot be read. The
+  code is compiled as `<rex_eval_python>`.
 - Non-null `stdout_key`/`result_key` values let `rex_eval_result` page spilled text. The
   server keeps up to 8 spills (a call spilling both fields uses two slots), evicting the
   oldest first. Each spill is limited to 4,194,304 characters; larger text is dropped,
