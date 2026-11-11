@@ -20,8 +20,16 @@ class InstructionTextTokenType(IntEnum):
     RegisterToken = 3
     IntegerToken = 4
     PossibleAddressToken = 5
+    FloatingPointToken = 8
     AnnotationToken = 9
+    CodeRelativeAddressToken = 10
+    CharacterConstantToken = 18
+    EnumerationMemberToken = 35
     CodeSymbolToken = 64
+    DataSymbolToken = 65
+    ImportToken = 67
+    ExternalSymbolToken = 70
+    StackVariableToken = 71
     AddressSeparatorToken = 72
 
 

@@ -340,6 +340,11 @@ present only on some rows.
   are whitespace-separated bytes written as exactly two ASCII hex digits, or `??` for any
   byte; whitespace inside a byte is ignored. Any other token (`+f`, `-1`, `0x`, `f_`,
   non-ASCII digits, `?5`) returns `invalid_pattern` naming the token.
+- `rex_constant_find` `value` is an integer (0 to 18446744073709551615) or a string: `0x` or
+  `0X`, then 1-16 hex digits in either case. A client that reads JSON numbers as doubles
+  rounds the integer maximum to 18446744073709552000, so it should send the hex string for
+  values above 2^53. Any other string, a sign, whitespace, an empty digit list, or more than
+  16 digits returns `invalid_params` naming the violation; strings are never coerced.
 - `rx_multi_find` accepts 1-64 patterns: an empty list returns `invalid_params`, a longer
   one `too_many_patterns`. Each entry is capped at 8,192 characters like `rex_data_find`'s
   `pattern`, and an over-cap entry returns `pattern_too_large` naming its index.
@@ -367,10 +372,16 @@ Usage strategies that do not fit a tool's one-line description.
   ... }`, and `{Case ...}` annotation lines; those never count, so `value` 0 no longer
   matches every function. The core also matches `value` 0 on an instruction with no zero
   operand, for example `xor eax, eax  {0x0}` (a register's known value in an annotation) or
-  a line that carries a string annotation. For `value` 0 the tool keeps a hit only when an
-  integer or possible-address token that belongs to an operand is 0; the optional boolean
-  `include_implicit_zero` (default false) returns the other hits too. Dropped hits take no
-  slot in `total`, paging, the address cap, or `truncated`. Other values are not filtered.
+  a line that carries a string annotation. For `value` 0 the tool keeps a hit only when a
+  token that belongs to an operand and carries a number or address (integer, possible
+  address, code-relative address, floating point, character constant, enumeration member,
+  code or data symbol, import, or external symbol) is 0. A line whose tokens carry no
+  operand index at all is kept, since it cannot be judged. The optional boolean
+  `include_non_operand_hits` (default false) returns the dropped hits too; it is only
+  allowed with `value` 0 and otherwise returns `invalid_params`. Dropped hits take no slot
+  in `total`, paging, the address cap, or `truncated`. Other values are not filtered. The
+  tool lists a hit under the function the core attributes the line to, not by the
+  lowest-start rule, so in overlapping code one address can appear under several functions.
   A value that is rare or absent makes the core scan the whole view before the search ends.
   Use it to enumerate every function touching a magic value; when the value lives in data
   rather than code, use `rex_data_find` or `rx_multi_find` instead.

@@ -131,8 +131,9 @@ Three searches stop early, so one call stays fast on a large database.
 - `rex_constant_find` searches disassembly with the core's constant search and stops once
   the page is full. It returns up to 6 distinct addresses per function, in the core's hit
   order. While `truncated` is set, each function's addresses are a lower bound.
-  For `value` 0 it drops hits with no zero immediate, such as `xor eax, eax`; set
-  `include_implicit_zero` to keep them.
+  `value` is an integer or a `0x` hex string; send the string for values above 2^53, which
+  JavaScript clients cannot hold as numbers. For `value` 0 it drops hits with no zero
+  operand, such as `xor eax, eax`; set `include_non_operand_hits` to keep them.
 - `rex_hlil_grep` renders at most `max_functions` functions per call. Page with
   `next_offset` while `truncated` or `scan_incomplete` is set. `skipped_no_hlil` counts
   functions with no HLIL.

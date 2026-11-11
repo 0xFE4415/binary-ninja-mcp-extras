@@ -76,8 +76,17 @@ class FakeInstructionTextTokenType(enum.IntEnum):
     RegisterToken = 3
     IntegerToken = 4
     PossibleAddressToken = 5
+    FloatingPointToken = 8
+    StringToken = 17
     AnnotationToken = 9
+    CodeRelativeAddressToken = 10
+    CharacterConstantToken = 18
+    EnumerationMemberToken = 35
     CodeSymbolToken = 64
+    DataSymbolToken = 65
+    ImportToken = 67
+    ExternalSymbolToken = 70
+    StackVariableToken = 71
     AddressSeparatorToken = 72
 
 
@@ -112,7 +121,7 @@ _TOKEN_TYPE = FakeInstructionTextTokenType
 # The token shapes find_all_constant was observed to yield on a live x86_64 ELF.
 INSTRUCTION_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
-    FakeLineToken(_TOKEN_TYPE.InstructionToken, "cmp"),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "cmp", 0, 0),
     FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
     FakeLineToken(_TOKEN_TYPE.RegisterToken, "eax", 0, 0),
     FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", "),
@@ -139,7 +148,7 @@ FALLS_THROUGH_LINE = (
 CASE_LINE = (FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{Case 0x0}"),)
 ANNOTATED_INSTRUCTION_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
-    FakeLineToken(_TOKEN_TYPE.InstructionToken, "mul"),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "mul", 0, 0),
     FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
     FakeLineToken(_TOKEN_TYPE.RegisterToken, "rdx", 0, 0),
     FakeLineToken(_TOKEN_TYPE.TextToken, "  "),
@@ -148,7 +157,7 @@ ANNOTATED_INSTRUCTION_LINE = (
 # `xor eax, eax  {0x0}`: the only zero is the annotation; the register tokens carry value 0 too.
 XOR_REGISTER_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
-    FakeLineToken(_TOKEN_TYPE.InstructionToken, "xor"),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "xor", 0, 0),
     FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
     FakeLineToken(_TOKEN_TYPE.RegisterToken, "eax", 0, 0),
     FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", ", 0, 0),
@@ -160,7 +169,7 @@ XOR_REGISTER_LINE = (
 # `push 0x0  {var_8}`: a zero immediate typed as a possible address.
 PUSH_ZERO_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
-    FakeLineToken(_TOKEN_TYPE.InstructionToken, "push"),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "push", 0, 0),
     FakeLineToken(_TOKEN_TYPE.TextToken, "    "),
     FakeLineToken(_TOKEN_TYPE.PossibleAddressToken, "0x0", 0, 0),
     FakeLineToken(_TOKEN_TYPE.AnnotationToken, " {"),
@@ -170,7 +179,7 @@ PUSH_ZERO_LINE = (
 # `sar rsi, 0x1  {0x0}`: the immediate is 1; the zero is a register value in the annotation.
 SHIFT_BY_ONE_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
-    FakeLineToken(_TOKEN_TYPE.InstructionToken, "sar"),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "sar", 0, 0),
     FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
     FakeLineToken(_TOKEN_TYPE.RegisterToken, "rsi", 0, 0),
     FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", ", 0, 0),
@@ -182,7 +191,7 @@ SHIFT_BY_ONE_LINE = (
 # `lea rdi, [rel data_404501]  {"coreutils"}`: no integer at all.
 STRING_ANNOTATION_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
-    FakeLineToken(_TOKEN_TYPE.InstructionToken, "lea"),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "lea", 0, 0),
     FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
     FakeLineToken(_TOKEN_TYPE.RegisterToken, "rdi", 0, 0),
     FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", ", 0, 0),

@@ -957,6 +957,33 @@ def test_find_functions_by_pattern_breaks_a_start_tie_by_architecture_name() -> 
         ]
 
 
+def test_find_functions_by_pattern_keys_equal_starts_by_architecture() -> None:
+    armv7 = FakeFunction("armv7_copy", 0x1000, 0x1008, arch=FakeArchitecture("armv7"))
+    thumb = FakeFunction("thumb_copy", 0x1000, 0x1100, arch=FakeArchitecture("thumb2"))
+    image = bytearray(b"\x00" * 0x20)
+    for hit in (0x2, 0x10):
+        image[hit : hit + 2] = b"\xeb\x0e"
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, len(image))],
+        memory={0x1000: bytes(image)},
+        functions=[thumb, armv7],
+    )
+    _, find = get_tool("rex_find_functions_by_pattern")
+    assert find(_call(view), "eb0e") == {
+        "total": 2,
+        "truncated": False,
+        "functions": [
+            _overlap_entry(0x1000, "armv7_copy", [0x1002]),
+            _overlap_entry(0x1000, "thumb_copy", [0x1010]),
+        ],
+    }
+    assert find(_call(view), "eb0e", limit=1, offset=1) == {
+        "total": 2,
+        "truncated": False,
+        "functions": [_overlap_entry(0x1000, "thumb_copy", [0x1010])],
+    }
+
+
 def test_find_functions_by_pattern_pages_overlapping_functions_by_their_lowest_start() -> None:
     parent = FakeFunction("parent", 0x1000, 0x1100)
     cold = FakeFunction("cold", 0x2000, 0x2010)

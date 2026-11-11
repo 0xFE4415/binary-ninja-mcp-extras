@@ -36,7 +36,8 @@ def _find(
     return find(_call(view), **options)
 
 
-def test_value_zero_counts_only_functions_with_an_instruction_line() -> None:
+@pytest.mark.parametrize("include", [False, True], ids=["filtering", "including"])
+def test_value_zero_counts_only_functions_with_an_instruction_line(include: bool) -> None:
     header_only = FakeFunction("header_only", 0x1000, 0x1100)
     continuation_only = FakeFunction("continuation_only", 0x2000, 0x2100)
     real = FakeFunction("real", 0x3000, 0x3100)
@@ -48,6 +49,7 @@ def test_value_zero_counts_only_functions_with_an_instruction_line() -> None:
             (0, 0x3010, real),
         ],
         value=0,
+        include_non_operand_hits=include,
     )
     assert result == {
         "total": 1,
@@ -56,7 +58,8 @@ def test_value_zero_counts_only_functions_with_an_instruction_line() -> None:
     }
 
 
-def test_value_zero_lists_only_the_instruction_addresses_of_a_function() -> None:
+@pytest.mark.parametrize("include", [False, True], ids=["filtering", "including"])
+def test_value_zero_lists_only_the_instruction_addresses_of_a_function(include: bool) -> None:
     function = FakeFunction("sub_4000", 0x4000, 0x4100)
     result = _find(
         [function],
@@ -67,39 +70,65 @@ def test_value_zero_lists_only_the_instruction_addresses_of_a_function() -> None
             (0, 0x4060, function),
         ],
         value=0,
+        include_non_operand_hits=include,
     )
     assert result["functions"] == [_entry(0x4000, "sub_4000", [0x4010, 0x4060])]
 
 
-def test_a_header_and_an_instruction_at_the_same_address_count_as_the_instruction() -> None:
+@pytest.mark.parametrize("include", [False, True], ids=["filtering", "including"])
+def test_a_header_and_an_instruction_at_the_same_address_count_as_the_instruction(
+    include: bool,
+) -> None:
     function = FakeFunction("sub_4000", 0x4000, 0x4100)
     header_and_instruction = _find(
         [function],
         [(0, 0x4000, function, FUNCTION_HEADER_LINE), (0, 0x4000, function)],
         value=0,
+        include_non_operand_hits=include,
     )
     assert header_and_instruction["functions"] == [_entry(0x4000, "sub_4000", [0x4000])]
-    header_only = _find([function], [(0, 0x4000, function, FUNCTION_HEADER_LINE)], value=0)
+    header_only = _find(
+        [function],
+        [(0, 0x4000, function, FUNCTION_HEADER_LINE)],
+        value=0,
+        include_non_operand_hits=include,
+    )
     assert header_only == {"total": 0, "truncated": False, "functions": []}
 
 
 @pytest.mark.parametrize(
-    ("line", "value"),
+    ("line", "value", "include"),
     [
-        (FUNCTION_HEADER_LINE, 0),
-        (CONTINUATION_LINE, 0),
-        (CASE_LINE, 0),
-        (FALLS_THROUGH_LINE, 0x422434),
-        (CASE_LINE, 0x114),
-        ((), 0x114),
+        (FUNCTION_HEADER_LINE, 0, False),
+        (FUNCTION_HEADER_LINE, 0, True),
+        (CONTINUATION_LINE, 0, False),
+        (CONTINUATION_LINE, 0, True),
+        (CASE_LINE, 0, False),
+        (CASE_LINE, 0, True),
+        ((), 0, True),
+        (FALLS_THROUGH_LINE, 0x422434, False),
+        (CASE_LINE, 0x114, False),
+        ((), 0x114, False),
     ],
-    ids=["header", "continuation", "case-zero", "falls-through", "case-0x114", "no-tokens"],
+    ids=[
+        "header",
+        "header-included",
+        "continuation",
+        "continuation-included",
+        "case-zero",
+        "case-zero-included",
+        "no-tokens-included",
+        "falls-through",
+        "case-0x114",
+        "no-tokens",
+    ],
 )
 def test_a_line_without_an_instruction_token_never_counts_for_any_value(
-    line: tuple[FakeLineToken, ...], value: int
+    line: tuple[FakeLineToken, ...], value: int, include: bool
 ) -> None:
     function = FakeFunction("noise", 0x5000, 0x5100)
-    result = _find([function], [(value, 0x5000, function, line)], value=value)
+    options = {"include_non_operand_hits": True} if include else {}
+    result = _find([function], [(value, 0x5000, function, line)], value=value, **options)
     assert result == {"total": 0, "truncated": False, "functions": []}
 
 
@@ -121,7 +150,9 @@ def test_a_line_with_an_instruction_token_counts_wherever_the_token_sits(
     line: tuple[FakeLineToken, ...],
 ) -> None:
     function = FakeFunction("code", 0x5000, 0x5100)
-    result = _find([function], [(0, 0x5010, function, line)], value=0, include_implicit_zero=True)
+    result = _find(
+        [function], [(0, 0x5010, function, line)], value=0, include_non_operand_hits=True
+    )
     assert result["functions"] == [_entry(0x5000, "code", [0x5010])]
 
 
@@ -144,7 +175,8 @@ def test_nonzero_values_keep_their_instruction_hits_and_lose_only_the_noise() ->
     }
 
 
-def test_noise_lines_take_no_slot_in_the_page_or_the_total() -> None:
+@pytest.mark.parametrize("include", [False, True], ids=["filtering", "including"])
+def test_noise_lines_take_no_slot_in_the_page_or_the_total(include: bool) -> None:
     noisy = FakeFunction("noisy", 0x1000, 0x1100)
     first = FakeFunction("first", 0x2000, 0x2100)
     second = FakeFunction("second", 0x3000, 0x3100)
@@ -154,24 +186,26 @@ def test_noise_lines_take_no_slot_in_the_page_or_the_total() -> None:
         (0, 0x2008, first),
         (0, 0x3008, second),
     ]
-    assert _find(functions, references, value=0, limit=1) == {
+    options = {"include_non_operand_hits": include}
+    assert _find(functions, references, value=0, limit=1, **options) == {
         "total": 2,
         "truncated": True,
         "functions": [_entry(0x2000, "first", [0x2008])],
     }
-    assert _find(functions, references, value=0, limit=1, offset=1) == {
+    assert _find(functions, references, value=0, limit=1, offset=1, **options) == {
         "total": 2,
         "truncated": False,
         "functions": [_entry(0x3000, "second", [0x3008])],
     }
-    assert _find(functions, references, value=0, limit=2) == {
+    assert _find(functions, references, value=0, limit=2, **options) == {
         "total": 2,
         "truncated": False,
         "functions": [_entry(0x2000, "first", [0x2008]), _entry(0x3000, "second", [0x3008])],
     }
 
 
-def test_the_name_filter_still_applies_to_instruction_lines() -> None:
+@pytest.mark.parametrize("include", [False, True], ids=["filtering", "including"])
+def test_the_name_filter_still_applies_to_instruction_lines(include: bool) -> None:
     kept = FakeFunction("kept_fn", 0x1000, 0x1100)
     dropped = FakeFunction("dropped_fn", 0x2000, 0x2100)
     result = _find(
@@ -179,10 +213,14 @@ def test_the_name_filter_still_applies_to_instruction_lines() -> None:
         [(0, 0x1008, kept), (0, 0x2008, dropped)],
         value=0,
         function_filter="^kept",
+        include_non_operand_hits=include,
     )
     assert result["functions"] == [_entry(0x1000, "kept_fn", [0x1008])]
 
 
-def test_a_line_outside_any_function_is_skipped_even_with_an_instruction_token() -> None:
-    result = _find([], [(0, 0x9000, None)], value=0)
+@pytest.mark.parametrize("include", [False, True], ids=["filtering", "including"])
+def test_a_line_outside_any_function_is_skipped_even_with_an_instruction_token(
+    include: bool,
+) -> None:
+    result = _find([], [(0, 0x9000, None)], value=0, include_non_operand_hits=include)
     assert result == {"total": 0, "truncated": False, "functions": []}
