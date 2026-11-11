@@ -45,9 +45,11 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   flag text, or the composite source and raw value as the storage, so same-named variables
   read apart.
 - `no_variable` for a name the function does not have (`rex_parameter_variables` and the
-  uidf setters and clearers) lists the function's variable names. It adds the note that
-  register-allocated parameters are named by their register only when the name is one of
-  the function's declared parameters.
+  uidf setters and clearers) lists the function's variable names. A name the function has
+  but the MLIL never defines (a parameter live from entry, or a stack argument) fails with
+  advice by source type: a register variable points to `rex_parameter_variables` and the
+  variable that copies it, a stack variable to the register that loads it, and any other
+  or mixed source gets none.
 - `no_mlil` (`rex_function_constraints`, `rex_mlil_uses`, `rex_parameter_variables`, and the
   uidf setters and clearers that resolve a variable name) and `no_hlil`
   (`rex_hlil_statements`) distinguish a skipped function from a pending one. When the core
@@ -248,11 +250,15 @@ present only on some rows.
   `{address, operator, constant, char, subject, subject_text}`. `operator` is `==` or
   `!=`, `constant` is unsigned hex at the constant's own width (-1 is `0xffffffff` in four
   bytes and `0xffffffffffffffff` in eight), and `char` is the printable ASCII character or
-  null. A `load` `offset` stays signed. `subject`
-  is `{kind: "load", base, offset}` (`base` is null for an absolute address; both are null,
-  and `text` is added, when the address is not a base variable plus a constant),
-  `{kind: "variable", variable, definition?}` with `definition` `{address, load}` when the
-  variable's only definition is a load, or `{kind: "expression", text}`.
+  null. The width is the constant operand's own width, inside any zero or sign extension.
+  `subject` is `{kind: "load", base, offset}`. `base` is null for an absolute address, whose
+  `offset` is unsigned hex at its width like every address. For a base variable plus a
+  displacement, `offset` is the displacement as signed two's complement at its own width,
+  so one displacement always prints one way (`-0x8`, never `0xfffffff8`). Both are null,
+  and `text` is added, when the address is not a base variable plus a constant. Other
+  subjects are `{kind: "variable", variable, definition?}` with `definition`
+  `{address, load}` when the variable's only definition is a load, or
+  `{kind: "expression", text}`.
 - `rex_function_containing`: `functions` (at most 64, ascending start) and `truncated`.
   `rex_function_define`: `start`, `name`, `analyzed`, `waited_ms`.
   `rex_function_define_many`: `defined` of `{start, name, analyzed}`, `failed` (addresses
@@ -274,8 +280,8 @@ present only on some rows.
   `truncated`, and `uses` of `{address, operation, text}`.
 - `rex_parameter_variables`: `function`, `parameter`, `storage` (one entry per matching
   variable in the function's variable order, shaped like `rex_mlil_uses`' `storage`),
-  `definitions` (a flat list of addresses over all matching variables), and `carriers` of
-  `{variable, address, text}`.
+  `definitions` (a flat list of addresses over all matching variables, ascending), and
+  `carriers` of `{variable, address, text}`.
 - `rex_quick_main`: `entry_point`, `method` (`symbol`, `entry-arg`, or `entry-fallback`),
   `main` (null when unresolved), `note` and `hint` (each null when it has nothing to add),
   `function` (main, else the entry function), `lines`, `truncated`.

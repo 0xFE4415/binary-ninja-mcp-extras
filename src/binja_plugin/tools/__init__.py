@@ -270,16 +270,11 @@ def _unknown_variable_error(function: Function, name: str) -> mcp.ToolError:
     more = (
         f" (+{len(names) - _MAX_NAME_CANDIDATES} more)" if len(names) > _MAX_NAME_CANDIDATES else ""
     )
-    message = (
+    return mcp.ToolError(
+        "no_variable",
         f"no MLIL variable named '{_truncate(name)}' in {_truncate(function.name)}; "
-        f"variables: {shown}{more}; use bn_variable_list for the full list"
+        f"variables: {shown}{more}; use bn_variable_list for the full list",
     )
-    if any(parameter.name == name for parameter in function.parameter_vars):
-        message += (
-            ". Register-allocated parameters are named by their register (for example r14), "
-            "not by their argument name"
-        )
-    return mcp.ToolError("no_variable", message)
 
 
 def _require_analyzed_function(bv: BinaryView, address: int) -> _Resolution:

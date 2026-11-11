@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, NotRequired, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
-from binaryninja.enums import AnalysisState, RegisterValueType
+from binaryninja.enums import AnalysisState, RegisterValueType, VariableSourceType
 from binaryninja.function import Function
 from binaryninja.mediumlevelil import MediumLevelILInstruction
 from binaryninja.variable import Variable
@@ -306,14 +306,25 @@ def _collect_mlil_definitions(
             matches.append((variable, definition))
     if matches:
         return matches
-    if any(variable.name == name for variable in target.vars):
-        raise mcp.ToolError(
-            "no_variable",
-            f"MLIL variable '{_truncate(name)}' in {_truncate(target.name)} has no "
-            "MediumLevelIL definition sites; stack-passed arguments cannot be informed, "
-            "inform the register that loads the value",
+    named = [variable for variable in target.vars if variable.name == name]
+    if not named:
+        raise _unknown_variable_error(target, name)
+    source_types = {variable.source_type for variable in named}
+    advice = ""
+    if source_types == {VariableSourceType.StackVariableSourceType}:
+        advice = (
+            "; stack-passed arguments cannot be informed, inform the register that loads the value"
         )
-    raise _unknown_variable_error(target, name)
+    if source_types == {VariableSourceType.RegisterVariableSourceType}:
+        advice = (
+            "; a register parameter is live from function entry, inform a variable that "
+            "copies it (rex_parameter_variables lists the copies)"
+        )
+    raise mcp.ToolError(
+        "no_variable",
+        f"MLIL variable '{_truncate(name)}' in {_truncate(target.name)} has no "
+        f"MediumLevelIL definition sites{advice}",
+    )
 
 
 def _iter_uidf_entries(targets: list[Function]) -> Iterator[_UidfEntry]:

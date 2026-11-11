@@ -557,7 +557,8 @@ def test_uidf_set_rejects_unknown_variables() -> None:
     assert exc.value.code == "no_variable"
     assert exc.value.message == (
         "MLIL variable 'argc' in main has no MediumLevelIL definition sites; "
-        "stack-passed arguments cannot be informed, inform the register that loads the value"
+        "a register parameter is live from function entry, inform a variable that "
+        "copies it (rex_parameter_variables lists the copies)"
     )
     assert main.set_user_var_value_calls == []
 

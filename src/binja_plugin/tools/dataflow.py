@@ -115,19 +115,30 @@ def _strip_extension(expression: Any) -> Any:
     return expression
 
 
-def _constant(expression: Any) -> int | None:
-    expression = _strip_extension(expression)
-    if _operation(expression) in _CONSTANTS:
-        return int(expression.constant)
-    return None
-
-
-def _unsigned_constant(expression: Any) -> int | None:
+def _constant_bits(expression: Any) -> tuple[int, int] | None:
+    """The constant inside any extensions as (value masked to its own width, width in bits)."""
     expression = _strip_extension(expression)
     if _operation(expression) not in _CONSTANTS:
         return None
-    width_mask = (1 << (8 * int(expression.size))) - 1
-    return int(expression.constant) & width_mask
+    width = 8 * int(expression.size)
+    return int(expression.constant) & ((1 << width) - 1), width
+
+
+def _unsigned_constant(expression: Any) -> int | None:
+    bits = _constant_bits(expression)
+    if bits is None:
+        return None
+    return bits[0]
+
+
+def _signed_constant(expression: Any) -> int | None:
+    bits = _constant_bits(expression)
+    if bits is None:
+        return None
+    value, width = bits
+    if value >> (width - 1):
+        return value - (1 << width)
+    return value
 
 
 def _describe_load(expression: Any) -> dict[str, object] | None:
@@ -136,12 +147,12 @@ def _describe_load(expression: Any) -> dict[str, object] | None:
     if _operation(expression) != "MLIL_LOAD":
         return None
     address = _strip_extension(expression.src)
-    constant = _constant(address)
+    constant = _unsigned_constant(address)
     if constant is not None:
         return {"kind": "load", "base": None, "offset": hex(constant)}
     base, offset = address, 0
     if _operation(address) == "MLIL_ADD":
-        base, offset = _strip_extension(address.left), _constant(address.right)
+        base, offset = _strip_extension(address.left), _signed_constant(address.right)
     if _operation(base) == "MLIL_VAR" and offset is not None:
         return {"kind": "load", "base": _truncate(base.src.name), "offset": hex(offset)}
     return {"kind": "load", "base": None, "offset": None, "text": _truncate(str(address))}
@@ -458,14 +469,14 @@ def rex_parameter_variables(
     matches = [variable for variable in target.vars if variable.name == parameter]
     if not matches:
         raise _unknown_variable_error(target, parameter)
-    definitions: list[str] = []
+    definition_addresses: list[int] = []
     for variable in matches:
         for definition in target_mlil.get_var_definitions(variable):
-            definitions.append(hex(definition.address))
+            definition_addresses.append(definition.address)
     return {
         "function": resolution.entry,
         "parameter": _truncate(parameter),
         "storage": [_variable_storage(target.arch, variable) for variable in matches],
-        "definitions": definitions,
+        "definitions": [hex(address) for address in sorted(definition_addresses)],
         "carriers": _parameter_carriers(target_mlil, parameter),
     }

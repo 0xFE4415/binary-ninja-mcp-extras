@@ -104,8 +104,12 @@ def add(left: FakeInstruction, right: FakeInstruction) -> FakeInstruction:
     return FakeInstruction("MLIL_ADD", left=left, right=right)
 
 
-def sign_extend(src: FakeInstruction) -> FakeInstruction:
-    return FakeInstruction("MLIL_SX", src=src)
+def sign_extend(src: FakeInstruction, size: int = 8) -> FakeInstruction:
+    return FakeInstruction("MLIL_SX", src=src, size=size)
+
+
+def zero_extend(src: FakeInstruction, size: int = 8) -> FakeInstruction:
+    return FakeInstruction("MLIL_ZX", src=src, size=size)
 
 
 def compare(operation: str, left: FakeInstruction, right: FakeInstruction) -> FakeInstruction:
