@@ -115,7 +115,7 @@ def test_rex_help_renders_the_union_typed_value_parameter() -> None:
     assert value["minimum"] == 0
     assert value["maximum"] == _MAX_UINT64
     assert "0x" in value["description"]
-    assert value["error_codes"] == []
+    assert value["error_codes"] == ["invalid_params"]
     assert [parameter["name"] for parameter in detail["parameters"]] == [
         "value",
         "function_filter",

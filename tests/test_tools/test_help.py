@@ -145,7 +145,10 @@ def test_help_category_lists_its_tools_with_their_purposes() -> None:
 def test_help_lists_itself_in_the_help_category() -> None:
     assert {
         "name": "rex_help",
-        "description": "Describe the plugin's rex_ tools from the mcp registry.",
+        "description": (
+            "Describe the plugin's rex_ tools, and the native rx_ tools when loaded, "
+            "from the registry."
+        ),
     } in _help(category="help")["tools"]
 
 
@@ -274,7 +277,11 @@ def test_help_details_required_flags_and_per_parameter_error_codes() -> None:
     by_name = {parameter["name"]: parameter for parameter in _help("rex_data_find")["parameters"]}
     assert by_name["pattern"]["required"] is True
     assert by_name["pattern"]["maxLength"] == _MAX_PATTERN_CHARS
-    assert by_name["pattern"]["error_codes"] == ["pattern_too_large", "invalid_pattern"]
+    assert by_name["pattern"]["error_codes"] == [
+        "invalid_params",
+        "pattern_too_large",
+        "invalid_pattern",
+    ]
     assert by_name["section"]["error_codes"] == ["section_not_found"]
     assert by_name["limit"]["required"] is False
 
@@ -318,7 +325,7 @@ def test_help_details_non_empty_strings_and_itself() -> None:
         "name": "tool_name",
         "type": "string",
         "required": False,
-        "description": "rex_ tool whose parameters to describe; empty selects the category views.",
+        "description": "Tool whose parameters to describe; empty selects the category views.",
         "error_codes": [],
         "default": "",
     }
@@ -337,7 +344,7 @@ def test_help_fails_on_an_unknown_name_and_lists_the_valid_ones() -> None:
         _help("rex_nope")
     assert exc.value.code == "unknown_tool"
     registered = ", ".join(sorted(tool.name for tool in FakeTool.list()))
-    expected = f"no rex_ tool named 'rex_nope'; registered rex_ tools: {registered}"
+    expected = f"no tool named 'rex_nope'; registered tools: {registered}"
     assert exc.value.message == expected
 
 
@@ -352,7 +359,7 @@ def test_help_error_code_table_keys_are_registered_parameters() -> None:
         for tool in FakeTool.list()
         for parameter_name in tool.input_schema["properties"]
     }
-    assert set(_PARAMETER_ERROR_CODES) <= registered
+    assert {key for key in _PARAMETER_ERROR_CODES if key[0].startswith("rex_")} <= registered
 
 
 def _walk_definitions(node: ast.AST) -> Iterator[ast.AST]:
@@ -409,7 +416,12 @@ _LISTED_TOOL_LEVEL_CODES = {"rex_uidf_set_many": {"set_failed"}}
 
 def test_help_error_code_table_matches_the_handler_sources() -> None:
     defined = _defined_error_codes() - {"invalid_params"} - _TOOL_LEVEL_CODES
-    listed = {code for codes in _PARAMETER_ERROR_CODES.values() for code in codes}
+    listed = {
+        code
+        for (listed_tool, _), codes in _PARAMETER_ERROR_CODES.items()
+        if listed_tool.startswith("rex_")
+        for code in codes
+    }
     in_band = {code for codes in _LISTED_TOOL_LEVEL_CODES.values() for code in codes}
     assert listed - {"invalid_params"} - in_band == defined
 
@@ -569,6 +581,8 @@ def test_a_tool_raising_invalid_params_lists_it_unless_it_is_a_known_gap(tool_na
     ("tool_name", "parameter_name", "error_codes"),
     [
         ("rex_constant_find", "function_filter", ["invalid_regex"]),
+        ("rex_constant_find", "value", ["invalid_params"]),
+        ("rex_constant_find", "include_non_operand_hits", ["invalid_params"]),
         ("rex_hlil_grep", "function_filter", ["invalid_regex"]),
         ("rex_hlil_grep", "regex", ["invalid_regex"]),
         ("rex_string_refs", "pattern", ["invalid_regex"]),
@@ -706,6 +720,12 @@ _INVALID_PARAMS_LISTINGS = {
     ("rex_type_library_export", "kind"),
     ("rex_uidf_set_many", "function"),
     ("rex_uidf_set_many", "items"),
+    ("rex_constant_find", "value"),
+    ("rex_constant_find", "include_non_operand_hits"),
+    ("rex_data_find", "pattern"),
+    ("rex_find_functions_by_pattern", "pattern"),
+    ("rx_data_find", "pattern"),
+    ("rx_multi_find", "patterns"),
 }
 
 

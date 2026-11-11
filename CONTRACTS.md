@@ -184,7 +184,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   tool's parameters; an unknown name raises `unknown_tool`. Passing both raises
   `invalid_params`. Every `rex_*` tool appears in exactly one category: the module that
   defines it, or `other` for a registered tool no category module defines. The index lists
-  `other` only when it has tools; `category=other` is always valid.
+  `other` only when it has tools; `category=other` is always valid. `rex_help` reads the
+  live tool registry, so the native `rx_*` tools appear, under `scanning`, only while the
+  native plugin is loaded; otherwise they are absent and `tool_name` for one raises
+  `unknown_tool`.
 - `rex_data_read` returns `bytes_read` and `complete` (whether all requested bytes were
   read). An unmapped start returns zero bytes. A short read gives the byte count, not
   the locations of unreadable gaps.
@@ -310,8 +313,8 @@ present only on some rows.
   follows up to eight stubs. It is null for a loop, a longer chain, a target that is not the
   start of a function, or a chain that ends in an import thunk (a symbol of type
   `ImportedFunctionSymbol`, or a function whose only statement tail-calls an import), which
-  has no body of its own. A target whose analysis is still pending has no HLIL to inspect, so
-  it is named as the body even if it later turns out to be a stub.
+  has no body of its own. A target whose analysis is pending or skipped has no HLIL to
+  inspect, so it is named as the body (a pending one may later turn out to be a stub).
 - `rex_redo`: `redone`, `undo_left`, `redo_left`. `rex_undo`: `undone`, `undo_left`,
   `redo_left`.
 - `rex_relocation_at`: `address`, `count`, and `relocations` of `{address, size, type,
@@ -385,7 +388,10 @@ present only on some rows.
   or `??` for any byte; separators inside a byte are ignored. A separator is any character
   Python's `str.isspace()` accepts: U+0009-U+000D, U+001C-U+001F, U+0020, U+0085, U+00A0,
   U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000. Any other token (`+f`,
-  `-1`, `0x`, `f_`, non-ASCII digits, `?5`) returns `invalid_pattern` naming the token.
+  `-1`, `0x`, `f_`, non-ASCII digits, `?5`) returns `invalid_pattern` naming the token. A
+  `pattern` that is not a string returns `invalid_params`. A `section` name containing a NUL
+  returns `section_not_found`, like any unknown name. An error message that echoes a NUL
+  shows it as U+FFFD, because the core cuts a message at its first NUL.
 - `rex_constant_find` `value` is an integer (0 to 18446744073709551615) or a string: `0x` or
   `0X`, then 1-16 hex digits in either case. A client that reads JSON numbers as doubles
   rounds the integer maximum to 18446744073709552000, so it should send the hex string for

@@ -7,7 +7,9 @@ from typing import TypedDict
 
 from binaryninja import mcp
 
-_TOOL_PREFIX = "rex_"
+_NATIVE_TOOL_PREFIX = "rx_"
+_TOOL_PREFIXES = ("rex_", _NATIVE_TOOL_PREFIX)
+_NATIVE_TOOL_CATEGORY = "scanning"
 
 _UNCATEGORIZED = "other"
 _UNCATEGORIZED_USE_WHEN = "Registered rex_ tools that no category module defines."
@@ -40,7 +42,9 @@ _PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
     ("rex_component_create", "parent_path"): ("component_not_found",),
     ("rex_component_get", "path"): ("component_not_found",),
     ("rex_constant_find", "function_filter"): ("invalid_regex",),
-    ("rex_data_find", "pattern"): ("pattern_too_large", "invalid_pattern"),
+    ("rex_constant_find", "include_non_operand_hits"): ("invalid_params",),
+    ("rex_constant_find", "value"): ("invalid_params",),
+    ("rex_data_find", "pattern"): ("invalid_params", "pattern_too_large", "invalid_pattern"),
     ("rex_data_find", "section"): ("section_not_found",),
     ("rex_decompile_many", "functions"): ("analysis_pending",),
     ("rex_disasm_at", "address"): ("analysis_pending",),
@@ -48,7 +52,11 @@ _PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
     ("rex_export_disasm", "address"): ("analysis_pending",),
     ("rex_export_disasm", "filename"): ("invalid_params", "path_escape", "export_failed"),
     ("rex_export_symbols", "filename"): ("invalid_params", "path_escape", "export_failed"),
-    ("rex_find_functions_by_pattern", "pattern"): ("pattern_too_large", "invalid_pattern"),
+    ("rex_find_functions_by_pattern", "pattern"): (
+        "invalid_params",
+        "pattern_too_large",
+        "invalid_pattern",
+    ),
     ("rex_function_constraints", "function"): ("no_mlil", "analysis_pending"),
     ("rex_function_containing", "addr"): ("no_function", "analysis_pending"),
     ("rex_function_define", "start"): ("define_failed",),
@@ -95,6 +103,15 @@ _PARAMETER_ERROR_CODES: dict[tuple[str, str], tuple[str, ...]] = {
         "definition_not_found",
         "set_failed",
     ),
+    ("rx_data_find", "pattern"): ("invalid_params", "pattern_too_large", "invalid_pattern"),
+    ("rx_data_find", "section"): ("section_not_found",),
+    ("rx_multi_find", "patterns"): (
+        "invalid_params",
+        "too_many_patterns",
+        "pattern_too_large",
+        "invalid_pattern",
+    ),
+    ("rx_multi_find", "section"): ("section_not_found",),
 }
 
 
@@ -106,6 +123,8 @@ _SCHEMA_BOUNDS = (
     "minLength",
     "maxLength",
     "items",
+    "minItems",
+    "maxItems",
 )
 
 
@@ -145,6 +164,8 @@ def _tools_by_category(registered: dict[str, mcp.Tool]) -> dict[str, list[str]]:
             for name, member in vars(module).items()
             if name in registered and member.__module__ == module.__name__
         )
+    native_names = (name for name in registered if name.startswith(_NATIVE_TOOL_PREFIX))
+    categories[_NATIVE_TOOL_CATEGORY] = sorted([*categories[_NATIVE_TOOL_CATEGORY], *native_names])
     categorized: set[str] = set()
     for names in categories.values():
         categorized.update(names)
@@ -184,18 +205,17 @@ def _tool_view(registered: dict[str, mcp.Tool], tool_name: str) -> _ToolView:
     if tool is None:
         raise mcp.ToolError(
             "unknown_tool",
-            "no rex_ tool named "
-            f"'{tool_name}'; registered rex_ tools: {', '.join(sorted(registered))}",
+            f"no tool named '{tool_name}'; registered tools: {', '.join(sorted(registered))}",
         )
     schema = tool.input_schema
     required = schema.get("required", [])
     parameters: list[dict[str, object]] = []
-    for parameter_name, parameter_schema in schema["properties"].items():
+    for parameter_name, parameter_schema in schema.get("properties", {}).items():
         parameter: dict[str, object] = {
             "name": parameter_name,
-            "type": parameter_schema["type"],
+            "type": parameter_schema.get("type"),
             "required": parameter_name in required,
-            "description": parameter_schema["description"],
+            "description": parameter_schema.get("description", ""),
             "error_codes": list(_PARAMETER_ERROR_CODES.get((tool_name, parameter_name), ())),
         }
         for bound in _SCHEMA_BOUNDS:
@@ -209,12 +229,14 @@ def _tool_view(registered: dict[str, mcp.Tool], tool_name: str) -> _ToolView:
 def rex_help(
     call: mcp.ToolCall, tool_name: str = "", category: str = ""
 ) -> _CategoryView | _CategoriesView | _ToolView:
-    """Describe the plugin's rex_ tools from the mcp registry.
+    """Describe the plugin's rex_ tools, and the native rx_ tools when loaded, from the registry.
 
-    :param tool_name: rex_ tool whose parameters to describe; empty selects the category views.
+    :param tool_name: Tool whose parameters to describe; empty selects the category views.
     :param category: Category whose tools to list with purposes; empty lists the categories.
     """
-    registered = {tool.name: tool for tool in mcp.Tool.list() if tool.name.startswith(_TOOL_PREFIX)}
+    registered = {
+        tool.name: tool for tool in mcp.Tool.list() if tool.name.startswith(_TOOL_PREFIXES)
+    }
     if tool_name and category:
         raise mcp.ToolError("invalid_params", "pass either tool_name or category, not both")
     if category:

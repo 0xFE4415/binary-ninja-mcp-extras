@@ -185,6 +185,34 @@ def test_parameter_of_another_source_type_gets_no_advice() -> None:
     _assert_advice([flag], [flag], "flag", "")
 
 
+def test_parameter_membership_compares_variables_by_value_not_identity() -> None:
+    listed = FakeVariable("argc", index=7)
+    parameter = FakeVariable("argc", index=7)
+    assert listed is not parameter
+    _assert_advice([listed], [parameter], "argc", _REGISTER_ADVICE)
+
+
+def test_a_variable_differing_in_index_is_not_the_listed_parameter() -> None:
+    local = FakeVariable("argc", index=7)
+    other_parameter = FakeVariable("argc", index=8)
+    _assert_advice([local], [other_parameter], "argc", "")
+
+
+def test_fake_variables_compare_and_hash_by_source_type_index_and_storage() -> None:
+    original = FakeVariable("a", index=3, storage=5)
+    assert original == FakeVariable("renamed", index=3, storage=5, type_string="char")
+    assert hash(original) == hash(FakeVariable("renamed", index=3, storage=5))
+    assert original != FakeVariable("a", index=4, storage=5)
+    assert original != FakeVariable("a", index=3, storage=6)
+    assert original != FakeVariable("a", index=3, storage=5, source_type=_STACK)
+    assert original != "a"
+    assert len({original, FakeVariable("a", index=3, storage=5)}) == 1
+
+
+def test_fake_variables_are_distinct_unless_given_the_same_index() -> None:
+    assert FakeVariable("v") != FakeVariable("v")
+
+
 def test_same_named_parameter_and_local_get_no_advice() -> None:
     parameter, local = _variable_named("v", _REGISTER), _variable_named("v", _REGISTER)
     _assert_advice([parameter, local], [parameter], "v", "")

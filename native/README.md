@@ -20,10 +20,8 @@ Binary Ninja itself, so a rewrite would change nothing but the language.
 
 `rx_data_find` mirrors `rex_data_find`'s client-visible contract (result shape,
 pagination, error codes, error text). Two deliberate divergences remain, both in
-error wording only. Two other differences are known and wait for Python-side
-fixes: a NUL byte in `section` (Python scans `.text`; Rust returns
-`section_not_found`), and a non-string `pattern` (Python returns `internal_error`;
-Rust returns `invalid_params`).
+error wording only. A NUL byte in `section` returns `section_not_found` from both
+tools, and both show the NUL in an echoed message as U+FFFD.
 
 1. **Mistyped or out-of-range arguments are rejected at the serde layer.**
    A wrong-typed value for any parameter (such as `section:5` or `limit:"5"`), a
@@ -32,8 +30,10 @@ Rust returns `invalid_params`).
    the Python "Expected string parameter", "Expected integer parameter",
    "Must be at least 0", or "Must be at most 500" wording. The unsigned Rust
    argument types make the lower-bound check unreachable, so the code matches but
-   the wording cannot without duplicating serde's job. The one exception is a
-   non-string `pattern`, covered above.
+   the wording cannot without duplicating serde's job. A non-string `pattern` is
+   one case: Python says "Expected string parameter 'pattern'". A missing
+   required `pattern` is another: Python says "Expected JSON parameter
+   'pattern'", Rust says serde's "missing field".
 2. **`offset` beyond `u64::MAX` has different wording.** Both tools reject it
    with `invalid_params`: Python at the protocol layer ("Expected integer
    parameter 'offset'"), Rust at deserialization (serde's message). u64 spans the

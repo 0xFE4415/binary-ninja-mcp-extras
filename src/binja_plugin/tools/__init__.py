@@ -96,10 +96,16 @@ def _name_filter(function_filter: str) -> re.Pattern[str] | None:
     return _compile_user_regex("function_filter", function_filter, ignore_case=True)
 
 
+def _show_nul(text: str) -> str:
+    # The core cuts a message at its first NUL, so an echoed NUL must not reach it.
+    return text.replace("\x00", "\N{REPLACEMENT CHARACTER}")
+
+
 def _resolve_section(bv: BinaryView, name: str) -> tuple[int, int]:
-    section = bv.get_section_by_name(name)
+    # The core reads the name as a C string, so a NUL would silently select a shorter name.
+    section = None if "\x00" in name else bv.get_section_by_name(name)
     if section is None:
-        raise mcp.ToolError("section_not_found", f"no section named '{_truncate(name)}'")
+        raise mcp.ToolError("section_not_found", f"no section named '{_show_nul(_truncate(name))}'")
     return section.start, section.end
 
 

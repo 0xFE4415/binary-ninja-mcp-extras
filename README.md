@@ -38,6 +38,7 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 
 1. `rex_help` for discovery: the tool categories, each with a "use when" line. Open one
    with `rex_help(category=...)`, or one tool's parameters with `rex_help(tool_name=...)`.
+   It also lists the `rx_*` scanners, under `scanning`, once the native half is loaded.
 2. `rex_quick_main` for fast contact: entry point, `main`, and `main`'s HLIL in one
    call.
 3. Search. `rex_string_search` for strings, `rex_data_find` or `rx_multi_find` for
@@ -148,7 +149,8 @@ Three searches stop early, so one call stays fast on a large database.
   and it handles calls one at a time. Use substring mode (`regex=false`) for untrusted
   input where the tool has it, and keep `rex_hlil_grep` patterns simple.
 - `rx_data_find` beats `rex_data_find` by about 7.5x on a whole-view scan and ties it
-  (0.99x) on `.text`; on `.rodata` it was about 30x faster. `rx_multi_find` won at every
+  (0.99x) on `.text`; on `.rodata` it was about 30x faster in one diagnostic run.
+  `rx_multi_find` won at every
   scope, up to 12.6x on the full view. Both register whenever the native half is
   installed, so pick per scan. The numbers come from [native/BENCH.md](native/BENCH.md).
 

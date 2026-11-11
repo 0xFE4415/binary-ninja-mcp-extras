@@ -19,6 +19,7 @@ from binja_plugin.tools import (
     _name_filter,
     _paginate,
     _resolve_section,
+    _show_nul,
     _truncate,
     _validate_range,
 )
@@ -65,12 +66,15 @@ _MAX_CONSTANT_ADDRESSES = 6
 
 
 def _compile_pattern(pattern: str) -> tuple[re.Pattern[bytes], int]:
+    # Schema-annotated parameters reach the body unchecked, so the type is enforced here.
+    if not isinstance(pattern, str):
+        raise mcp.ToolError("invalid_params", "Expected string parameter 'pattern'")
     if len(pattern) > _MAX_PATTERN_CHARS:
         raise mcp.ToolError("pattern_too_large", f"pattern exceeds {_MAX_PATTERN_CHARS} characters")
     try:
         return compile_hex_pattern(pattern)
     except HexPatternError as exc:
-        raise mcp.ToolError("invalid_pattern", str(exc)) from None
+        raise mcp.ToolError("invalid_pattern", _show_nul(str(exc))) from None
 
 
 class _ConstantFunction(TypedDict):
@@ -255,7 +259,7 @@ def rex_data_find(
 @mcp.tool(read_only=True)
 def rex_find_functions_by_pattern(
     call: mcp.ToolCall,
-    pattern: str,
+    pattern: Annotated[str, mcp.Schema({"type": "string", "maxLength": _MAX_PATTERN_CHARS})],
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> _FindFunctionsResult:
