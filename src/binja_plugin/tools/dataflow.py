@@ -122,6 +122,14 @@ def _constant(expression: Any) -> int | None:
     return None
 
 
+def _unsigned_constant(expression: Any) -> int | None:
+    expression = _strip_extension(expression)
+    if _operation(expression) not in _CONSTANTS:
+        return None
+    width_mask = (1 << (8 * int(expression.size))) - 1
+    return int(expression.constant) & width_mask
+
+
 def _describe_load(expression: Any) -> dict[str, object] | None:
     """Describe a memory load as its base variable plus a constant offset, or None."""
     expression = _strip_extension(expression)
@@ -180,7 +188,7 @@ def _iter_branch_constraints(target_mlil: MediumLevelILFunction) -> list[dict[st
         operator = _COMPARISON_OPERATORS.get(_operation(condition))
         if operator is None:
             continue
-        left, right = _constant(condition.left), _constant(condition.right)
+        left, right = _unsigned_constant(condition.left), _unsigned_constant(condition.right)
         if left is not None and right is None:
             constant, subject = left, condition.right
         elif right is not None and left is None:
@@ -319,13 +327,14 @@ def _variable_report(
         _VariableUse(address=hex(use.address), operation=_operation(use), text=_truncate(str(use)))
         for use in uses
     ]
+    definition_addresses = sorted(
+        definition.address for definition in target_mlil.get_var_definitions(variable)
+    )
     return {
         "variable": _truncate(variable.name),
         "storage": _variable_storage(architecture, variable),
         "type": _truncate(str(variable.type)),
-        "definitions": [
-            hex(definition.address) for definition in target_mlil.get_var_definitions(variable)
-        ],
+        "definitions": [hex(address) for address in definition_addresses],
         "total": len(rows),
         "truncated": offset + limit < len(rows),
         "uses": rows[offset : offset + limit],

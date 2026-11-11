@@ -1066,11 +1066,7 @@ def test_parameter_missing_name_counts_candidates_past_the_listed_ones() -> None
     with pytest.raises(FakeToolError) as error:
         parameter(_call(view), function=0x1000, parameter="arg9x")
     assert error.value.code == "no_variable"
-    assert error.value.message.endswith(
-        "(+1 more); use bn_variable_list for the full list. "
-        "Register-allocated parameters are named by their register (for example r14), "
-        "not by their argument name"
-    )
+    assert error.value.message.endswith("(+1 more); use bn_variable_list for the full list")
 
 
 def test_parameter_missing_name_lists_exactly_the_candidate_cap() -> None:

@@ -44,6 +44,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   variables as `name (storage)`, with the register name, `stack +0x8` or `stack -0x8`, the
   flag text, or the composite source and raw value as the storage, so same-named variables
   read apart.
+- `no_variable` for a name the function does not have (`rex_parameter_variables` and the
+  uidf setters and clearers) lists the function's variable names. It adds the note that
+  register-allocated parameters are named by their register only when the name is one of
+  the function's declared parameters.
 - `no_mlil` (`rex_function_constraints`, `rex_mlil_uses`, `rex_parameter_variables`, and the
   uidf setters and clearers that resolve a variable name) and `no_hlil`
   (`rex_hlil_statements`) distinguish a skipped function from a pending one. When the core
@@ -242,7 +246,9 @@ present only on some rows.
   match_count, addresses, addresses_truncated}`.
 - `rex_function_constraints`: `function`, `total`, `truncated`, and `constraints` of
   `{address, operator, constant, char, subject, subject_text}`. `operator` is `==` or
-  `!=`, `constant` is hex, and `char` is the printable ASCII character or null. `subject`
+  `!=`, `constant` is unsigned hex at the constant's own width (-1 is `0xffffffff` in four
+  bytes and `0xffffffffffffffff` in eight), and `char` is the printable ASCII character or
+  null. A `load` `offset` stays signed. `subject`
   is `{kind: "load", base, offset}` (`base` is null for an absolute address; both are null,
   and `text` is added, when the address is not a base variable plus a constant),
   `{kind: "variable", variable, definition?}` with `definition` `{address, load}` when the
@@ -264,8 +270,8 @@ present only on some rows.
 - `rex_memory_write`: `address`, `bytes_written`.
 - `rex_mlil_uses`: `function`, `definition_site` (the queried address), and `variables`,
   one per defined variable: `variable`, `storage`, `type`, `definitions` (a flat list of
-  the addresses of every definition the core records for it), `total`, `truncated`, and
-  `uses` of `{address, operation, text}`.
+  the addresses of every definition the core records for it, ascending), `total`,
+  `truncated`, and `uses` of `{address, operation, text}`.
 - `rex_parameter_variables`: `function`, `parameter`, `storage` (one entry per matching
   variable in the function's variable order, shaped like `rex_mlil_uses`' `storage`),
   `definitions` (a flat list of addresses over all matching variables), and `carriers` of
