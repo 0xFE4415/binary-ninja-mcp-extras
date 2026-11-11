@@ -65,11 +65,13 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `rex_component_add_functions`, `rex_annotate_many`, and `rex_quick_main`) picks one: the
   containing function with the lowest start address, the architecture name breaking a tie
   between equal starts. The core lists containing functions in no documented order, so the
-  pick never follows it. The chosen function comes back as a resolved function entry,
-  `{start, name, also_containing, same_name}`: `also_containing` lists the other functions
-  that contain the address and `same_name` the other functions with the chosen name, each
-  as `{start, name}` by ascending start and at most 64 per list. `rex_function_containing`
-  lists every containing function in the same order, so its first entry is the pick.
+  pick never follows it. `rex_find_functions_by_pattern` credits each hit to the same pick,
+  so overlapping code counts once, for the lowest-start function. The chosen function comes
+  back as a resolved function entry, `{start, name, also_containing, same_name}`:
+  `also_containing` lists the other functions that contain the address and `same_name` the
+  other functions with the chosen name, each as `{start, name}` by ascending start and at
+  most 64 per list. `rex_function_containing` lists every containing function in the same
+  order, so its first entry is the pick.
   Passing a function name in an address expression is ambiguous too: the core resolves it
   to one address before the plugin sees it and does not say that other functions share the
   name. `same_name` is where that shows, whether the caller passed a name or an address.
@@ -351,6 +353,12 @@ present only on some rows.
   Python's `str.isspace()` accepts: U+0009-U+000D, U+001C-U+001F, U+0020, U+0085, U+00A0,
   U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000. Any other token (`+f`,
   `-1`, `0x`, `f_`, non-ASCII digits, `?5`) returns `invalid_pattern` naming the token.
+- `rex_constant_find` `value` is an integer (0 to 18446744073709551615) or a string: `0x` or
+  `0X`, then 1-16 hex digits in either case. A client that reads JSON numbers as doubles
+  rounds the integer maximum to 18446744073709552000, so it should send the hex string for
+  values above 2^53. A value that is not an integer or string (a boolean, float, null, list,
+  or object), any other string, a sign, whitespace, an empty digit list, or more than 16
+  digits returns `invalid_params` naming the violation; strings are never coerced.
 - `rx_multi_find` accepts 1-64 patterns: an empty list returns `invalid_params`, a longer
   one `too_many_patterns`. Each entry is capped at 8,192 characters like `rex_data_find`'s
   `pattern`, and an over-cap entry returns `pattern_too_large` naming its index.
@@ -376,12 +384,24 @@ Usage strategies that do not fit a tool's one-line description.
   an instruction line, one whose tokens include an instruction token. The core also reports
   function header lines and the `{ Continuation of function ... }`, `{ Falls through into
   ... }`, and `{Case ...}` annotation lines; those never count, so `value` 0 no longer
-  matches every function. The core still matches any zero-valued token on an instruction
-  line, so `value` 0 can hit an instruction with no zero operand that carries an annotation
-  such as `{0x3}`; check the disassembly. A value that is rare or absent makes the core scan
-  the whole view before the search ends. Use it to enumerate every function touching a
-  magic value; when the value lives in data rather than code, use `rex_data_find` or
-  `rx_multi_find` instead.
+  matches every function. The core also matches `value` 0 on an instruction with no zero
+  operand, for example `xor eax, eax  {0x0}` (a register's known value in an annotation) or
+  a line that carries a string annotation. For `value` 0 the tool keeps a hit only when a
+  token that belongs to an operand and carries a number or address (integer, possible
+  address, code-relative address, floating point, character constant, enumeration member,
+  code or data symbol, import, or external symbol) is 0. A line whose tokens carry no
+  operand index at all is kept, since it cannot be judged. The optional boolean
+  `include_non_operand_hits` (default false) returns the dropped hits too; it is only
+  allowed with `value` 0 and otherwise returns `invalid_params`. Dropped hits take no slot
+  in `total`, paging, the address cap, or `truncated`. Other values are not filtered. The
+  tool lists a hit under the function the core attributes the line to, not by the
+  lowest-start rule, so in overlapping code one address can appear under several functions.
+  A value that is rare or absent makes the core scan the whole view before the search ends.
+  Use it to enumerate every function touching a magic value; when the value lives in data
+  rather than code, use `rex_data_find` or `rx_multi_find` instead.
+- `rex_call_paths` with `direction=callers` from a sink answers "who can reach this"
+  without hand-walking xrefs; `direction=callees` from a source answers "what can this
+  reach". Both directions are bounded by `max_depth` and `max_paths`.
 - `rex_call_paths` defaults to `direction=callers`: from a sink it answers "who can reach
   this" without hand-walking xrefs. "Does main reach X?" needs `direction=callees` from
   main, which answers "what can this reach". Both directions are bounded by `max_depth` and
