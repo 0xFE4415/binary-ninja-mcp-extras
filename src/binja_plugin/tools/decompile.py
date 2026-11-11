@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
+from binaryninja.enums import SymbolType
 from binaryninja.function import Function
 from binaryninja.highlevelil import HighLevelILConstPtr, HighLevelILTailcall
 
@@ -16,6 +17,7 @@ from binja_plugin.tools import (
     _compile_user_regex,
     _disasm_window,
     _drop,
+    _function_order,
     _ItemError,
     _missing_il_message,
     _name_filter,
@@ -194,7 +196,6 @@ def _entry_argument_main(
 
 
 def _tailcall_stub_target(function: Function) -> int | None:
-    """The constant address a function does nothing but tail-call, else None."""
     hlil = function.hlil
     if hlil is None:
         return None
@@ -212,18 +213,19 @@ def _tailcall_stub_target(function: Function) -> int | None:
 
 
 def _tailcall_stub_body(bv: BinaryView, main: Function) -> Function | None:
-    """Follow tail-call stubs from main to the first real body, within a bounded chain."""
-    current = main
-    for _ in range(_MAX_TAILCALL_HOPS + 1):
-        target = _tailcall_stub_target(current)
-        if target is None:
-            return current if current is not main else None
-        starting_here = [
-            function for function in bv.get_functions_containing(target) if function.start == target
-        ]
+    target = _tailcall_stub_target(main)
+    if target is None:
+        return None
+    for _ in range(_MAX_TAILCALL_HOPS):
+        starting_here = bv.get_functions_at(target)
         if not starting_here:
             return None
-        current = _resolve_containing(bv, starting_here).function
+        current = min(starting_here, key=_function_order)
+        if current.symbol.type == SymbolType.ImportedFunctionSymbol:
+            return None
+        target = _tailcall_stub_target(current)
+        if target is None:
+            return current
     return None
 
 
@@ -241,17 +243,17 @@ def _resolve_main(
 ) -> tuple[_Resolution | None, _MainMethod, str | None]:
     """Resolve main: function symbol first, then the entry stub's pointer argument."""
     if entry.function.name in _MAIN_SYMBOL_NAMES:
-        return entry, "symbol", None
+        return entry, "symbol", _main_note(bv, entry.function)
     for name in _MAIN_SYMBOL_NAMES:
         candidates = sorted(bv.get_functions_by_name(name), key=lambda function: function.start)
         if candidates:
             chosen = candidates[0]
             resolved = _resolved_entry(bv, chosen, bv.get_functions_containing(chosen.start))
-            return _Resolution(chosen, resolved), "symbol", None
-    main, note = _entry_argument_main(bv, call, entry.function)
-    if main is not None:
-        return main, "entry-arg", note
-    return None, "entry-fallback", note
+            return _Resolution(chosen, resolved), "symbol", _main_note(bv, chosen)
+    main, entry_note = _entry_argument_main(bv, call, entry.function)
+    if main is None:
+        return None, "entry-fallback", entry_note
+    return main, "entry-arg", _main_note(bv, main.function)
 
 
 def _render_hlil_matches(
@@ -502,8 +504,6 @@ def rex_quick_main(
         )
     entry = _resolve_containing(bv, functions)
     main, method, note = _resolve_main(bv, call, entry)
-    if main is not None:
-        note = _main_note(bv, main.function)
     resolution = main if main is not None else entry
     function = resolution.function
     lines, truncated = _render_hlil_lines(function.hlil, max_lines)

@@ -11,6 +11,7 @@ from helpers import (
 )
 from helpers_view import (
     FakeAnalysisSkipReason,
+    FakeArchitecture,
     FakeBinaryView,
     FakeFunction,
     RenderableText,
@@ -54,8 +55,10 @@ def _entry() -> FakeFunction:
     return FakeFunction("_start", 0x1000, 0x1100, hlil=RenderableText("void _start() {}"))
 
 
-def _quick(*functions: FakeFunction) -> dict[str, Any]:
-    view = FakeBinaryView(entry_point=0x1000, functions=[_entry(), *functions])
+def _quick(*functions: FakeFunction, pending: list[FakeFunction] | None = None) -> dict[str, Any]:
+    view = FakeBinaryView(
+        entry_point=0x1000, functions=[_entry(), *functions], pending_functions=pending
+    )
     _, quick = get_tool("rex_quick_main")
     return quick(FakeParsingToolCall(view))
 
@@ -204,3 +207,59 @@ def test_a_skipped_target_is_still_named_as_the_real_body() -> None:
         analysis_skip_reason=FakeAnalysisSkipReason.AlwaysSkipReason,
     )
     assert _quick(_stub("main", 0x3000, 0x2000), skipped)["note"] == _note("real", 0x2000)
+
+
+class _FakeImportDestination:
+    pass
+
+
+def _plt_thunk(name: str, start: int, symbol_type: str = "ImportedFunctionSymbol") -> FakeFunction:
+    return FakeFunction(
+        name,
+        start,
+        start + 0x10,
+        hlil=_FakeHlil([[FakeHighLevelILTailcall(_FakeImportDestination())]]),
+        symbol_type=symbol_type,
+    )
+
+
+def test_a_stub_to_a_library_import_thunk_gives_no_note() -> None:
+    assert _quick(_stub("main", 0x3000, 0x2000), _plt_thunk("system", 0x2000))["note"] is None
+
+
+def test_a_chain_of_stubs_ending_in_an_import_thunk_gives_no_note() -> None:
+    result = _quick(
+        _stub("main", 0x3000, 0x3100),
+        _stub("hop", 0x3100, 0x2000),
+        _plt_thunk("system", 0x2000),
+    )
+    assert result["note"] is None
+
+
+def test_a_body_with_a_library_function_symbol_is_still_a_real_body() -> None:
+    result = _quick(
+        _stub("main", 0x3000, 0x2000), _plt_thunk("memcpy", 0x2000, "LibraryFunctionSymbol")
+    )
+    assert result["note"] == _note("memcpy", 0x2000)
+
+
+def test_a_stub_to_a_defined_but_unanalyzed_function_still_names_it() -> None:
+    pending = FakeFunction("real", 0x2000, 0x2100)
+    result = _quick(_stub("main", 0x3000, 0x2000), pending=[pending])
+    assert result["note"] == _note("real", 0x2000)
+
+
+def test_the_stub_note_picks_the_architecture_name_when_two_functions_share_the_target() -> None:
+    thumb = FakeFunction("zeta", 0x2000, 0x2100, arch=FakeArchitecture("thumb2"))
+    arm = FakeFunction("alpha", 0x2000, 0x2100, arch=FakeArchitecture("armv7"))
+    assert _quick(_stub("main", 0x3000, 0x2000), thumb, arm)["note"] == _note("alpha", 0x2000)
+
+
+def test_an_entry_function_named_main_that_is_a_stub_gets_the_note() -> None:
+    entry_stub = _stub("main", 0x1000, 0x2000)
+    view = FakeBinaryView(entry_point=0x1000, functions=[entry_stub, _body("real", 0x2000)])
+    _, quick = get_tool("rex_quick_main")
+    result = quick(FakeParsingToolCall(view))
+    assert result["method"] == "symbol"
+    assert result["main"] == "0x1000"
+    assert result["note"] == _note("real", 0x2000)
