@@ -334,10 +334,12 @@ present only on some rows.
   `pattern` (`rex_string_search` and `rex_string_refs` with `regex=true`), `regex`
   (`rex_hlil_grep`), or `function_filter` (`rex_hlil_grep`, `rex_constant_find`).
   `rex_hlil_grep` checks `regex` before `function_filter`.
-- Hex byte patterns (`rex_data_find`, `rex_find_functions_by_pattern`, `rx_multi_find`)
-  are whitespace-separated bytes written as exactly two ASCII hex digits, or `??` for any
-  byte; whitespace inside a byte is ignored. Any other token (`+f`, `-1`, `0x`, `f_`,
-  non-ASCII digits, `?5`) returns `invalid_pattern` naming the token.
+- Hex byte patterns (`rex_data_find`, `rx_data_find`, `rex_find_functions_by_pattern`,
+  `rx_multi_find`) are separator-delimited bytes written as exactly two ASCII hex digits,
+  or `??` for any byte; separators inside a byte are ignored. A separator is any character
+  Python's `str.isspace()` accepts: U+0009-U+000D, U+001C-U+001F, U+0020, U+0085, U+00A0,
+  U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000. Any other token (`+f`,
+  `-1`, `0x`, `f_`, non-ASCII digits, `?5`) returns `invalid_pattern` naming the token.
 - `rx_multi_find` accepts 1-64 patterns: an empty list returns `invalid_params`, a longer
   one `too_many_patterns`. Each entry is capped at 8,192 characters like `rex_data_find`'s
   `pattern`, and an over-cap entry returns `pattern_too_large` naming its index.

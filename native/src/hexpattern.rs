@@ -1,5 +1,5 @@
 //! Hex byte-pattern parsing, mirroring the Python plugin's `hexpattern.py`
-//! grammar: whitespace-separated tokens of two hex digits or `??`, with error
+//! grammar: separator-delimited tokens of two hex digits or `??`, with error
 //! messages identical to the Python `rex_data_find` tool's.
 
 /// Raw pattern-string cap, matching `_MAX_PATTERN_CHARS` in the Python plugin.
@@ -31,12 +31,12 @@ pub struct HexPattern {
 }
 
 impl HexPattern {
-    /// Parse a pattern such as `"48 8b ?? 05"`. All whitespace is ignored; each
-    /// token is two hex digits or `??`.
+    /// Parse a pattern such as `"48 8b ?? 05"`. Separators (Python's
+    /// `str.isspace()` set) are ignored; each token is two hex digits or `??`.
     pub fn parse(pattern: &str) -> Result<Self, PatternError> {
         let chars: Vec<char> = pattern
             .chars()
-            .filter(|char| !char.is_whitespace())
+            .filter(|char| !is_separator(*char))
             .collect();
         if chars.is_empty() {
             return Err(PatternError::new("empty hex pattern"));
@@ -82,6 +82,11 @@ impl HexPattern {
         let run = self.bytes[start..].iter().map_while(|byte| *byte).collect();
         Some((start, run))
     }
+}
+
+/// Python's `str.isspace()` set: Unicode whitespace plus U+001C..U+001F.
+fn is_separator(character: char) -> bool {
+    character.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&character)
 }
 
 fn parse_hex_byte([high, low]: [char; 2]) -> Option<u8> {
@@ -143,6 +148,28 @@ mod tests {
         assert_eq!(parse_ok("48\t8b\n??\r05"), parse_ok("48 8b ?? 05"));
     }
 
+    // Must equal the Python test's PYTHON_SEPARATORS (str.isspace() code points)
+    // and the set listed in CONTRACTS.md.
+    const SEPARATOR_CODE_POINTS: [u32; 29] = [
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x85, 0xA0, 0x1680, 0x2000,
+        0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A, 0x2028,
+        0x2029, 0x202F, 0x205F, 0x3000,
+    ];
+
+    #[test]
+    fn separators_are_exactly_the_python_isspace_set() {
+        let mut accepted = Vec::new();
+        for code_point in 0..=char::MAX as u32 {
+            let Some(character) = char::from_u32(code_point) else {
+                continue;
+            };
+            if HexPattern::parse(&format!("48{character}8b")).is_ok() {
+                accepted.push(code_point);
+            }
+        }
+        assert_eq!(accepted, SEPARATOR_CODE_POINTS);
+    }
+
     #[test]
     fn accepts_uppercase_hex() {
         assert_eq!(parse_ok("DE AD BEEF"), parse_ok("de ad beef"));
@@ -175,11 +202,8 @@ mod tests {
             HexPattern::parse("?a").unwrap_err().message,
             "invalid hex byte token '?a'"
         );
-        // Divergences from the Python parser (native/README.md "Known
-        // divergences" #3): int(token, 16) there parses a leading '+' and
-        // Unicode decimal digits as ordinary bytes, and even passes '-1'
-        // through to crash later, uncaught, in compile_hex_pattern's byte
-        // conversion — the native parser takes ASCII hex digits only.
+        // Python rejects these too (test_parse_rejects_lenient_int_forms):
+        // a byte is ASCII hex digits only, with no sign and no Unicode digits.
         assert_eq!(
             HexPattern::parse("+4").unwrap_err().message,
             "invalid hex byte token '+4'"
