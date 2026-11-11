@@ -20,13 +20,17 @@ use crate::scan::{RunningScan, scan_pattern};
 // rejects a schema that declares it, and the server strips it before invoking.
 #[derive(Deserialize, JsonSchema)]
 pub struct DataFindArgs {
+    /// Hex byte pattern, e.g. "48 8b ?? 05"; each byte is 2 ASCII hex digits or "??".
     #[schemars(length(max = MAX_PATTERN_CHARS))]
     pub pattern: String,
+    /// Only search within this section.
     #[serde(default)]
     pub section: Option<String>,
+    /// Maximum matches to return.
     #[serde(default = "default_limit")]
     #[schemars(range(min = 0, max = MAX_LIMIT))]
     pub limit: u32,
+    /// Matches to skip before collecting results.
     #[serde(default)]
     #[schemars(range(min = 0))]
     pub offset: u64,
@@ -49,7 +53,7 @@ impl TypedMcpTool for RxDataFind {
     fn info(&self) -> McpToolInfo {
         McpToolInfo::new(
             "rx_data_find",
-            "Search mapped memory for a hex pattern in Rust; use instead of slower `rex_data_find`.",
+            "Search mapped memory for a hex pattern in Rust; about 7.5x faster than `rex_data_find` on a whole-view scan, no faster on `.text`.",
         )
         .with_annotations(McpToolAnnotations::READ_ONLY)
     }

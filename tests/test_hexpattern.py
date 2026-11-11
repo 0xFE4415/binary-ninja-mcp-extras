@@ -9,6 +9,25 @@ from binja_plugin.hexpattern import (
     parse_hex_pattern,
 )
 
+# Must equal SEPARATOR_CODE_POINTS in native/src/hexpattern.rs and the set in CONTRACTS.md.
+PYTHON_SEPARATORS = [
+    *(0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x85, 0xA0, 0x1680),
+    *range(0x2000, 0x200B),
+    *(0x2028, 0x2029, 0x202F, 0x205F, 0x3000),
+]
+
+
+def test_separators_are_exactly_the_pinned_set() -> None:
+    accepted = []
+    for code_point in range(0x110000):
+        try:
+            parse_hex_pattern(f"48{chr(code_point)}8b")
+        except HexPatternError:
+            continue
+        accepted.append(code_point)
+    assert accepted == PYTHON_SEPARATORS
+    assert len(PYTHON_SEPARATORS) == 29
+
 
 @pytest.mark.parametrize(
     "pattern,expected_message",

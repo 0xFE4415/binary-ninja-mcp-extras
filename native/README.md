@@ -19,23 +19,25 @@ Binary Ninja itself, so a rewrite would change nothing but the language.
 ## Known divergences from the Python tool
 
 `rx_data_find` mirrors `rex_data_find`'s client-visible contract (result shape,
-pagination, error codes, error text). Three deliberate divergences remain; none
-changes an error code a client branches on:
+pagination, error codes, error text). Two deliberate divergences remain, both in
+error wording only. Two other differences are known and wait for Python-side
+fixes: a NUL byte in `section` (Python scans `.text`; Rust returns
+`section_not_found`), and a non-string `pattern` (Python returns `internal_error`;
+Rust returns `invalid_params`).
 
-1. **Out-of-range integers are rejected at the serde layer.** Negative or
-   oversized `limit`/`offset` fail deserialization with `invalid_params` and
-   serde's message text instead of the Python "Must be at least 0" wording;
-   the unsigned Rust argument types make the lower-bound check unreachable,
-   so the code matches but the wording cannot without duplicating serde's job.
-2. **`offset` beyond `u64::MAX` is rejected.** Python's bignums accept
-   arbitrarily large offsets; Rust rejects them at deserialization. u64 spans
-   the entire addressable space, so such an offset can never name a real page.
-3. **Hex token parsing is stricter.** Python's `int(token, 16)` accepts `"+4"`
-   and exotic Unicode digits, and even lets `"-1"` through parsing — the
-   uncaught `ValueError` (a 500, not a tool error) only fires afterwards, in
-   `compile_hex_pattern`'s byte conversion; Rust rejects all three uniformly
-   with `invalid_pattern` — strictly better, and pinned deliberately by
-   `rejects_bad_tokens`.
+1. **Mistyped or out-of-range arguments are rejected at the serde layer.**
+   A wrong-typed value for any parameter (such as `section:5` or `limit:"5"`), a
+   negative, float, or boolean `limit`/`offset`, or a `limit` above `u32::MAX`
+   fails deserialization with `invalid_params` and serde's message text instead of
+   the Python "Expected string parameter", "Expected integer parameter",
+   "Must be at least 0", or "Must be at most 500" wording. The unsigned Rust
+   argument types make the lower-bound check unreachable, so the code matches but
+   the wording cannot without duplicating serde's job. The one exception is a
+   non-string `pattern`, covered above.
+2. **`offset` beyond `u64::MAX` has different wording.** Both tools reject it
+   with `invalid_params`: Python at the protocol layer ("Expected integer
+   parameter 'offset'"), Rust at deserialization (serde's message). u64 spans the
+   entire addressable space, so such an offset can never name a real page.
 
 Error precedence is aligned, not divergent: both resolve the binary view
 before validating pagination and pattern, so multi-error invocations surface
