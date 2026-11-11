@@ -273,9 +273,7 @@ def _unknown_variable_error(function: Function, name: str) -> mcp.ToolError:
     return mcp.ToolError(
         "no_variable",
         f"no MLIL variable named '{_truncate(name)}' in {_truncate(function.name)}; "
-        f"variables: {shown}{more}; use bn_variable_list for the full list. "
-        "Register-allocated parameters are named by their register (for example r14), "
-        "not by their argument name",
+        f"variables: {shown}{more}; use bn_variable_list for the full list",
     )
 
 

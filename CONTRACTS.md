@@ -44,6 +44,13 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   variables as `name (storage)`, with the register name, `stack +0x8` or `stack -0x8`, the
   flag text, or the composite source and raw value as the storage, so same-named variables
   read apart.
+- `no_variable` for a name the function does not have (`rex_parameter_variables` and the
+  uidf setters and clearers) lists the function's variable names. Names match exactly. A
+  name the function has but the MLIL never defines fails with advice only when every
+  variable of that name is a declared parameter: a register parameter points to
+  `rex_parameter_variables` and the variable that copies it, and a stack parameter to the
+  register that loads it. Any other variable, such as a saved register or a stack local,
+  gets none.
 - `no_mlil` (`rex_function_constraints`, `rex_mlil_uses`, `rex_parameter_variables`, and the
   uidf setters and clearers that resolve a variable name) and `no_hlil`
   (`rex_hlil_statements`) distinguish a skipped function from a pending one. When the core
@@ -257,11 +264,20 @@ present only on some rows.
   match_count, addresses, addresses_truncated}`.
 - `rex_function_constraints`: `function`, `total`, `truncated`, and `constraints` of
   `{address, operator, constant, char, subject, subject_text}`. `operator` is `==` or
-  `!=`, `constant` is hex, and `char` is the printable ASCII character or null. `subject`
-  is `{kind: "load", base, offset}` (`base` is null for an absolute address; both are null,
-  and `text` is added, when the address is not a base variable plus a constant),
-  `{kind: "variable", variable, definition?}` with `definition` `{address, load}` when the
-  variable's only definition is a load, or `{kind: "expression", text}`.
+  `!=`. `constant` and a `load` `offset` render the value the expression computes: a zero
+  or sign extension of a constant is applied at its outer width first, then the value is
+  shown at that width. `constant` is unsigned hex (-1 is `0xffffffff` in four bytes and
+  `0xffffffffffffffff` in eight; `sx.q` of a four-byte -1 is `0xffffffffffffffff`, `zx.q`
+  of `0xffffffff` is `0xffffffff`). `char` is the printable ASCII character of that value,
+  else null. A constant the core gives no size (width 0, such as `true`) keeps its value as
+  stated. `subject` is `{kind: "load", base, offset}`. `base` is null for an absolute
+  address, whose `offset` is unsigned hex at its width like every address. For a base
+  variable plus a displacement, `offset` is the displacement as signed two's complement at
+  its width: a four-byte `0xfffffff8` prints `-0x8`, but `zx.q` of it prints `0xfffffff8`.
+  Both are null, and `text` is added, when the address is not a base variable plus a
+  constant. Other subjects are `{kind: "variable", variable, definition?}` with `definition`
+  `{address, load}` when the variable's only definition is a load, or
+  `{kind: "expression", text}`.
 - `rex_function_containing`: `functions` (at most 64, ascending start) and `truncated`.
   `rex_function_define`: `start`, `name`, `analyzed`, `waited_ms`.
   `rex_function_define_many`: `defined` of `{start, name, analyzed}`, `failed` (addresses
@@ -279,12 +295,12 @@ present only on some rows.
 - `rex_memory_write`: `address`, `bytes_written`.
 - `rex_mlil_uses`: `function`, `definition_site` (the queried address), and `variables`,
   one per defined variable: `variable`, `storage`, `type`, `definitions` (a flat list of
-  the addresses of every definition the core records for it), `total`, `truncated`, and
-  `uses` of `{address, operation, text}`.
+  the addresses of every definition the core records for it, ascending), `total`,
+  `truncated`, and `uses` of `{address, operation, text}`.
 - `rex_parameter_variables`: `function`, `parameter`, `storage` (one entry per matching
   variable in the function's variable order, shaped like `rex_mlil_uses`' `storage`),
-  `definitions` (a flat list of addresses over all matching variables), and `carriers` of
-  `{variable, address, text}`.
+  `definitions` (a flat list of addresses over all matching variables, ascending), and
+  `carriers` of `{variable, address, text}`.
 - `rex_quick_main`: `entry_point`, `method` (`symbol`, `entry-arg`, or `entry-fallback`),
   `main` (null when unresolved), `note` and `hint` (each null when it has nothing to add),
   `function` (main, else the entry function), `lines`, `truncated`. When `main` does

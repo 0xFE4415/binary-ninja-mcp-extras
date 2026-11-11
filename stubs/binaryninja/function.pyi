@@ -44,6 +44,7 @@ class Function:
     basic_blocks: Iterable[BasicBlock]
     vars: list[Variable]
     symbol: CoreSymbol
+    parameter_vars: Iterable[Variable]
 
     def set_comment_at(self, addr: int, comment: str) -> None: ...
     def set_user_type(self, value: str | Type | TypeBuilder) -> None: ...

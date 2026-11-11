@@ -548,18 +548,18 @@ def test_uidf_set_rejects_unknown_variables() -> None:
     assert exc.value.code == "no_variable"
     assert exc.value.message == (
         "no MLIL variable named 'nope' in main; variables: argc, rax_1, var_10; "
-        "use bn_variable_list for the full list. "
-        "Register-allocated parameters are named by their register (for example r14), "
-        "not by their argument name"
+        "use bn_variable_list for the full list"
     )
     # A variable the function knows but never defines in the MLIL is equally unusable, and
     # the message must not claim the name is unknown while listing it among candidates.
+    main.parameter_vars = [_variable(main, "argc")]
     with pytest.raises(FakeToolError) as exc:
         uidf_set(_call(view), 0x1100, "argc", "1")
     assert exc.value.code == "no_variable"
     assert exc.value.message == (
         "MLIL variable 'argc' in main has no MediumLevelIL definition sites; "
-        "stack-passed arguments cannot be informed, inform the register that loads the value"
+        "a register parameter is live from function entry, inform a variable that "
+        "copies it (rex_parameter_variables lists the copies)"
     )
     assert main.set_user_var_value_calls == []
 
@@ -579,9 +579,7 @@ def test_uidf_set_lists_up_to_the_candidate_cap_without_a_more_suffix() -> None:
     assert exc.value.code == "no_variable"
     assert exc.value.message == (
         f"no MLIL variable named 'nope' in leaf; variables: {shown}; "
-        "use bn_variable_list for the full list. "
-        "Register-allocated parameters are named by their register (for example r14), "
-        "not by their argument name"
+        "use bn_variable_list for the full list"
     )
 
 
