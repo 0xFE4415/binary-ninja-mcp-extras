@@ -22,6 +22,7 @@ from binja_plugin.tools import _truncate, _truncate_with_flag, _validate_range
 _MAX_EVAL_STDOUT_CHARS = 65536
 _MAX_EVAL_RESULT_CHARS = 16384
 _MAX_EVAL_LOCATION_CHARS = 200
+_MAX_EVAL_CHAINED_ERRORS = 8
 _EVAL_FILENAME = "<rex_eval_python>"
 
 # Clipped eval echoes spill to process memory (a few recent ones) for rex_eval_result.
@@ -92,13 +93,43 @@ def _exception_kind(error: BaseException) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
-def _describe_error(error: BaseException) -> str:
+def _describe_one_error(error: BaseException) -> str:
     kind = _exception_kind(error)
     try:
-        detail = f"exit status {error.code!r}" if isinstance(error, SystemExit) else str(error)
+        if isinstance(error, SystemExit):
+            detail = f"exit status {error.code!r}"
+        elif isinstance(error, mcp.ToolError):
+            message = str(error)
+            detail = f"{error.code}: {message}" if message else error.code
+        else:
+            detail = str(error)
     except Exception:
         detail = "<message unavailable>"
     return f"{kind}: {detail}" if detail else kind
+
+
+def _linked_error(error: BaseException) -> tuple[str, BaseException] | None:
+    if error.__cause__ is not None:
+        return "caused by", error.__cause__
+    if error.__context__ is not None and not error.__suppress_context__:
+        return "while handling", error.__context__
+    return None
+
+
+def _describe_error(error: BaseException) -> str:
+    description = _describe_one_error(error)
+    seen = {id(error)}
+    current = error
+    for _ in range(_MAX_EVAL_CHAINED_ERRORS):
+        link = _linked_error(current)
+        if link is None:
+            break
+        relation, current = link
+        if id(current) in seen:
+            break
+        seen.add(id(current))
+        description += f"; {relation} {_describe_one_error(current)}"
+    return description
 
 
 def _error_location(error: BaseException, code: str) -> _ErrorLocation | None:

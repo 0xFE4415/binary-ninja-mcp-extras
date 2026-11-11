@@ -211,7 +211,7 @@ def test_eval_python_class_defined_in_the_submitted_code_has_no_module_name() ->
     assert result["result"] == "('builtins', False)"
 
 
-def test_eval_python_reports_the_outermost_exception_of_a_chain() -> None:
+def test_eval_python_names_the_cause_after_the_outermost_exception_of_a_chain() -> None:
     code = (
         "class Cause(Exception):\n"
         "    __module__ = 'pkg.cause'\n"
@@ -222,7 +222,168 @@ def test_eval_python_reports_the_outermost_exception_of_a_chain() -> None:
         "except Cause as cause:\n"
         "    raise KeyError('outer') from cause"
     )
-    assert _failing(code)["error"] == "KeyError: 'outer'"
+    assert (
+        _failing(code)["error"]
+        == "KeyError: 'outer'; caused by pkg.cause.Cause: <message unavailable>"
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "error"),
+    [
+        (
+            "raise ValueError('a') from KeyError('b')",
+            "ValueError: a; caused by KeyError: 'b'",
+        ),
+        (
+            "try:\n"
+            "    try:\n"
+            "        raise OSError('c')\n"
+            "    except OSError as third:\n"
+            "        raise KeyError('b') from third\n"
+            "except KeyError as second:\n"
+            "    raise ValueError('a') from second",
+            "ValueError: a; caused by KeyError: 'b'; caused by OSError: c",
+        ),
+        (
+            "try:\n    {}[1]\nexcept KeyError:\n    raise ValueError('ctx')",
+            "ValueError: ctx; while handling KeyError: 1",
+        ),
+        (
+            "try:\n    {}[1]\nexcept KeyError:\n    raise ValueError('ctx') from None",
+            "ValueError: ctx",
+        ),
+        (
+            "try:\n"
+            "    try:\n"
+            "        raise OSError('c')\n"
+            "    except OSError:\n"
+            "        raise KeyError('b')\n"
+            "except KeyError:\n"
+            "    raise ValueError('a')",
+            "ValueError: a; while handling KeyError: 'b'; while handling OSError: c",
+        ),
+        (
+            "try:\n"
+            "    raise OSError('ignored')\n"
+            "except OSError:\n"
+            "    raise ValueError('a') from KeyError('b')",
+            "ValueError: a; caused by KeyError: 'b'",
+        ),
+        (
+            "try:\n"
+            "    raise ValueError('a') from None\n"
+            "except ValueError as quiet:\n"
+            "    raise KeyError('b') from quiet",
+            "KeyError: 'b'; caused by ValueError: a",
+        ),
+    ],
+)
+def test_eval_python_reports_the_cause_and_the_unsuppressed_context_of_an_error(
+    code: str, error: str
+) -> None:
+    assert _failing(code)["error"] == error
+
+
+def test_eval_python_describes_a_chained_exit_and_a_chained_error_without_a_message() -> None:
+    assert (
+        _failing("raise ValueError('a') from SystemExit(3)")["error"]
+        == "ValueError: a; caused by SystemExit: exit status 3"
+    )
+    assert (
+        _failing("raise ValueError('a') from KeyError()")["error"]
+        == "ValueError: a; caused by KeyError"
+    )
+
+
+def test_eval_python_stops_a_cyclic_exception_chain_at_the_first_repeat() -> None:
+    cycle = (
+        "outer = ValueError('a')\n"
+        "inner = KeyError('b')\n"
+        "outer.__cause__ = inner\n"
+        "inner.__cause__ = outer\n"
+        "raise outer"
+    )
+    assert _failing(cycle)["error"] == "ValueError: a; caused by KeyError: 'b'"
+    inner_cycle = (
+        "first = ValueError('a')\n"
+        "second = KeyError('b')\n"
+        "third = OSError('c')\n"
+        "first.__cause__ = second\n"
+        "second.__cause__ = third\n"
+        "third.__cause__ = second\n"
+        "raise first"
+    )
+    assert (
+        _failing(inner_cycle)["error"]
+        == "ValueError: a; caused by KeyError: 'b'; caused by OSError: c"
+    )
+    own_cause = "loop = ValueError('a')\nloop.__cause__ = loop\nraise loop"
+    assert _failing(own_cause)["error"] == "ValueError: a"
+
+
+def test_eval_python_names_at_most_eight_chained_exceptions() -> None:
+    code = (
+        "chain = ValueError('e19')\n"
+        "for number in range(18, -1, -1):\n"
+        "    link = ValueError(f'e{number}')\n"
+        "    link.__cause__ = chain\n"
+        "    chain = link\n"
+        "raise chain"
+    )
+    expected = "ValueError: e0" + "".join(f"; caused by ValueError: e{n}" for n in range(1, 9))
+    result = _failing(code)
+    assert result["error"] == expected
+    assert result["error_truncated"] is False
+
+
+def test_eval_python_truncates_a_long_cause_at_the_echo_cap() -> None:
+    result = _failing("raise ValueError('a') from KeyError('z' * 600)")
+    full = "ValueError: a; caused by KeyError: '" + "z" * 600 + "'"
+    assert result["error_truncated"] is True
+    assert result["error"] == full[:512] + f"... [{len(full) - 512} chars truncated]"
+
+
+def _tool_error_kind() -> str:
+    return f"{FakeToolError.__module__}.{FakeToolError.__qualname__}"
+
+
+@pytest.mark.parametrize(
+    ("code", "detail"),
+    [
+        ("raise mcp.ToolError('no_mlil', 'boom')", "no_mlil: boom"),
+        ("raise mcp.ToolError('no_mlil', '')", "no_mlil"),
+        ("raise mcp.ToolError('no_mlil', 'a: b', {'k': 1})", "no_mlil: a: b"),
+    ],
+)
+def test_eval_python_reports_the_code_of_a_tool_error(code: str, detail: str) -> None:
+    result = _failing("from binaryninja import mcp\n" + code)
+    assert result["error"] == f"{_tool_error_kind()}: {detail}"
+    assert result["error_truncated"] is False
+
+
+def test_eval_python_reports_the_code_of_a_tool_error_in_a_chain() -> None:
+    result = _failing(
+        "from binaryninja import mcp\n"
+        "try:\n"
+        "    raise mcp.ToolError('no_variable', 'gone')\n"
+        "except mcp.ToolError as cause:\n"
+        "    raise ValueError('wrapped') from cause"
+    )
+    assert (
+        result["error"] == f"ValueError: wrapped; caused by {_tool_error_kind()}: no_variable: gone"
+    )
+
+
+def test_eval_python_survives_a_tool_error_whose_message_cannot_render() -> None:
+    result = _failing(
+        "from binaryninja import mcp\n"
+        "class Odd(mcp.ToolError):\n"
+        "    def __str__(self):\n"
+        "        raise RuntimeError('no str')\n"
+        "raise Odd('no_mlil', 'boom')"
+    )
+    assert result["error"] == "Odd: <message unavailable>"
 
 
 def test_eval_python_qualifies_the_type_of_an_unrenderable_message_and_system_exit() -> None:
