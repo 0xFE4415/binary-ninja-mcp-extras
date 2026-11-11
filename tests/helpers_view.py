@@ -61,6 +61,7 @@ class FakeTag:
 class RenderableText:
     def __init__(self, text: str) -> None:
         self._text = text
+        self.basic_blocks: list[list[object]] = []
 
     @override
     def __str__(self) -> str:

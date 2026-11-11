@@ -53,7 +53,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   waiting. Otherwise analysis is pending and the message advises
   `bn_analysis_update_and_wait` or a bounded `rex_analysis_wait`.
   `rex_quick_main` applies the same rule to its `note` when the entry function has no HLIL
-  and no `main` symbol exists: the note is `the entry`, a space, and that message.
+  and no `main` symbol exists: the note is `the entry`, a space, and that message. It does
+  the same when the `main` it found has no HLIL, whatever the method: `the main`, a space,
+  and that message.
 - An address can lie in several functions: a cold or outlined block belongs to its parent and
   to a function of its own. Every tool that resolves an address expression to a function
   (`rex_function_constraints`, `rex_hlil_statements`, `rex_mlil_uses`,
@@ -272,7 +274,11 @@ present only on some rows.
   `{variable, address, text}`.
 - `rex_quick_main`: `entry_point`, `method` (`symbol`, `entry-arg`, or `entry-fallback`),
   `main` (null when unresolved), `note` and `hint` (each null when it has nothing to add),
-  `function` (main, else the entry function), `lines`, `truncated`.
+  `function` (main, else the entry function), `lines`, `truncated`. When `main` does
+  nothing but tail-call a constant address, `main` stays as found and `note` names the real
+  body (`main is a tail-call stub; its real body is NAME at ADDRESS`). The note follows up to
+  eight stubs, and is null for a loop, a longer chain, or a target that is not the start of
+  an analyzed function.
 - `rex_redo`: `redone`, `undo_left`, `redo_left`. `rex_undo`: `undone`, `undo_left`,
   `redo_left`.
 - `rex_relocation_at`: `address`, `count`, and `relocations` of `{address, size, type,

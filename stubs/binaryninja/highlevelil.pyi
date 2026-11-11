@@ -6,6 +6,14 @@ class HighLevelILInstruction:
     instr_index: int
 
 
+class HighLevelILConstPtr(HighLevelILInstruction):
+    constant: int
+
+
+class HighLevelILTailcall(HighLevelILInstruction):
+    dest: HighLevelILInstruction
+
+
 class HighLevelILBasicBlock:
     def __iter__(self) -> Iterator[HighLevelILInstruction]: ...
 

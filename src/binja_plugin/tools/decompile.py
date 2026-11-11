@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypedDict
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
 from binaryninja.function import Function
+from binaryninja.highlevelil import HighLevelILConstPtr, HighLevelILTailcall
 
 from binja_plugin.tools import (
     _MAX_DISASM_CONTEXT,
@@ -45,6 +46,7 @@ _MAX_DISASM_BATCH = 64
 _MAX_DISASM_MANY_LINES = 512
 _MAX_DISASM_MANY_TOTAL_LINES = 1024
 
+_MAX_TAILCALL_HOPS = 8
 _MAIN_SYMBOL_NAMES = ("main", "_main")
 _MAIN_LIBC_MARKER = "libc_start_main"
 _MAIN_FALLBACK_NOTE = (
@@ -189,6 +191,49 @@ def _entry_argument_main(
             f"found candidate main address {address:#x} but no analyzed function contains it",
         )
     return None, _MAIN_FALLBACK_NOTE
+
+
+def _tailcall_stub_target(function: Function) -> int | None:
+    """The constant address a function does nothing but tail-call, else None."""
+    hlil = function.hlil
+    if hlil is None:
+        return None
+    only_statement = None
+    for block in hlil.basic_blocks:
+        for statement in block:
+            if only_statement is not None:
+                return None
+            only_statement = statement
+    if not isinstance(only_statement, HighLevelILTailcall):
+        return None
+    if not isinstance(only_statement.dest, HighLevelILConstPtr):
+        return None
+    return only_statement.dest.constant
+
+
+def _tailcall_stub_body(bv: BinaryView, main: Function) -> Function | None:
+    """Follow tail-call stubs from main to the first real body, within a bounded chain."""
+    current = main
+    for _ in range(_MAX_TAILCALL_HOPS + 1):
+        target = _tailcall_stub_target(current)
+        if target is None:
+            return current if current is not main else None
+        starting_here = [
+            function for function in bv.get_functions_containing(target) if function.start == target
+        ]
+        if not starting_here:
+            return None
+        current = _resolve_containing(bv, starting_here).function
+    return None
+
+
+def _main_note(bv: BinaryView, main: Function) -> str | None:
+    if main.hlil is None:
+        return f"the main {_missing_il_message(main, 'HLIL')}"
+    body = _tailcall_stub_body(bv, main)
+    if body is None:
+        return None
+    return f"main is a tail-call stub; its real body is {_truncate(body.name)} at {body.start:#x}"
 
 
 def _resolve_main(
@@ -457,6 +502,8 @@ def rex_quick_main(
         )
     entry = _resolve_containing(bv, functions)
     main, method, note = _resolve_main(bv, call, entry)
+    if main is not None:
+        note = _main_note(bv, main.function)
     resolution = main if main is not None else entry
     function = resolution.function
     lines, truncated = _render_hlil_lines(function.hlil, max_lines)
