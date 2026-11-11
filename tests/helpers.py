@@ -40,15 +40,33 @@ class FakeHighLevelILConstPtr:
         self.constant = constant
 
 
+class FakeHighLevelILConst:
+    def __init__(self, constant: int) -> None:
+        self.constant = constant
+
+
+class FakeHighLevelILImport:
+    def __init__(self, constant: int) -> None:
+        self.constant = constant
+
+
+class FakeHighLevelILVar:
+    pass
+
+
 class FakeHighLevelILTailcall:
-    def __init__(self, dest: object) -> None:
+    def __init__(self, dest: object, params: tuple[object, ...] = ()) -> None:
         self.dest = dest
+        self.params = list(params)
 
 
 def _fake_highlevelil_module() -> types.ModuleType:
     module = types.ModuleType("binaryninja.highlevelil")
     setattr(module, "HighLevelILTailcall", FakeHighLevelILTailcall)
     setattr(module, "HighLevelILConstPtr", FakeHighLevelILConstPtr)
+    setattr(module, "HighLevelILConst", FakeHighLevelILConst)
+    setattr(module, "HighLevelILImport", FakeHighLevelILImport)
+    setattr(module, "HighLevelILVar", FakeHighLevelILVar)
     return module
 
 

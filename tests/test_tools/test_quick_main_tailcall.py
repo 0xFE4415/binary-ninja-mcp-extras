@@ -4,8 +4,11 @@ from typing import Any, override
 
 import pytest
 from helpers import (
+    FakeHighLevelILConst,
     FakeHighLevelILConstPtr,
+    FakeHighLevelILImport,
     FakeHighLevelILTailcall,
+    FakeHighLevelILVar,
     FakeParsingToolCall,
     get_tool,
 )
@@ -39,8 +42,17 @@ class _FakeNonConstantDestination:
     constant = 0x2000
 
 
-def _tailcall_to(address: int) -> object:
-    return FakeHighLevelILTailcall(FakeHighLevelILConstPtr(address))
+class _FakeCallArgument:
+    pass
+
+
+def _forwarded_arguments() -> tuple[object, ...]:
+    return (FakeHighLevelILVar(), FakeHighLevelILVar(), FakeHighLevelILVar())
+
+
+def _tailcall_to(address: int, params: tuple[object, ...] | None = None) -> object:
+    arguments = _forwarded_arguments() if params is None else params
+    return FakeHighLevelILTailcall(FakeHighLevelILConstPtr(address), arguments)
 
 
 def _stub(name: str, start: int, target: int) -> FakeFunction:
@@ -209,16 +221,14 @@ def test_a_skipped_target_is_still_named_as_the_real_body() -> None:
     assert _quick(_stub("main", 0x3000, 0x2000), skipped)["note"] == _note("real", 0x2000)
 
 
-class _FakeImportDestination:
-    pass
-
-
 def _plt_thunk(name: str, start: int, symbol_type: str = "ImportedFunctionSymbol") -> FakeFunction:
     return FakeFunction(
         name,
         start,
         start + 0x10,
-        hlil=_FakeHlil([[FakeHighLevelILTailcall(_FakeImportDestination())]]),
+        hlil=_FakeHlil(
+            [[FakeHighLevelILTailcall(FakeHighLevelILImport(0x424F20), (_FakeCallArgument(),))]]
+        ),
         symbol_type=symbol_type,
     )
 
@@ -237,10 +247,10 @@ def test_a_chain_of_stubs_ending_in_an_import_thunk_gives_no_note() -> None:
 
 
 def test_a_body_with_a_library_function_symbol_is_still_a_real_body() -> None:
-    result = _quick(
-        _stub("main", 0x3000, 0x2000), _plt_thunk("memcpy", 0x2000, "LibraryFunctionSymbol")
+    library = FakeFunction(
+        "memcpy", 0x2000, 0x2100, hlil=RenderableText("return"), symbol_type="LibraryFunctionSymbol"
     )
-    assert result["note"] == _note("memcpy", 0x2000)
+    assert _quick(_stub("main", 0x3000, 0x2000), library)["note"] == _note("memcpy", 0x2000)
 
 
 def test_a_stub_to_a_defined_but_unanalyzed_function_still_names_it() -> None:
@@ -263,3 +273,108 @@ def test_an_entry_function_named_main_that_is_a_stub_gets_the_note() -> None:
     assert result["method"] == "symbol"
     assert result["main"] == "0x1000"
     assert result["note"] == _note("real", 0x2000)
+
+
+def test_a_renamed_import_thunk_is_recognised_by_its_import_tail_call() -> None:
+    renamed = _plt_thunk("my_system", 0x2000, "FunctionSymbol")
+    assert _quick(_stub("main", 0x3000, 0x2000), renamed)["note"] is None
+
+
+def test_a_renamed_import_thunk_after_a_hop_gives_no_note() -> None:
+    renamed = _plt_thunk("my_system", 0x2000, "FunctionSymbol")
+    result = _quick(_stub("main", 0x3000, 0x3100), _stub("hop", 0x3100, 0x2000), renamed)
+    assert result["note"] is None
+
+
+def _main_with_tailcall(params: tuple[object, ...]) -> FakeFunction:
+    return FakeFunction("main", 0x3000, 0x3010, hlil=_FakeHlil([[_tailcall_to(0x2000, params)]]))
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        (),
+        (FakeHighLevelILVar(),),
+        (FakeHighLevelILConst(1),),
+        (FakeHighLevelILConstPtr(0x5000),),
+        (FakeHighLevelILVar(), FakeHighLevelILConst(1), FakeHighLevelILConstPtr(0x5000)),
+    ],
+    ids=["none", "variable", "constant", "constant-pointer", "mixed"],
+)
+def test_a_tail_call_that_only_forwards_variables_and_constants_is_a_stub(
+    params: tuple[object, ...],
+) -> None:
+    result = _quick(_main_with_tailcall(params), _body("real", 0x2000))
+    assert result["note"] == _note("real", 0x2000)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        (_FakeCallArgument(),),
+        (FakeHighLevelILVar(), _FakeCallArgument()),
+        (_FakeCallArgument(), FakeHighLevelILVar()),
+    ],
+    ids=["only-computed", "computed-last", "computed-first"],
+)
+def test_a_tail_call_with_a_computed_argument_does_work_and_is_not_a_stub(
+    params: tuple[object, ...],
+) -> None:
+    result = _quick(_main_with_tailcall(params), _body("real", 0x2000))
+    assert result["note"] is None
+
+
+def test_a_hop_that_computes_its_arguments_is_named_as_the_body() -> None:
+    hop = FakeFunction(
+        "hop",
+        0x3100,
+        0x3110,
+        hlil=_FakeHlil([[_tailcall_to(0x2000, (_FakeCallArgument(),))]]),
+    )
+    result = _quick(_stub("main", 0x3000, 0x3100), hop, _body("real", 0x2000))
+    assert result["note"] == _note("hop", 0x3100)
+
+
+class _CountingFunction(FakeFunction):
+    hlil_reads = 0
+
+    @property
+    @override
+    def hlil(self) -> object:
+        type(self).hlil_reads += 1
+        return self._counted_hlil
+
+    @hlil.setter
+    @override
+    def hlil(self, value: object) -> None:
+        self._counted_hlil = value
+
+
+def _counted(name: str, start: int, hlil: object) -> _CountingFunction:
+    function = _CountingFunction(name, start, start + 0x10)
+    function.hlil = hlil
+    return function
+
+
+def test_each_hlil_is_fetched_once_for_a_stub_chain() -> None:
+    _CountingFunction.hlil_reads = 0
+    main = _counted("main", 0x3000, _FakeHlil([[_tailcall_to(0x3100)]]))
+    hop = _counted("hop", 0x3100, _FakeHlil([[_tailcall_to(0x2000)]]))
+    real = _counted("real", 0x2000, RenderableText("return 0"))
+    result = _quick(main, hop, real)
+    assert result["note"] == _note("real", 0x2000)
+    assert _CountingFunction.hlil_reads == 3
+
+
+def test_main_hlil_is_fetched_once_when_it_is_not_a_stub() -> None:
+    _CountingFunction.hlil_reads = 0
+    result = _quick(_counted("main", 0x3000, RenderableText("return 0")))
+    assert result["note"] is None
+    assert _CountingFunction.hlil_reads == 1
+
+
+def test_main_hlil_is_fetched_once_when_it_is_missing() -> None:
+    _CountingFunction.hlil_reads = 0
+    result = _quick(_counted("main", 0x3000, None))
+    assert result["lines"] == []
+    assert _CountingFunction.hlil_reads == 1
