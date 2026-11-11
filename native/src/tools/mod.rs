@@ -175,6 +175,20 @@ mod tests {
     }
 
     #[test]
+    fn multi_find_pagination_descriptions_say_per_pattern() {
+        let schema = serde_json::to_value(schemars::schema_for!(MultiFindArgs)).unwrap();
+        let properties = &schema["properties"];
+        assert_eq!(
+            properties["limit"]["description"],
+            "Maximum matches to return per pattern."
+        );
+        assert_eq!(
+            properties["offset"]["description"],
+            "Matches to skip per pattern before collecting results."
+        );
+    }
+
+    #[test]
     fn data_find_description_matches_the_benchmark_not_a_blanket_claim() {
         let description = data_find::RxDataFind.info().description;
         assert!(!description.contains("instead of slower"));
@@ -184,7 +198,7 @@ mod tests {
 
     #[test]
     fn pattern_size_and_parse_errors() {
-        let long = "48 ".repeat(2731); // 8193 chars after trim
+        let long = "48 ".repeat(2731); // 8193 chars
         let error = parse_checked_pattern(&long).unwrap_err();
         assert_eq!(error.code, "pattern_too_large");
         assert_eq!(error.message, "pattern exceeds 8192 characters");

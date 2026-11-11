@@ -148,8 +148,7 @@ mod tests {
         assert_eq!(parse_ok("48\t8b\n??\r05"), parse_ok("48 8b ?? 05"));
     }
 
-    // Must equal the Python test's PYTHON_SEPARATORS (str.isspace() code points)
-    // and the set listed in CONTRACTS.md.
+    // Keep equal to PYTHON_SEPARATORS in tests/test_hexpattern.py and CONTRACTS.md.
     const SEPARATOR_CODE_POINTS: [u32; 29] = [
         0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x85, 0xA0, 0x1680, 0x2000,
         0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A, 0x2028,
@@ -202,8 +201,7 @@ mod tests {
             HexPattern::parse("?a").unwrap_err().message,
             "invalid hex byte token '?a'"
         );
-        // Python rejects these too (test_parse_rejects_lenient_int_forms):
-        // a byte is ASCII hex digits only, with no sign and no Unicode digits.
+        // Python rejects these too (test_parse_rejects_lenient_int_forms).
         assert_eq!(
             HexPattern::parse("+4").unwrap_err().message,
             "invalid hex byte token '+4'"

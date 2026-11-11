@@ -20,15 +20,20 @@ Binary Ninja itself, so a rewrite would change nothing but the language.
 
 `rx_data_find` mirrors `rex_data_find`'s client-visible contract (result shape,
 pagination, error codes, error text). Two deliberate divergences remain, both in
-error wording only; neither changes an error code a client branches on:
+error wording only. Two other differences are known and wait for Python-side
+fixes: a NUL byte in `section` (Python scans `.text`; Rust returns
+`section_not_found`), and a non-string `pattern` (Python returns `internal_error`;
+Rust returns `invalid_params`).
 
-1. **Out-of-range and mistyped integers are rejected at the serde layer.**
-   A negative, float, or boolean `limit`/`offset`, or a `limit` above `u32::MAX`,
+1. **Mistyped or out-of-range arguments are rejected at the serde layer.**
+   A wrong-typed value for any parameter (such as `section:5` or `limit:"5"`), a
+   negative, float, or boolean `limit`/`offset`, or a `limit` above `u32::MAX`
    fails deserialization with `invalid_params` and serde's message text instead of
-   the Python "Must be at least 0", "Must be at most 500", or "Expected integer
-   parameter" wording; the
-   unsigned Rust argument types make the lower-bound check unreachable, so the
-   code matches but the wording cannot without duplicating serde's job.
+   the Python "Expected string parameter", "Expected integer parameter",
+   "Must be at least 0", or "Must be at most 500" wording. The unsigned Rust
+   argument types make the lower-bound check unreachable, so the code matches but
+   the wording cannot without duplicating serde's job. The one exception is a
+   non-string `pattern`, covered above.
 2. **`offset` beyond `u64::MAX` has different wording.** Both tools reject it
    with `invalid_params`: Python at the protocol layer ("Expected integer
    parameter 'offset'"), Rust at deserialization (serde's message). u64 spans the
