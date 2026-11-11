@@ -116,11 +116,10 @@ def _strip_extension(expression: Any) -> Any:
 
 
 def _constant_bits(expression: Any) -> tuple[int, int] | None:
-    """The constant inside any extensions as (value masked to its own width, width in bits).
+    """A constant as (value masked to its own width, width in bits), or None.
 
     A width of 0 means the core gave the constant no size, so its value is kept as stated.
     """
-    expression = _strip_extension(expression)
     if _operation(expression) not in _CONSTANTS:
         return None
     value, width = int(expression.constant), 8 * int(expression.size)
@@ -130,10 +129,10 @@ def _constant_bits(expression: Any) -> tuple[int, int] | None:
 
 
 def _unsigned_constant(expression: Any) -> int | None:
-    bits = _constant_bits(expression)
-    if bits is None:
+    computed = _extended_constant(expression)
+    if computed is None:
         return None
-    return bits[0]
+    return computed[0]
 
 
 def _as_signed(value: int, width: int) -> int:

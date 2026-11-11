@@ -233,23 +233,53 @@ def _constraint_row(condition: Any) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
-    ("wrapped", "expected"),
+    ("wrapped", "expected", "character"),
     [
-        (const(1, size=0), "0x1"),
-        (const(0, size=0), "0x0"),
-        (zero_extend(const(1, size=0)), "0x1"),
-        (zero_extend(const(0xFFFFFFFF, size=4)), "0xffffffff"),
-        (zero_extend(const(-1, size=4)), "0xffffffff"),
-        (sign_extend(const(-1, size=4)), "0xffffffff"),
-        (sign_extend(const(-1, size=1), size=4), "0xff"),
-        (zero_extend(sign_extend(const(-1, size=2), size=4)), "0xffff"),
+        (const(1, size=0), "0x1", None),
+        (const(0, size=0), "0x0", None),
+        (zero_extend(const(1, size=0)), "0x1", None),
+        (sign_extend(const(-1, size=0), size=0), "-0x1", None),
+        (zero_extend(const(0xFFFFFFFF, size=4)), "0xffffffff", None),
+        (zero_extend(const(-1, size=4)), "0xffffffff", None),
+        (sign_extend(const(-1, size=4)), "0xffffffffffffffff", None),
+        (sign_extend(const(0xFFFFFFFF, size=4)), "0xffffffffffffffff", None),
+        (sign_extend(const(-1, size=1), size=4), "0xffffffff", None),
+        (sign_extend(const(0x80, size=1), size=4), "0xffffff80", None),
+        (sign_extend(const(0x7F, size=1), size=4), "0x7f", None),
+        (zero_extend(const(-1, size=1), size=4), "0xff", None),
+        (zero_extend(sign_extend(const(-1, size=2), size=4)), "0xffffffff", None),
+        (sign_extend(zero_extend(const(-1, size=2), size=4)), "0xffff", None),
+        (sign_extend(const(0x41, size=1)), "0x41", "A"),
+        (zero_extend(const(0x41, size=1), size=4), "0x41", "A"),
+        (zero_extend(const(0x41, size=4), size=0), "0x41", "A"),
     ],
 )
-def test_constraint_constant_width_is_the_constant_operands_inside_extensions(
-    wrapped: Any, expected: str
+def test_constraint_constant_is_the_value_the_expression_computes(
+    wrapped: Any, expected: str, character: str | None
 ) -> None:
     row = _constraint_row(compare("MLIL_CMP_E", var(FakeVariable("value")), wrapped))
     assert row["constant"] == expected
+    assert row["char"] == character
+
+
+def test_extended_constant_on_the_left_renders_the_computed_value() -> None:
+    row = _constraint_row(
+        compare("MLIL_CMP_NE", sign_extend(const(-1, size=4)), var(FakeVariable("value")))
+    )
+    assert row["constant"] == "0xffffffffffffffff"
+    assert row["char"] is None
+
+
+def test_extension_of_a_non_constant_states_no_constraint() -> None:
+    condition = compare(
+        "MLIL_CMP_E", var(FakeVariable("value")), zero_extend(var(FakeVariable("other")))
+    )
+    function = FakeFunction(
+        "none", 0x5000, 0x5100, mlil=FakeMLILInstructions([branch(0x5010, condition)])
+    )
+    _, constraints = get_tool("rex_function_constraints")
+    result = constraints(_call(FakeBinaryView(functions=[function])), function=0x5000)
+    assert result["constraints"] == []
 
 
 @pytest.mark.parametrize(
