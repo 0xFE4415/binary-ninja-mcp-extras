@@ -325,11 +325,11 @@ present only on some rows.
 - The `filename` of `rex_export_disasm`, `rex_export_symbols`, and `rex_type_library_export`
   is a required parameter with no default, and the advertised schema lists it under
   `required`. It raises `invalid_params` for an empty name, an absolute path, a backslash, a
-  NUL byte, a `..` component, a name that ends in `.` or `/` (it names a directory, not a
-  file), or a component over 255 bytes. `path_escape` is raised only after
-  resolution, when a symlink inside the export root points outside it, and
-  `export_failed` when the root or file cannot be written. `rex_help` lists these three
-  codes for the parameter.
+  NUL byte, a `..` component, a last path component that is `.` or empty (a trailing `/`,
+  which names a directory, not a file), or a component over 255 bytes.
+  `path_escape` is raised only after resolution, when a symlink inside the export root
+  points outside it, and `export_failed` when the root or file cannot be written.
+  `rex_help` lists these three codes for the parameter.
 - A regular expression that does not compile returns `invalid_regex`; the message is
   `Invalid regular expression parameter '<name>': <reason>` and names the bad parameter:
   `pattern` (`rex_string_search` and `rex_string_refs` with `regex=true`), `regex`

@@ -386,6 +386,7 @@ def test_validate_export_path_rejects_each_violation_with_a_clear_message() -> N
     tools._validate_export_path(".hidden")
     tools._validate_export_path("...")
     tools._validate_export_path("plain.")
+    tools._validate_export_path("sub//plain.txt")
 
 
 def test_export_tools_reject_a_directory_name_before_any_work(
