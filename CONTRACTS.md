@@ -142,7 +142,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   module is `builtins` and it reads as its bare qualname (`Custom: x`,
   `make.<locals>.Inner: n`). A `SystemExit` reads `SystemExit: exit status <repr of code>`. A
   `ToolError` reads `<type>: <code>: <message>` (just the code when the message is empty; the
-  plain message when it has no usable string code).
+  plain message when it has no usable string code). Rendering never raises: a message that
+  cannot render reads `<message unavailable>`, and a type name that cannot reads
+  `<unknown exception type>`.
   Chained exceptions follow the outermost one. Each link is chosen as Python chooses it:
   `; caused by <error>` for the explicit cause, else `; while handling <error>` for the
   implicit context unless it is suppressed (`raise X from Y` or `from None`). Each link

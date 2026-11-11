@@ -443,14 +443,14 @@ def test_eval_python_reports_the_code_of_a_tool_error_in_a_chain() -> None:
             "    def __format__(self, spec):\n"
             "        raise RuntimeError('no format')\n"
             "error = mcp.ToolError(Mute('no_mlil'), 'plain message')",
-            "helpers.FakeToolError: <message unavailable>",
+            "helpers.FakeToolError: no_mlil: plain message",
         ),
         (
             "class Mute(str):\n"
             "    def __bool__(self):\n"
             "        raise RuntimeError('no bool')\n"
             "error = mcp.ToolError(Mute('no_mlil'), '')",
-            "helpers.FakeToolError: <message unavailable>",
+            "helpers.FakeToolError: no_mlil",
         ),
     ],
 )
@@ -458,6 +458,106 @@ def test_eval_python_falls_back_to_the_plain_message_for_a_tool_error_without_a_
     setup: str, expected: str
 ) -> None:
     result = _failing("from binaryninja import mcp\n" + setup + "\nraise error")
+    assert result["error"] == expected
+    assert result["error_truncated"] is False
+
+
+_HOSTILE_STR = (
+    "class Hostile(str):\n"
+    "    def __format__(self, spec):\n"
+    "        raise RuntimeError('no format')\n"
+    "    def __str__(self):\n"
+    "        raise RuntimeError('no str')\n"
+    "    def __repr__(self):\n"
+    "        raise RuntimeError('no repr')\n"
+    "    def __bool__(self):\n"
+    "        raise RuntimeError('no bool')\n"
+    "    def __len__(self):\n"
+    "        raise RuntimeError('no len')\n"
+    "    def __eq__(self, other):\n"
+    "        raise RuntimeError('no eq')\n"
+    "    __hash__ = str.__hash__\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("setup", "expected"),
+    [
+        (
+            "error = mcp.ToolError(Hostile('no_mlil'), '')",
+            "helpers.FakeToolError: no_mlil",
+        ),
+        (
+            "error = mcp.ToolError(Hostile('no_mlil'), 'boom')",
+            "helpers.FakeToolError: no_mlil: boom",
+        ),
+        (
+            "error = mcp.ToolError(Hostile(''), 'boom')",
+            "helpers.FakeToolError: boom",
+        ),
+        (
+            "class Tool(mcp.ToolError):\n"
+            "    def __str__(self):\n"
+            "        return Hostile('hostile message')\n"
+            "error = Tool('no_mlil', 'unused')",
+            "Tool: no_mlil: hostile message",
+        ),
+        (
+            "class Tool(mcp.ToolError):\n"
+            "    def __str__(self):\n"
+            "        return Hostile('')\n"
+            "error = Tool('no_mlil', 'unused')",
+            "Tool: no_mlil",
+        ),
+        (
+            "class Plain(Exception):\n"
+            "    def __str__(self):\n"
+            "        return Hostile('hostile message')\n"
+            "error = Plain()",
+            "Plain: hostile message",
+        ),
+        (
+            "class Plain(Exception):\n"
+            "    def __str__(self):\n"
+            "        return Hostile('')\n"
+            "error = Plain()",
+            "Plain",
+        ),
+        (
+            "class Plain(Exception):\n    def __str__(self):\n        return 7\nerror = Plain()",
+            "Plain: <message unavailable>",
+        ),
+        (
+            "class Plain(Exception):\n    __module__ = Hostile('pkg.mod')\nerror = Plain('x')",
+            "pkg.mod.Plain: x",
+        ),
+        (
+            "class Plain(Exception):\n    __module__ = Hostile('builtins')\nerror = Plain('x')",
+            "Plain: x",
+        ),
+        (
+            "class Plain(Exception):\n    __qualname__ = Hostile('Renamed')\nerror = Plain('x')",
+            "Renamed: x",
+        ),
+        (
+            "class Unprintable:\n"
+            "    def __str__(self):\n"
+            "        raise RuntimeError('no str')\n"
+            "class Plain(Exception):\n"
+            "    __module__ = Unprintable()\n"
+            "error = Plain('x')",
+            "<unknown exception type>: x",
+        ),
+        (
+            "class Plain(Exception):\n    __module__ = 7\nerror = Plain('x')",
+            "7.Plain: x",
+        ),
+    ],
+)
+def test_eval_python_renders_every_link_even_when_its_strings_misbehave(
+    setup: str, expected: str
+) -> None:
+    result = _failing("from binaryninja import mcp\n" + _HOSTILE_STR + setup + "\nraise error")
     assert result["error"] == expected
     assert result["error_truncated"] is False
 

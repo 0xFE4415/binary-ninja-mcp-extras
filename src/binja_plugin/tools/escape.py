@@ -86,30 +86,43 @@ def _spill_echo(text: str, cap: int, kind: str) -> _Echo:
     return _Echo(echo, True, key, len(text))
 
 
+def _plain_text(value: object) -> str:
+    return str.__str__(value if isinstance(value, str) else str(value))
+
+
 def _exception_kind(error: BaseException) -> str:
     cls = type(error)
-    if cls.__module__ in ("builtins", "__main__"):
-        return cls.__qualname__
-    return f"{cls.__module__}.{cls.__qualname__}"
+    module = _plain_text(cls.__module__)
+    qualname = _plain_text(cls.__qualname__)
+    if module in ("builtins", "__main__"):
+        return qualname
+    return f"{module}.{qualname}"
 
 
 def _tool_error_detail(error: mcp.ToolError) -> str:
-    message = str(error)
+    message = _plain_text(error)
     code = getattr(error, "code", None)
-    if not isinstance(code, str) or not code:
+    code_text = _plain_text(code) if isinstance(code, str) else ""
+    if not code_text:
         return message
-    return f"{code}: {message}" if message else code
+    return f"{code_text}: {message}" if message else code_text
+
+
+def _exception_detail(error: BaseException) -> str:
+    if isinstance(error, SystemExit):
+        return f"exit status {error.code!r}"
+    if isinstance(error, mcp.ToolError):
+        return _tool_error_detail(error)
+    return _plain_text(error)
 
 
 def _describe_one_error(error: BaseException) -> str:
-    kind = _exception_kind(error)
     try:
-        if isinstance(error, SystemExit):
-            detail = f"exit status {error.code!r}"
-        elif isinstance(error, mcp.ToolError):
-            detail = _tool_error_detail(error)
-        else:
-            detail = str(error)
+        kind = _exception_kind(error)
+    except Exception:
+        kind = "<unknown exception type>"
+    try:
+        detail = _exception_detail(error)
     except Exception:
         detail = "<message unavailable>"
     return f"{kind}: {detail}" if detail else kind
