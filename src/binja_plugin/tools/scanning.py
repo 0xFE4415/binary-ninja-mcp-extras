@@ -114,6 +114,9 @@ class _FunctionHits:
 
 
 def _parse_constant_value(value: int | str) -> int:
+    # bool is an int subclass, and the mcp layer passes this schema-typed value through unchecked.
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise mcp.ToolError("invalid_params", "Expected integer or hex string parameter 'value'")
     if not isinstance(value, str):
         return _validate_range("value", value, 0, _MAX_CONSTANT_VALUE)
     if value[:2] not in ("0x", "0X"):
@@ -183,7 +186,7 @@ def rex_constant_find(
     def keep_scanning(current: int, total: int) -> bool:
         return not abort
 
-    groups: dict[int, _FunctionHits] = {}
+    groups: dict[tuple[int, str], _FunctionHits] = {}
     for address, line in bv.find_all_constant(
         bv.start, bv.end, constant, progress_func=keep_scanning
     ):
@@ -197,15 +200,15 @@ def rex_constant_find(
             continue
         if name_matcher is not None and name_matcher.search(function.name) is None:
             continue
-        start = int(function.start)
-        group = groups.get(start)
+        key = (int(function.start), function.arch.name)
+        group = groups.get(key)
         if group is None:
             if len(groups) >= offset + limit:
                 # One match past the requested window proves more functions exist.
                 truncated = True
                 abort = True
                 break
-            group = groups[start] = _FunctionHits(_truncate(function.name))
+            group = groups[key] = _FunctionHits(_truncate(function.name))
         address_text = hex(address)
         if address_text not in group.addresses and len(group.addresses) <= _MAX_CONSTANT_ADDRESSES:
             group.addresses.append(address_text)
@@ -216,7 +219,7 @@ def rex_constant_find(
             "addresses": group.addresses[:_MAX_CONSTANT_ADDRESSES],
             "addresses_truncated": len(group.addresses) > _MAX_CONSTANT_ADDRESSES,
         }
-        for start, group in _drop(groups.items(), offset)
+        for (start, _), group in _drop(groups.items(), offset)
     ]
     # Count seen, like _paginate: exact when the scan finished, a lower bound once truncated.
     return {"total": len(groups) + int(truncated), "truncated": truncated, "functions": functions}

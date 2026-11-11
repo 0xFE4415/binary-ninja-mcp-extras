@@ -123,3 +123,40 @@ def test_rex_help_renders_the_union_typed_value_parameter() -> None:
         "offset",
         "include_non_operand_hits",
     ]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [True, False, 1.5, 2.0, None, [], [1], {}, {"value": 1}, b"0x20"],
+    ids=[
+        "true",
+        "false",
+        "float",
+        "whole-float",
+        "null",
+        "list",
+        "list-1",
+        "dict",
+        "dict-1",
+        "bytes",
+    ],
+)
+def test_constant_find_rejects_a_value_that_is_neither_an_integer_nor_a_string(
+    value: object,
+) -> None:
+    with pytest.raises(FakeToolError) as exc:
+        _find(value)
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == "Expected integer or hex string parameter 'value'"
+
+
+def test_a_rejected_boolean_does_not_search_for_zero_or_one() -> None:
+    function = FakeFunction("code", 0x1000, 0x1100)
+    view = FakeBinaryView(
+        functions=[function], constant_references=[(0, 0x1010, function), (1, 0x1020, function)]
+    )
+    _, find = get_tool("rex_constant_find")
+    for value in (True, False):
+        with pytest.raises(FakeToolError):
+            find(_call(view), value=value)
+    assert view.constant_scan_yields == 0

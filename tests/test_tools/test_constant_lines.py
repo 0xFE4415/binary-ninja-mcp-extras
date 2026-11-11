@@ -11,6 +11,7 @@ from helpers_view import (
     FALLS_THROUGH_LINE,
     FUNCTION_HEADER_LINE,
     INSTRUCTION_LINE,
+    FakeArchitecture,
     FakeBinaryView,
     FakeConstantReference,
     FakeFunction,
@@ -224,3 +225,31 @@ def test_a_line_outside_any_function_is_skipped_even_with_an_instruction_token(
 ) -> None:
     result = _find([], [(0, 0x9000, None)], value=0, include_non_operand_hits=include)
     assert result == {"total": 0, "truncated": False, "functions": []}
+
+
+def test_functions_with_the_same_start_on_different_architectures_stay_apart() -> None:
+    armv7 = FakeFunction("armv7_copy", 0x1000, 0x1008, arch=FakeArchitecture("armv7"))
+    thumb = FakeFunction("thumb_copy", 0x1000, 0x1100, arch=FakeArchitecture("thumb2"))
+    references: list[FakeConstantReference] = [
+        (0x20, 0x1002, armv7),
+        (0x20, 0x1010, thumb),
+        (0x20, 0x1004, armv7),
+    ]
+    assert _find([armv7, thumb], references, value=0x20) == {
+        "total": 2,
+        "truncated": False,
+        "functions": [
+            _entry(0x1000, "armv7_copy", [0x1002, 0x1004]),
+            _entry(0x1000, "thumb_copy", [0x1010]),
+        ],
+    }
+    assert _find([armv7, thumb], references, value=0x20, limit=1, offset=1) == {
+        "total": 2,
+        "truncated": False,
+        "functions": [_entry(0x1000, "thumb_copy", [0x1010])],
+    }
+    assert _find([armv7, thumb], references, value=0x20, limit=1) == {
+        "total": 2,
+        "truncated": True,
+        "functions": [_entry(0x1000, "armv7_copy", [0x1002])],
+    }

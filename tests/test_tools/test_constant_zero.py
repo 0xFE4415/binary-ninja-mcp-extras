@@ -306,6 +306,12 @@ def test_a_line_whose_tokens_carry_no_operand_index_is_never_filtered() -> None:
     assert result["functions"] == [_entry(0x1000, "code", [0x1010])]
     indexed = (FakeLineToken(_TOKEN_TYPE.InstructionToken, "xor", 0, 0), *unindexed[1:])
     assert _find([function], [_zero_hit(function, 0x1010, indexed)], value=0) == _EMPTY
+    indexed_register = (
+        FakeLineToken(_TOKEN_TYPE.InstructionToken, "xor"),
+        FakeLineToken(_TOKEN_TYPE.RegisterToken, "w0", 0, 0),
+        *unindexed[2:],
+    )
+    assert _find([function], [_zero_hit(function, 0x1010, indexed_register)], value=0) == _EMPTY
 
 
 @pytest.mark.parametrize("value", [1, 0x31337, 2**64 - 1, "0x1"])

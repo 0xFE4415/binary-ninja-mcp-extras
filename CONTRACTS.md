@@ -343,8 +343,9 @@ present only on some rows.
 - `rex_constant_find` `value` is an integer (0 to 18446744073709551615) or a string: `0x` or
   `0X`, then 1-16 hex digits in either case. A client that reads JSON numbers as doubles
   rounds the integer maximum to 18446744073709552000, so it should send the hex string for
-  values above 2^53. Any other string, a sign, whitespace, an empty digit list, or more than
-  16 digits returns `invalid_params` naming the violation; strings are never coerced.
+  values above 2^53. A value that is not an integer or string (a boolean, float, null, list,
+  or object), any other string, a sign, whitespace, an empty digit list, or more than 16
+  digits returns `invalid_params` naming the violation; strings are never coerced.
 - `rx_multi_find` accepts 1-64 patterns: an empty list returns `invalid_params`, a longer
   one `too_many_patterns`. Each entry is capped at 8,192 characters like `rex_data_find`'s
   `pattern`, and an over-cap entry returns `pattern_too_large` naming its index.
