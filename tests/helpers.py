@@ -35,6 +35,42 @@ from helpers_view import (
 NO_ALTERNATIVES = types.MappingProxyType({"also_containing": [], "same_name": []})
 DIRECTORY_NAME_MESSAGE = "filename must end in a file name, not '.' or a trailing '/'"
 
+
+class FakeHighLevelILConstPtr:
+    def __init__(self, constant: int) -> None:
+        self.constant = constant
+
+
+class FakeHighLevelILConst:
+    def __init__(self, constant: int) -> None:
+        self.constant = constant
+
+
+class FakeHighLevelILImport:
+    def __init__(self, constant: int) -> None:
+        self.constant = constant
+
+
+class FakeHighLevelILVar:
+    pass
+
+
+class FakeHighLevelILTailcall:
+    def __init__(self, dest: object, params: tuple[object, ...] = ()) -> None:
+        self.dest = dest
+        self.params = list(params)
+
+
+def _fake_highlevelil_module() -> types.ModuleType:
+    module = types.ModuleType("binaryninja.highlevelil")
+    setattr(module, "HighLevelILTailcall", FakeHighLevelILTailcall)
+    setattr(module, "HighLevelILConstPtr", FakeHighLevelILConstPtr)
+    setattr(module, "HighLevelILConst", FakeHighLevelILConst)
+    setattr(module, "HighLevelILImport", FakeHighLevelILImport)
+    setattr(module, "HighLevelILVar", FakeHighLevelILVar)
+    return module
+
+
 REGISTERED_TOOLS: list[tuple[str, dict[str, object], Any]] = []
 
 
@@ -314,6 +350,8 @@ def install_fake_binaryninja() -> None:
 
     setattr(mlil_module, "MediumLevelILInstruction", FakeMediumLevelILInstructionBase)
 
+    hlil_module = _fake_highlevelil_module()
+
     package = types.ModuleType("binaryninja")
     setattr(package, "mcp", mcp_module)
     setattr(package, "binaryview", bv_module)
@@ -321,6 +359,7 @@ def install_fake_binaryninja() -> None:
     setattr(package, "enums", enums_module)
     setattr(package, "variable", variable_module)
     setattr(package, "mediumlevelil", mlil_module)
+    setattr(package, "highlevelil", hlil_module)
     setattr(package, "Type", FakeType)
     setattr(package, "TypeLibrary", FakeTypeLibrary)
 
@@ -332,6 +371,7 @@ def install_fake_binaryninja() -> None:
         ("binaryninja.enums", enums_module),
         ("binaryninja.variable", variable_module),
         ("binaryninja.mediumlevelil", mlil_module),
+        ("binaryninja.highlevelil", hlil_module),
     ):
         sys.modules[name] = module
     REGISTERED_TOOLS.clear()

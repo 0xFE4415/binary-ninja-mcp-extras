@@ -3,6 +3,7 @@ from typing import Any
 
 from binaryninja.architecture import Architecture
 from binaryninja.basicblock import BasicBlock
+from binaryninja.binaryview import CoreSymbol
 from binaryninja.enums import AnalysisSkipReason, InstructionTextTokenType
 from binaryninja.highlevelil import HighLevelILFunction
 from binaryninja.mediumlevelil import MediumLevelILFunction
@@ -40,6 +41,7 @@ class Function:
     type: Type
     basic_blocks: Iterable[BasicBlock]
     vars: list[Variable]
+    symbol: CoreSymbol
 
     def set_comment_at(self, addr: int, comment: str) -> None: ...
     def set_user_type(self, value: str | Type | TypeBuilder) -> None: ...

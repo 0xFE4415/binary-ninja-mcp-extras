@@ -61,6 +61,7 @@ class FakeTag:
 class RenderableText:
     def __init__(self, text: str) -> None:
         self._text = text
+        self.basic_blocks: list[list[object]] = []
 
     @override
     def __str__(self) -> str:
@@ -337,7 +338,9 @@ class FakeFunction:
         extra_ranges: tuple[tuple[int, int], ...] = (),
         analysis_skipped: bool = False,
         analysis_skip_reason: FakeAnalysisSkipReason = FakeAnalysisSkipReason.NoSkipReason,
+        symbol_type: str = "FunctionSymbol",
     ) -> None:
+        self.symbol = FakeSymbol(start, symbol_type, name)
         self.arch = arch if arch is not None else FakeArchitecture("x86_64")
         self.analysis_skipped = analysis_skipped
         self.analysis_skip_reason = analysis_skip_reason
@@ -723,6 +726,10 @@ class FakeBinaryView:
             for relocation in self._relocations
             if relocation.info.address <= addr < relocation.info.address + relocation.info.size
         ]
+
+    def get_functions_at(self, address: int) -> list[FakeFunction]:
+        """Mirror BinaryView.get_functions_at: functions starting at the address, pending too."""
+        return [f for f in [*self.functions, *self._pending_functions] if f.start == address]
 
     def get_function_at(self, address: int) -> FakeFunction | None:
         """Mirror BinaryView.get_function_at: exact start match, pending functions included."""

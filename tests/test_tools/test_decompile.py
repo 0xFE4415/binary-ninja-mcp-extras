@@ -847,7 +847,9 @@ def test_quick_main_parses_the_main_pointer_from_the_entry_hlil() -> None:
     deref_view = _quick_main_view(
         "void _start() {\n    __libc_start_main(*0x401F00, __return_addr.d);\n}"
     )
-    deref_view.functions.append(FakeFunction("sub_401f00", 0x401F00, 0x402000))
+    deref_view.functions.append(
+        FakeFunction("sub_401f00", 0x401F00, 0x402000, hlil=RenderableText("return 0"))
+    )
     deref_result = quick(FakeParsingToolCall(deref_view))
     assert deref_result["method"] == "entry-arg"
     assert deref_result["main"] == "0x401f00"
@@ -982,8 +984,8 @@ def test_quick_main_rejects_bad_max_lines_and_truncates_render() -> None:
 
 
 def test_quick_main_resolves_an_unlifted_main_to_empty_lines() -> None:
-    # A main symbol can exist where HLIL was never lifted; an empty render is the honest
-    # answer, same as rex_decompile_many.
+    # A main symbol can exist where HLIL was never lifted; an empty render with the pending
+    # note is the honest answer.
     view = FakeBinaryView(
         entry_point=0x1000,
         functions=[FakeFunction("_start", 0x1000, 0x1100), FakeFunction("main", 0x2000, 0x2100)],
@@ -994,7 +996,10 @@ def test_quick_main_resolves_an_unlifted_main_to_empty_lines() -> None:
         "entry_point": "0x1000",
         "method": "symbol",
         "main": "0x2000",
-        "note": None,
+        "note": (
+            "the main function main has no HLIL yet; "
+            "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) and retry"
+        ),
         "hint": None,
         "function": {"start": "0x2000", "name": "main", **NO_ALTERNATIVES},
         "lines": [],

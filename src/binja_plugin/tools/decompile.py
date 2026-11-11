@@ -8,13 +8,22 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
+from binaryninja.enums import SymbolType
 from binaryninja.function import Function
+from binaryninja.highlevelil import (
+    HighLevelILConst,
+    HighLevelILConstPtr,
+    HighLevelILImport,
+    HighLevelILTailcall,
+    HighLevelILVar,
+)
 
 from binja_plugin.tools import (
     _MAX_DISASM_CONTEXT,
     _compile_user_regex,
     _disasm_window,
     _drop,
+    _function_order,
     _ItemError,
     _missing_il_message,
     _name_filter,
@@ -45,6 +54,8 @@ _MAX_DISASM_BATCH = 64
 _MAX_DISASM_MANY_LINES = 512
 _MAX_DISASM_MANY_TOTAL_LINES = 1024
 
+_MAX_TAILCALL_HOPS = 8
+_FORWARDED_ARGUMENT_TYPES = (HighLevelILVar, HighLevelILConst, HighLevelILConstPtr)
 _MAIN_SYMBOL_NAMES = ("main", "_main")
 _MAIN_LIBC_MARKER = "libc_start_main"
 _MAIN_FALLBACK_NOTE = (
@@ -189,6 +200,60 @@ def _entry_argument_main(
             f"found candidate main address {address:#x} but no analyzed function contains it",
         )
     return None, _MAIN_FALLBACK_NOTE
+
+
+def _sole_tailcall(hlil: HighLevelILFunction | None) -> HighLevelILTailcall | None:
+    if hlil is None:
+        return None
+    only_statement = None
+    for block in hlil.basic_blocks:
+        for statement in block:
+            if only_statement is not None:
+                return None
+            only_statement = statement
+    if not isinstance(only_statement, HighLevelILTailcall):
+        return None
+    return only_statement
+
+
+def _forwarding_target(tailcall: HighLevelILTailcall | None) -> int | None:
+    if tailcall is None:
+        return None
+    if not isinstance(tailcall.dest, HighLevelILConstPtr):
+        return None
+    for argument in tailcall.params:
+        if not isinstance(argument, _FORWARDED_ARGUMENT_TYPES):
+            return None
+    return tailcall.dest.constant
+
+
+def _tailcall_stub_body(bv: BinaryView, main_hlil: HighLevelILFunction | None) -> Function | None:
+    target = _forwarding_target(_sole_tailcall(main_hlil))
+    if target is None:
+        return None
+    for _ in range(_MAX_TAILCALL_HOPS):
+        starting_here = bv.get_functions_at(target)
+        if not starting_here:
+            return None
+        current = min(starting_here, key=_function_order)
+        if current.symbol.type == SymbolType.ImportedFunctionSymbol:
+            return None
+        tailcall = _sole_tailcall(current.hlil)
+        if tailcall is not None and isinstance(tailcall.dest, HighLevelILImport):
+            return None
+        target = _forwarding_target(tailcall)
+        if target is None:
+            return current
+    return None
+
+
+def _main_note(bv: BinaryView, main: Function, main_hlil: HighLevelILFunction | None) -> str | None:
+    if main_hlil is None:
+        return f"the main {_missing_il_message(main, 'HLIL')}"
+    body = _tailcall_stub_body(bv, main_hlil)
+    if body is None:
+        return None
+    return f"main is a tail-call stub; its real body is {_truncate(body.name)} at {body.start:#x}"
 
 
 def _resolve_main(
@@ -456,10 +521,12 @@ def rex_quick_main(
             "no_function", f"no analyzed function contains the entry point {entry_point:#x}"
         )
     entry = _resolve_containing(bv, functions)
-    main, method, note = _resolve_main(bv, call, entry)
+    main, method, unresolved_note = _resolve_main(bv, call, entry)
     resolution = main if main is not None else entry
     function = resolution.function
-    lines, truncated = _render_hlil_lines(function.hlil, max_lines)
+    hlil = function.hlil
+    note = unresolved_note if main is None else _main_note(bv, function, hlil)
+    lines, truncated = _render_hlil_lines(hlil, max_lines)
     mnemonic = _trap_terminator(function)
     hint = _QUICK_MAIN_TRAP_HINT.format(mnemonic=mnemonic) if mnemonic is not None else None
     return {
