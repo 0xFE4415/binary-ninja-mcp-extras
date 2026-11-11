@@ -8,6 +8,7 @@ from helpers import (
     get_tool,
 )
 from helpers_view import (
+    FakeArchitecture,
     FakeBinaryView,
     FakeFunction,
     FakeSegment,
@@ -912,25 +913,74 @@ def test_find_functions_by_pattern_reports_empty_results_on_empty_views() -> Non
     assert find(_call(unreadable), "eb0e") == {"total": 0, "truncated": False, "functions": []}
 
 
-def test_find_functions_by_pattern_uses_the_first_of_overlapping_functions() -> None:
+def _overlap_entry(start: int, name: str, addresses: list[int]) -> dict[str, object]:
+    return {
+        "start": hex(start),
+        "name": name,
+        "match_count": len(addresses),
+        "addresses": [hex(address) for address in addresses],
+        "addresses_truncated": False,
+    }
+
+
+@pytest.mark.parametrize("narrow_first", [True, False], ids=["narrow-first", "wide-first"])
+def test_find_functions_by_pattern_credits_overlapping_code_to_the_lowest_start(
+    narrow_first: bool,
+) -> None:
+    narrow = FakeFunction("narrow", 0x1004, 0x1008)
+    wide = FakeFunction("wide", 0x1000, 0x1100)
     view = FakeBinaryView(
-        segments=[FakeSegment(0x1000, 8)],
-        memory={0x1000: b"\x00\x00\x00\x00\xeb\x0e\x00\x00"},
-        functions=[FakeFunction("narrow", 0x1004, 0x1008), FakeFunction("wide", 0x1000, 0x1100)],
+        segments=[FakeSegment(0x1000, 0x10)],
+        memory={0x1000: b"\x00\x00\x00\x00\xeb\x0e\x00\x00\xeb\x0e\x00\x00"},
+        functions=[narrow, wide] if narrow_first else [wide, narrow],
     )
     _, find = get_tool("rex_find_functions_by_pattern")
     assert find(_call(view), "eb0e") == {
         "total": 1,
         "truncated": False,
-        "functions": [
-            {
-                "start": "0x1004",
-                "name": "narrow",
-                "match_count": 1,
-                "addresses": ["0x1004"],
-                "addresses_truncated": False,
-            }
-        ],
+        "functions": [_overlap_entry(0x1000, "wide", [0x1004, 0x1008])],
+    }
+
+
+def test_find_functions_by_pattern_breaks_a_start_tie_by_architecture_name() -> None:
+    thumb = FakeFunction("thumb_copy", 0x1000, 0x1100, arch=FakeArchitecture("thumb2"))
+    armv7 = FakeFunction("armv7_copy", 0x1000, 0x1100, arch=FakeArchitecture("armv7"))
+    for functions in ([thumb, armv7], [armv7, thumb]):
+        view = FakeBinaryView(
+            segments=[FakeSegment(0x1000, 4)],
+            memory={0x1000: b"\x00\xeb\x0e\x00"},
+            functions=functions,
+        )
+        _, find = get_tool("rex_find_functions_by_pattern")
+        assert find(_call(view), "eb0e")["functions"] == [
+            _overlap_entry(0x1000, "armv7_copy", [0x1001])
+        ]
+
+
+def test_find_functions_by_pattern_pages_overlapping_functions_by_their_lowest_start() -> None:
+    parent = FakeFunction("parent", 0x1000, 0x1100)
+    cold = FakeFunction("cold", 0x2000, 0x2010)
+    sibling = FakeFunction("sibling", 0x2008, 0x2010)
+    other = FakeFunction("other", 0x3000, 0x3010)
+    image = bytearray(b"\x00" * 0x2010)
+    for hit in (0x0, 0x1008, 0x2000):
+        image[hit : hit + 2] = b"\xeb\x0e"
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, len(image))],
+        memory={0x1000: bytes(image)},
+        functions=[sibling, cold, other, parent],
+    )
+    _, find = get_tool("rex_find_functions_by_pattern")
+    assert find(_call(view), "eb0e", limit=1, offset=1) == {
+        "total": 3,
+        "truncated": True,
+        "functions": [_overlap_entry(0x2000, "cold", [0x2008])],
+    }
+    assert find(_call(view), "eb0e")["total"] == 3
+    assert find(_call(view), "eb0e", limit=1, offset=3) == {
+        "total": 3,
+        "truncated": False,
+        "functions": [],
     }
 
 

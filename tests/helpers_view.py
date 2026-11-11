@@ -81,12 +81,23 @@ class FakeInstructionTextTokenType(enum.IntEnum):
     AddressSeparatorToken = 72
 
 
-class FakeLineToken:
-    """Mirrors an InstructionTextToken: its type and the text it renders."""
+NO_OPERAND = 0xFFFFFFFF
 
-    def __init__(self, type: FakeInstructionTextTokenType, text: str = "") -> None:
+
+class FakeLineToken:
+    """Mirrors an InstructionTextToken: its type, text, value, and operand index."""
+
+    def __init__(
+        self,
+        type: FakeInstructionTextTokenType,
+        text: str = "",
+        value: int = 0,
+        operand: int = NO_OPERAND,
+    ) -> None:
         self.type = type
         self.text = text
+        self.value = value
+        self.operand = operand
 
 
 class FakeLineContents:
@@ -103,9 +114,9 @@ INSTRUCTION_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
     FakeLineToken(_TOKEN_TYPE.InstructionToken, "cmp"),
     FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
-    FakeLineToken(_TOKEN_TYPE.RegisterToken, "eax"),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "eax", 0, 0),
     FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", "),
-    FakeLineToken(_TOKEN_TYPE.IntegerToken, "0x0"),
+    FakeLineToken(_TOKEN_TYPE.IntegerToken, "0x0", 0, 1),
 )
 FUNCTION_HEADER_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
@@ -130,9 +141,54 @@ ANNOTATED_INSTRUCTION_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
     FakeLineToken(_TOKEN_TYPE.InstructionToken, "mul"),
     FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
-    FakeLineToken(_TOKEN_TYPE.RegisterToken, "rdx"),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "rdx", 0, 0),
     FakeLineToken(_TOKEN_TYPE.TextToken, "  "),
     FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{0x3}"),
+)
+# `xor eax, eax  {0x0}`: the only zero is the annotation; the register tokens carry value 0 too.
+XOR_REGISTER_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "xor"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "eax", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", ", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "eax", 0, 1),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "  {"),
+    FakeLineToken(_TOKEN_TYPE.IntegerToken, "0x0"),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "}"),
+)
+# `push 0x0  {var_8}`: a zero immediate typed as a possible address.
+PUSH_ZERO_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "push"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "    "),
+    FakeLineToken(_TOKEN_TYPE.PossibleAddressToken, "0x0", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, " {"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "var_8"),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "}"),
+)
+# `sar rsi, 0x1  {0x0}`: the immediate is 1; the zero is a register value in the annotation.
+SHIFT_BY_ONE_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "sar"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "rsi", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", ", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.PossibleAddressToken, "0x1", 1, 1),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "  {"),
+    FakeLineToken(_TOKEN_TYPE.IntegerToken, "0x0"),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "}"),
+)
+# `lea rdi, [rel data_404501]  {"coreutils"}`: no integer at all.
+STRING_ANNOTATION_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "lea"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "rdi", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", ", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "  {"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, '"coreutils"'),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "}"),
 )
 
 FakeConstantReference = (

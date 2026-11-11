@@ -15,6 +15,8 @@ class DisassemblySettings: ...
 
 class InstructionTextToken:
     type: InstructionTextTokenType
+    value: int
+    operand: int
 
     def __str__(self) -> str: ...
 

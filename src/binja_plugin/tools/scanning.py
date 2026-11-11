@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Annotated, TypedDict
+from typing import TYPE_CHECKING, Annotated, TypedDict
 
 from binaryninja import mcp
 from binaryninja.enums import InstructionTextTokenType
@@ -13,6 +13,7 @@ from binja_plugin.hexpattern import HexPatternError, compile_hex_pattern
 from binja_plugin.tools import (
     _MAX_LIMIT,
     _drop,
+    _function_order,
     _iter_pattern_matches,
     _name_filter,
     _paginate,
@@ -21,8 +22,19 @@ from binja_plugin.tools import (
     _validate_range,
 )
 
+if TYPE_CHECKING:
+    from binaryninja.function import InstructionTextToken
+
 # rex_constant_find matches displayed constants, which are at most 64-bit values.
 _MAX_CONSTANT_VALUE = 2**64 - 1
+
+# InstructionTextToken.operand for a token that belongs to no operand, such as an annotation.
+_NO_OPERAND = 0xFFFFFFFF
+
+_IMMEDIATE_TOKEN_TYPES = (
+    InstructionTextTokenType.IntegerToken,
+    InstructionTextTokenType.PossibleAddressToken,
+)
 
 # Bounds the regex compile and the per-chunk read size, which grows with the pattern length.
 _MAX_PATTERN_CHARS = 8192
@@ -83,6 +95,15 @@ class _FunctionHits:
     addresses: list[str] = field(default_factory=list)
 
 
+def _has_zero_immediate(tokens: list[InstructionTextToken]) -> bool:
+    for token in tokens:
+        if token.operand == _NO_OPERAND or token.type not in _IMMEDIATE_TOKEN_TYPES:
+            continue
+        if token.value == 0:
+            return True
+    return False
+
+
 @mcp.tool(read_only=True)
 def rex_constant_find(
     call: mcp.ToolCall,
@@ -90,6 +111,7 @@ def rex_constant_find(
     function_filter: str = "",
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
+    include_implicit_zero: bool = False,
 ) -> _ConstantFindResult:
     """Find functions using an immediate constant (a magic value) in disassembly, not raw bytes.
 
@@ -97,6 +119,7 @@ def rex_constant_find(
     :param function_filter: Case-insensitive regex matched against function names.
     :param limit: Maximum matching functions to return.
     :param offset: Matching functions to skip before collecting results.
+    :param include_implicit_zero: With value 0, also return hits such as xor eax, eax.
     """
     bv = call.binary_view
     value = _validate_range("value", value, 0, _MAX_CONSTANT_VALUE)
@@ -116,6 +139,8 @@ def rex_constant_find(
             continue
         tokens = line.contents.tokens
         if not any(token.type == InstructionTextTokenType.InstructionToken for token in tokens):
+            continue
+        if value == 0 and not include_implicit_zero and not _has_zero_immediate(tokens):
             continue
         if name_matcher is not None and name_matcher.search(function.name) is None:
             continue
@@ -195,7 +220,7 @@ def rex_find_functions_by_pattern(
         containing = get_functions_containing(address)
         if not containing:
             continue
-        function = containing[0]
+        function = min(containing, key=_function_order)
         entry = hits.get(function.start)
         if entry is None:
             if len(hits) >= offset + limit:

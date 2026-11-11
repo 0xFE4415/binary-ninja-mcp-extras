@@ -121,7 +121,7 @@ def test_a_line_with_an_instruction_token_counts_wherever_the_token_sits(
     line: tuple[FakeLineToken, ...],
 ) -> None:
     function = FakeFunction("code", 0x5000, 0x5100)
-    result = _find([function], [(0, 0x5010, function, line)], value=0)
+    result = _find([function], [(0, 0x5010, function, line)], value=0, include_implicit_zero=True)
     assert result["functions"] == [_entry(0x5000, "code", [0x5010])]
 
 

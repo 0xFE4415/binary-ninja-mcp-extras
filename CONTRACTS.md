@@ -63,11 +63,13 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `rex_component_add_functions`, `rex_annotate_many`, and `rex_quick_main`) picks one: the
   containing function with the lowest start address, the architecture name breaking a tie
   between equal starts. The core lists containing functions in no documented order, so the
-  pick never follows it. The chosen function comes back as a resolved function entry,
-  `{start, name, also_containing, same_name}`: `also_containing` lists the other functions
-  that contain the address and `same_name` the other functions with the chosen name, each
-  as `{start, name}` by ascending start and at most 64 per list. `rex_function_containing`
-  lists every containing function in the same order, so its first entry is the pick.
+  pick never follows it. `rex_find_functions_by_pattern` credits each hit to the same pick,
+  so overlapping code counts once, for the lowest-start function. The chosen function comes
+  back as a resolved function entry, `{start, name, also_containing, same_name}`:
+  `also_containing` lists the other functions that contain the address and `same_name` the
+  other functions with the chosen name, each as `{start, name}` by ascending start and at
+  most 64 per list. `rex_function_containing` lists every containing function in the same
+  order, so its first entry is the pick.
   Passing a function name in an address expression is ambiguous too: the core resolves it
   to one address before the plugin sees it and does not say that other functions share the
   name. `same_name` is where that shows, whether the caller passed a name or an address.
@@ -363,12 +365,15 @@ Usage strategies that do not fit a tool's one-line description.
   an instruction line, one whose tokens include an instruction token. The core also reports
   function header lines and the `{ Continuation of function ... }`, `{ Falls through into
   ... }`, and `{Case ...}` annotation lines; those never count, so `value` 0 no longer
-  matches every function. The core still matches any zero-valued token on an instruction
-  line, so `value` 0 can hit an instruction with no zero operand that carries an annotation
-  such as `{0x3}`; check the disassembly. A value that is rare or absent makes the core scan
-  the whole view before the search ends. Use it to enumerate every function touching a
-  magic value; when the value lives in data rather than code, use `rex_data_find` or
-  `rx_multi_find` instead.
+  matches every function. The core also matches `value` 0 on an instruction with no zero
+  operand, for example `xor eax, eax  {0x0}` (a register's known value in an annotation) or
+  a line that carries a string annotation. For `value` 0 the tool keeps a hit only when an
+  integer or possible-address token that belongs to an operand is 0; the optional boolean
+  `include_implicit_zero` (default false) returns the other hits too. Dropped hits take no
+  slot in `total`, paging, the address cap, or `truncated`. Other values are not filtered.
+  A value that is rare or absent makes the core scan the whole view before the search ends.
+  Use it to enumerate every function touching a magic value; when the value lives in data
+  rather than code, use `rex_data_find` or `rx_multi_find` instead.
 - `rex_call_paths` with `direction=callers` from a sink answers "who can reach this"
   without hand-walking xrefs; `direction=callees` from a source answers "what can this
   reach". Both directions are bounded by `max_depth` and `max_paths`.
