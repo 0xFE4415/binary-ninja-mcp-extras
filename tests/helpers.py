@@ -33,6 +33,7 @@ from helpers_view import (
 )
 
 NO_ALTERNATIVES = types.MappingProxyType({"also_containing": [], "same_name": []})
+DIRECTORY_NAME_MESSAGE = "filename must end in a file name, not '.' or a trailing '/'"
 
 REGISTERED_TOOLS: list[tuple[str, dict[str, object], Any]] = []
 
