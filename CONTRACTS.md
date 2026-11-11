@@ -105,7 +105,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   reaching every hit of functions in the page (for example a cold block placed after its
   function); `addresses_truncated` only reports the cap on what was seen.
   `rex_constant_find` lists functions, and picks each function's
-  example addresses, in the core's hit order, which is not address order.
+  example addresses, in the core's hit order, which is not address order. Both tools key
+  a function by start address and architecture, so two rows can share a `start` for
+  different architectures, and the rows then usually differ in `name`.
   `rex_hlil_grep` returns no `total`; it additionally returns `scan_incomplete`, set when
   the `max_functions` render budget ran out before the whole view was scanned: nothing
   was proven about matches past the page, so more may exist even though `truncated` is
@@ -185,9 +187,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `invalid_params`. Every `rex_*` tool appears in exactly one category: the module that
   defines it, or `other` for a registered tool no category module defines. The index lists
   `other` only when it has tools; `category=other` is always valid. `rex_help` reads the
-  live tool registry, so the native `rx_*` tools appear, under `scanning`, only while the
-  native plugin is loaded; otherwise they are absent and `tool_name` for one raises
-  `unknown_tool`.
+  live tool registry, so `rx_data_find` and `rx_multi_find` appear, under `scanning`, only
+  while the native plugin is loaded (other `rx_` tools are never listed). Otherwise they
+  are absent, and `tool_name` for one raises `unknown_tool`.
 - `rex_data_read` returns `bytes_read` and `complete` (whether all requested bytes were
   read). An unmapped start returns zero bytes. A short read gives the byte count, not
   the locations of unreadable gaps.
@@ -390,8 +392,9 @@ present only on some rows.
   U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000. Any other token (`+f`,
   `-1`, `0x`, `f_`, non-ASCII digits, `?5`) returns `invalid_pattern` naming the token. A
   `pattern` that is not a string returns `invalid_params`. A `section` name containing a NUL
-  returns `section_not_found`, like any unknown name. An error message that echoes a NUL
-  shows it as U+FFFD, because the core cuts a message at its first NUL.
+  returns `section_not_found`, like any unknown name. The `section_not_found` and
+  `invalid_pattern` messages show an echoed NUL as U+FFFD, because the core cuts a message
+  at its first NUL; other tools' messages are not rewritten.
 - `rex_constant_find` `value` is an integer (0 to 18446744073709551615) or a string: `0x` or
   `0X`, then 1-16 hex digits in either case. A client that reads JSON numbers as doubles
   rounds the integer maximum to 18446744073709552000, so it should send the hex string for
@@ -438,9 +441,6 @@ Usage strategies that do not fit a tool's one-line description.
   A value that is rare or absent makes the core scan the whole view before the search ends.
   Use it to enumerate every function touching a magic value; when the value lives in data
   rather than code, use `rex_data_find` or `rx_multi_find` instead.
-- `rex_call_paths` with `direction=callers` from a sink answers "who can reach this"
-  without hand-walking xrefs; `direction=callees` from a source answers "what can this
-  reach". Both directions are bounded by `max_depth` and `max_paths`.
 - `rex_call_paths` defaults to `direction=callers`: from a sink it answers "who can reach
   this" without hand-walking xrefs. "Does main reach X?" needs `direction=callees` from
   main, which answers "what can this reach". Both directions are bounded by `max_depth` and

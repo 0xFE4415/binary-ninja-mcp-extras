@@ -150,9 +150,9 @@ Three searches stop early, so one call stays fast on a large database.
   input where the tool has it, and keep `rex_hlil_grep` patterns simple.
 - `rx_data_find` beats `rex_data_find` by about 7.5x on a whole-view scan and ties it
   (0.99x) on `.text`; on `.rodata` it was about 30x faster in one diagnostic run.
-  `rx_multi_find` won at every
-  scope, up to 12.6x on the full view. Both register whenever the native half is
-  installed, so pick per scan. The numbers come from [native/BENCH.md](native/BENCH.md).
+  `rx_multi_find` won at every scope, up to 12.6x on the full view. Both register
+  whenever the native half is installed, so pick per scan. The numbers come from
+  [native/BENCH.md](native/BENCH.md).
 
 ## Development and testing
 

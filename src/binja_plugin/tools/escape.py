@@ -176,7 +176,11 @@ def _error_location(error: BaseException, code: str) -> _ErrorLocation | None:
         return None
     if not lines:
         return None
-    text = re.split(r"\r\n|\r|\n", code)[lines[-1] - 1].strip()
+    source_lines = re.split(r"\r\n|\r|\n", code)
+    # Code the caller compiles under the same filename can report a line outside their own source.
+    if not 1 <= lines[-1] <= len(source_lines):
+        return None
+    text = source_lines[lines[-1] - 1].strip()
     return {"line": lines[-1], "text": _truncate(text, _MAX_EVAL_LOCATION_CHARS)}
 
 

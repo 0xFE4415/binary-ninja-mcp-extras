@@ -7,8 +7,8 @@ from typing import TypedDict
 
 from binaryninja import mcp
 
-_NATIVE_TOOL_PREFIX = "rx_"
-_TOOL_PREFIXES = ("rex_", _NATIVE_TOOL_PREFIX)
+_TOOL_PREFIX = "rex_"
+_NATIVE_TOOL_NAMES = frozenset({"rx_data_find", "rx_multi_find"})
 _NATIVE_TOOL_CATEGORY = "scanning"
 
 _UNCATEGORIZED = "other"
@@ -164,7 +164,7 @@ def _tools_by_category(registered: dict[str, mcp.Tool]) -> dict[str, list[str]]:
             for name, member in vars(module).items()
             if name in registered and member.__module__ == module.__name__
         )
-    native_names = (name for name in registered if name.startswith(_NATIVE_TOOL_PREFIX))
+    native_names = registered.keys() & _NATIVE_TOOL_NAMES
     categories[_NATIVE_TOOL_CATEGORY] = sorted([*categories[_NATIVE_TOOL_CATEGORY], *native_names])
     categorized: set[str] = set()
     for names in categories.values():
@@ -235,7 +235,9 @@ def rex_help(
     :param category: Category whose tools to list with purposes; empty lists the categories.
     """
     registered = {
-        tool.name: tool for tool in mcp.Tool.list() if tool.name.startswith(_TOOL_PREFIXES)
+        tool.name: tool
+        for tool in mcp.Tool.list()
+        if tool.name.startswith(_TOOL_PREFIX) or tool.name in _NATIVE_TOOL_NAMES
     }
     if tool_name and category:
         raise mcp.ToolError("invalid_params", "pass either tool_name or category, not both")

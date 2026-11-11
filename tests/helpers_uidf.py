@@ -59,12 +59,7 @@ _UNIQUE_VARIABLE_INDEXES = itertools.count(1_000_000)
 
 
 class FakeVariable:
-    """Mirrors binaryninja.variable.Variable: name, source_type, index, storage and type.
-
-    The defaults describe a 64-bit integer in register index 98, which is rax on x86_64.
-    Like the real Variable, equality and hash follow (source_type, index, storage), not
-    identity or name. An index left out is unique, so default variables stay distinct.
-    """
+    """A Variable stand-in that compares and hashes by (source_type, index, storage)."""
 
     def __init__(
         self,

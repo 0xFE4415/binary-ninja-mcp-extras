@@ -41,26 +41,29 @@ _OFFSET_SCHEMA = {
     "default": 0,
     "minimum": 0,
 }
-_SECTION_SCHEMA = {"description": "Only search within this section.", "type": ["string", "null"]}
+_SECTION_SCHEMA = {
+    "description": "Only search within this section.",
+    "type": ["string", "null"],
+    "default": None,
+}
 
 RX_DATA_FIND = FakeNativeTool(
     "rx_data_find",
     "Search mapped memory for a hex pattern in Rust.",
     {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "DataFindArgs",
         "type": "object",
         "properties": {
+            "limit": _LIMIT_SCHEMA,
+            "offset": _OFFSET_SCHEMA,
             "pattern": {
                 "description": _PATTERN_DESCRIPTION,
                 "type": "string",
                 "maxLength": _MAX_PATTERN_CHARS,
             },
             "section": _SECTION_SCHEMA,
-            "limit": _LIMIT_SCHEMA,
-            "offset": _OFFSET_SCHEMA,
         },
         "required": ["pattern"],
+        "additionalProperties": False,
     },
 )
 
@@ -68,9 +71,10 @@ RX_MULTI_FIND = FakeNativeTool(
     "rx_multi_find",
     "Search up to 64 hex patterns in one Rust pass.",
     {
-        "title": "MultiFindArgs",
         "type": "object",
         "properties": {
+            "limit": _LIMIT_SCHEMA,
+            "offset": _OFFSET_SCHEMA,
             "patterns": {
                 "description": 'Hex byte patterns, e.g. ["48 8b ?? 05"].',
                 "type": "array",
@@ -79,10 +83,9 @@ RX_MULTI_FIND = FakeNativeTool(
                 "maxItems": 64,
             },
             "section": _SECTION_SCHEMA,
-            "limit": _LIMIT_SCHEMA,
-            "offset": _OFFSET_SCHEMA,
         },
         "required": ["patterns"],
+        "additionalProperties": False,
     },
 )
 
@@ -149,13 +152,20 @@ def test_the_scanning_category_view_describes_the_native_tools(
     assert "rex_data_find" in described
 
 
-def test_a_native_prefix_match_needs_the_underscore(monkeypatch: pytest.MonkeyPatch) -> None:
-    lookalike = FakeNativeTool("rxdata", "Not a native tool.", {"type": "object"})
-    builtin = FakeNativeTool("bn_rx_find", "A built-in.", {"type": "object"})
-    _register_native(monkeypatch, lookalike, builtin)
-    names = [name for entry in _help()["categories"] for name in entry["tools"]]
-    assert "rxdata" not in names
-    assert "bn_rx_find" not in names
+@pytest.mark.parametrize("name", ["rx_foo", "rx_data_find2", "rxdata", "bn_rx_find"])
+def test_only_our_native_tools_are_listed_by_exact_name(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    _register_native(
+        monkeypatch, FakeNativeTool(name, "Another plugin's tool.", {"type": "object"})
+    )
+    names = [tool for entry in _help()["categories"] for tool in entry["tools"]]
+    assert name not in names
+    assert "other" not in [entry["name"] for entry in _help()["categories"]]
+    assert name not in [tool["name"] for tool in _help(category="scanning")["tools"]]
+    with pytest.raises(FakeToolError) as error:
+        _help(name)
+    assert error.value.code == "unknown_tool"
 
 
 def test_help_describes_rx_data_find_parameters_with_list_typed_and_bounded_schemas(
@@ -165,7 +175,7 @@ def test_help_describes_rx_data_find_parameters_with_list_typed_and_bounded_sche
     detail = _help("rx_data_find")
     assert detail["name"] == "rx_data_find"
     assert detail["description"] == RX_DATA_FIND.description
-    assert list(_parameters("rx_data_find")) == ["pattern", "section", "limit", "offset"]
+    assert list(_parameters("rx_data_find")) == ["limit", "offset", "pattern", "section"]
     parameters = _parameters("rx_data_find")
     assert parameters["pattern"] == {
         "name": "pattern",
@@ -181,6 +191,7 @@ def test_help_describes_rx_data_find_parameters_with_list_typed_and_bounded_sche
         "required": False,
         "description": "Only search within this section.",
         "error_codes": ["section_not_found"],
+        "default": None,
     }
     assert parameters["limit"]["default"] == 50
     assert parameters["limit"]["minimum"] == 0
@@ -212,7 +223,7 @@ def test_help_tolerates_a_native_parameter_without_description_or_type(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bare = FakeNativeTool(
-        "rx_bare",
+        "rx_multi_find",
         "A tool with sparse schemas.",
         {
             "type": "object",
@@ -223,7 +234,7 @@ def test_help_tolerates_a_native_parameter_without_description_or_type(
         },
     )
     _register_native(monkeypatch, bare)
-    parameters = _parameters("rx_bare")
+    parameters = _parameters("rx_multi_find")
     assert parameters["mode"] == {
         "name": "mode",
         "type": None,
@@ -236,9 +247,11 @@ def test_help_tolerates_a_native_parameter_without_description_or_type(
 
 
 def test_help_tolerates_a_native_tool_without_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
-    _register_native(monkeypatch, FakeNativeTool("rx_none", "Takes nothing.", {"type": "object"}))
-    detail = _help("rx_none")
-    assert detail == {"name": "rx_none", "description": "Takes nothing.", "parameters": []}
+    _register_native(
+        monkeypatch, FakeNativeTool("rx_multi_find", "Takes nothing.", {"type": "object"})
+    )
+    detail = _help("rx_multi_find")
+    assert detail == {"name": "rx_multi_find", "description": "Takes nothing.", "parameters": []}
 
 
 def test_every_native_error_code_entry_names_a_parameter_of_a_native_tool() -> None:
@@ -252,16 +265,24 @@ def test_every_native_error_code_entry_names_a_parameter_of_a_native_tool() -> N
 
 
 _NATIVE_TOOLS_SOURCE = Path(__file__).resolve().parents[2] / "native" / "src" / "tools"
+_LINE_COMMENT = re.compile(r"//[^\n]*")
+_TEST_MODULE = re.compile(r"#\[cfg\(test\)\]\s*mod tests\b")
+_LITERAL_ERROR_CODE = re.compile(r'McpToolError::new\(\s*"([a-z_]+)"')
 
 
-def test_the_native_error_codes_listed_are_the_ones_the_rust_source_raises() -> None:
+# Sees only literal codes in McpToolError::new/invalid_params calls above `mod tests`; a code
+# passed through a variable is invisible. Skipped where native/ is not copied (mutants).
+def test_the_native_error_codes_listed_are_the_literal_ones_the_rust_source_raises() -> None:
     if not _NATIVE_TOOLS_SOURCE.is_dir():
         pytest.skip("the native sources are not part of this tree")
+    sources = sorted(_NATIVE_TOOLS_SOURCE.rglob("*.rs"))
+    assert {path.name for path in sources} >= {"mod.rs", "data_find.rs", "multi_find.rs"}
     raised: set[str] = set()
-    for path in _NATIVE_TOOLS_SOURCE.glob("*.rs"):
-        text = path.read_text(encoding="utf-8")
-        raised.update(re.findall(r'McpToolError::new\(\s*"([a-z_]+)"', text))
-        if "McpToolError::invalid_params(" in text:
+    for path in sources:
+        text = _TEST_MODULE.split(path.read_text(encoding="utf-8"))[0]
+        code = _LINE_COMMENT.sub("", text)
+        raised.update(_LITERAL_ERROR_CODE.findall(code))
+        if "McpToolError::invalid_params(" in code:
             raised.add("invalid_params")
     listed = {
         code

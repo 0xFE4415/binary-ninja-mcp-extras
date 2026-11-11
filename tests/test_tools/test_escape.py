@@ -979,3 +979,22 @@ def test_describe_error_uses_the_fully_qualified_exception_name() -> None:
     error = _nested()
     expected = f"{type(error).__module__}.{type(error).__qualname__}: boom"
     assert escape._describe_error(error) == expected
+
+
+def test_eval_python_omits_a_location_past_the_end_of_the_callers_code() -> None:
+    code = "print('kept')\nexec(compile('\\n\\n\\n\\n1/0', '<rex_eval_python>', 'exec'))"
+    result = _failing(code)
+    assert result["error"] == "ZeroDivisionError: division by zero"
+    assert result["error_location"] is None
+    assert result["stdout"] == "kept\n"
+
+
+def test_eval_python_omits_a_location_before_the_first_line() -> None:
+    code = (
+        "import ast\ntree = ast.parse('1/0')\nfor node in ast.walk(tree):\n"
+        "    if hasattr(node, 'lineno'):\n        node.lineno = node.end_lineno = 0\n"
+        "exec(compile(tree, '<rex_eval_python>', 'exec'))"
+    )
+    result = _failing(code)
+    assert result["error"] == "ZeroDivisionError: division by zero"
+    assert result["error_location"] is None

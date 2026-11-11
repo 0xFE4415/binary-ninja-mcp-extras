@@ -155,8 +155,7 @@ ANNOTATED_INSTRUCTION_LINE = (
     FakeLineToken(_TOKEN_TYPE.TextToken, "  "),
     FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{0x3}"),
 )
-# Instruction tokens carry operand 0 on live x86_64: /tmp/lane3/probe4.out.json lists
-# ['InstructionToken', 'cmp', 0, 0, 0] as [type, text, value, operand, size].
+# Observed live on x86_64: an instruction token such as `cmp` carries operand 0.
 # `xor eax, eax  {0x0}`: the only zero is the annotation; the register tokens carry value 0 too.
 XOR_REGISTER_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
