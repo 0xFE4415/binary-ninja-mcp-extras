@@ -684,6 +684,23 @@ def test_eval_python_reports_keyboard_interrupt_in_band_with_captured_stdout() -
     assert result["error"] == "KeyboardInterrupt: stop"
 
 
+@pytest.mark.parametrize(
+    ("raise_code", "error"),
+    [
+        ("raise GeneratorExit", "GeneratorExit"),
+        ("raise GeneratorExit('stop')", "GeneratorExit: stop"),
+        ("class Boom(BaseException):\n    pass\nraise Boom('bang')", "Boom: bang"),
+    ],
+)
+def test_eval_python_reports_any_base_exception_in_band_with_captured_stdout(
+    raise_code: str, error: str
+) -> None:
+    result = _failing(f"print('before')\n{raise_code}")
+    assert result["stdout"] == "before\n"
+    assert result["result"] is None
+    assert result["error"] == error
+
+
 def test_eval_python_survives_an_exception_whose_message_cannot_render() -> None:
     result = _failing(
         "class Odd(Exception):\n"

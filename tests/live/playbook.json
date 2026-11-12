@@ -1,8 +1,8 @@
 {
  "binary_ninja_version": "6.1.11052-dev Personal",
  "fixture": {
-  "path": "fixture.elf",
-  "sha256": "a58e72525e56d08f060a3835fd63f60e529481bcbb3cd98a41276c5d40b6fbb7"
+  "path": "fixture.o",
+  "sha256": "62ccda62694c844a3a48a7da2ff06bc37d8e63bb1eecc2f33028473b626aae8b"
  },
  "steps": [
   {
@@ -362,8 +362,8 @@
    "guards": "A filename of '.' is rejected as an invalid file name.",
    "tool": "rex_export_symbols",
    "args": {
-    "start": 4198400,
-    "end": 4198656,
+    "start": 4194304,
+    "end": 4194560,
     "filename": "."
    },
    "expect": [
@@ -379,8 +379,8 @@
    "guards": "A filename that ends in a slash is rejected as an invalid file name.",
    "tool": "rex_export_symbols",
    "args": {
-    "start": 4198400,
-    "end": 4198656,
+    "start": 4194304,
+    "end": 4194560,
     "filename": "sub/"
    },
    "expect": [
@@ -794,7 +794,7 @@
     },
     {
      "kind": "subset",
-     "value": "0x401050",
+     "value": "0x4003a0",
      "path": "main"
     },
     {
@@ -805,9 +805,29 @@
     {
      "kind": "subset",
      "value": [
-      "return real_main(argc, argv) __tailcall"
+      "return real_main(arg1, arg2) __tailcall"
      ],
      "path": "lines"
+    }
+   ]
+  },
+  {
+   "id": "core-lists-definition-sites-out-of-order",
+   "guards": "Precondition: the core lists the definition sites of the result variable out of address order, starting from the middle site.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "function = bv.get_functions_by_name('many_definitions')[0]\nvariable = [item for item in function.mlil.vars if item.name == 'result'][0]\nresult = [hex(function.mlil[index].address) for index in function.mlil.get_var_definitions(variable)]"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "['0x40001e', '0x400014', '0x40002a']",
+     "path": "result"
     }
    ]
   },
@@ -817,7 +837,7 @@
    "tool": "rex_mlil_uses",
    "args": {
     "function": "many_definitions",
-    "address": "0x40116c"
+    "address": "0x400014"
    },
    "expect": [
     {
@@ -833,9 +853,9 @@
     {
      "kind": "subset",
      "value": [
-      "0x40116c",
-      "0x401176",
-      "0x401182"
+      "0x400014",
+      "0x40001e",
+      "0x40002a"
      ],
      "path": "variables.0.definitions"
     },
@@ -851,21 +871,41 @@
    "tool": "rex_mlil_uses",
    "args": {
     "function": "many_definitions",
-    "address": "0x401176"
+    "address": "0x40001e"
    },
    "expect": [
     {
      "kind": "subset",
      "value": [
-      "0x40116c",
-      "0x401176",
-      "0x401182"
+      "0x400014",
+      "0x40001e",
+      "0x40002a"
      ],
      "path": "variables.0.definitions"
     },
     {
      "kind": "sorted_hex",
      "path": "variables.0.definitions"
+    }
+   ]
+  },
+  {
+   "id": "core-lists-overlap-high-first",
+   "guards": "Precondition: the core lists the higher-start function first for the shared overlap block, the order the next two steps depend on.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "result = [function.name for function in bv.get_functions_containing(bv.get_symbols_by_name('overlap_shared')[0].address)]"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "['overlap_high', 'overlap_low']",
+     "path": "result"
     }
    ]
   },
@@ -1007,7 +1047,7 @@
      "kind": "excludes",
      "path": "functions",
      "item": {
-      "name": "_start"
+      "name": "zero_xor_registers"
      }
     }
    ]
@@ -1040,7 +1080,7 @@
      "kind": "includes",
      "path": "functions",
      "item": {
-      "name": "_start"
+      "name": "zero_xor_registers"
      }
     }
    ]
@@ -1067,7 +1107,7 @@
    "guards": "Setup for the skipped-main note: skips analysis of main.",
    "tool": "rex_eval_python",
    "args": {
-    "code": "main = bv.get_function_at(0x401050)\nmain.analysis_skip_override = binaryninja.FunctionAnalysisSkipOverride.AlwaysSkipFunctionAnalysis\nbv.update_analysis_and_wait()\nmain = bv.get_function_at(0x401050)\nresult = (main.analysis_skipped, main.hlil is None)"
+    "code": "main = bv.get_function_at(0x4003a0)\nmain.analysis_skip_override = binaryninja.FunctionAnalysisSkipOverride.AlwaysSkipFunctionAnalysis\nbv.update_analysis_and_wait()\nmain = bv.get_function_at(0x4003a0)\nresult = (main.analysis_skipped, main.hlil is None)"
    },
    "expect": [
     {
@@ -1095,7 +1135,7 @@
     },
     {
      "kind": "subset",
-     "value": "0x401050",
+     "value": "0x4003a0",
      "path": "main"
     },
     {
@@ -1115,7 +1155,7 @@
    "guards": "Teardown for the skipped-main note: restores analysis of main.",
    "tool": "rex_eval_python",
    "args": {
-    "code": "main = bv.get_function_at(0x401050)\nmain.analysis_skip_override = binaryninja.FunctionAnalysisSkipOverride.DefaultFunctionAnalysisSkip\nbv.update_analysis_and_wait()\nresult = bv.get_function_at(0x401050).analysis_skipped"
+    "code": "main = bv.get_function_at(0x4003a0)\nmain.analysis_skip_override = binaryninja.FunctionAnalysisSkipOverride.DefaultFunctionAnalysisSkip\nbv.update_analysis_and_wait()\nresult = bv.get_function_at(0x4003a0).analysis_skipped"
    },
    "expect": [
     {
@@ -1275,11 +1315,11 @@
       "total": 11,
       "truncated": true,
       "matches": [
-       "0x401214",
-       "0x401238",
-       "0x401254",
-       "0x401274",
-       "0x4013d7"
+       "0x4000e8",
+       "0x400104",
+       "0x400124",
+       "0x400287",
+       "0x4002b7"
       ]
      }
     },
@@ -1409,7 +1449,7 @@
     "patterns": [
      "e8 ?? ?? ?? ??",
      "b8 34 12 5a 5a",
-     "ff 25 ?? ?? ?? ??",
+     "83 3d ?? ?? ?? ?? 01",
      "31 c0"
     ],
     "limit": 4
@@ -1428,10 +1468,10 @@
       "total": 5,
       "truncated": true,
       "matches": [
-       "0x400428",
-       "0x401131",
-       "0x401186",
-       "0x4011b8"
+       "0x40002e",
+       "0x400068",
+       "0x400084",
+       "0x4000a6"
       ]
      }
     },
@@ -1443,7 +1483,7 @@
       "total": 1,
       "truncated": false,
       "matches": [
-       "0x401196"
+       "0x40003e"
       ]
      }
     },
@@ -1451,13 +1491,12 @@
      "kind": "subset",
      "path": "results.2",
      "value": {
-      "pattern": "ff 25 ?? ?? ?? ??",
-      "total": 3,
+      "pattern": "83 3d ?? ?? ?? ?? 01",
+      "total": 2,
       "truncated": false,
       "matches": [
-       "0x401026",
-       "0x401030",
-       "0x401040"
+       "0x40000b",
+       "0x400044"
       ]
      }
     },
@@ -1469,10 +1508,10 @@
       "total": 4,
       "truncated": false,
       "matches": [
-       "0x401074",
-       "0x401160",
-       "0x4012c1",
-       "0x40131f"
+       "0x400000",
+       "0x400006",
+       "0x400171",
+       "0x4001cf"
       ]
      }
     },
@@ -1513,7 +1552,7 @@
      "against": {
       "tool": "rex_data_find",
       "args": {
-       "pattern": "ff 25 ?? ?? ?? ??",
+       "pattern": "83 3d ?? ?? ?? ?? 01",
        "limit": 4
       }
      },
