@@ -32,7 +32,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 [[package]]
 name = "binaryninja"
 version = "0.1.0"
-source = "git+https://github.com/Vector35/binaryninja-api.git?rev=403768cfc906aaf8cf4903dfdded4da4c02af5fd#403768cfc906aaf8cf4903dfdded4da4c02af5fd"
+source = "git+https://github.com/Vector35/binaryninja-api.git?rev=23dfe06ed0318e1ba42a848125795500032d164a#23dfe06ed0318e1ba42a848125795500032d164a"
 dependencies = [
  "binaryninjacore-sys",
  "bitflags",
@@ -48,7 +48,7 @@ dependencies = [
 [[package]]
 name = "binaryninjacore-sys"
 version = "0.1.0"
-source = "git+https://github.com/Vector35/binaryninja-api.git?rev=403768cfc906aaf8cf4903dfdded4da4c02af5fd#403768cfc906aaf8cf4903dfdded4da4c02af5fd"
+source = "git+https://github.com/Vector35/binaryninja-api.git?rev=23dfe06ed0318e1ba42a848125795500032d164a#23dfe06ed0318e1ba42a848125795500032d164a"
 dependencies = [
  "bindgen",
  "cmake",
@@ -64,7 +64,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -236,7 +236,7 @@ dependencies = [
  "clap",
  "criterion-plot",
  "is-terminal",
- "itertools 0.10.5",
+ "itertools",
  "num-traits",
  "once_cell",
  "oorandom",
@@ -255,7 +255,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
 dependencies = [
  "cast",
- "itertools 0.10.5",
+ "itertools",
 ]
 
 [[package]]
@@ -333,15 +333,6 @@ name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
 dependencies = [
  "either",
 ]

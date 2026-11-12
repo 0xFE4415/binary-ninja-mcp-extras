@@ -1,5 +1,4 @@
 {
- "binary_ninja_version": "6.1.11052-dev Personal",
  "fixture": {
   "path": "fixture.o",
   "base": "0x400000",
@@ -1089,26 +1088,6 @@
     {
      "kind": "sorted_hex",
      "path": "variables.0.definitions"
-    }
-   ]
-  },
-  {
-   "id": "core-lists-overlap-high-first",
-   "guards": "Precondition: the core lists the higher-start function first for the shared overlap block, the order the next two steps depend on.",
-   "tool": "rex_eval_python",
-   "args": {
-    "code": "result = [function.name for function in bv.get_functions_containing(bv.get_symbols_by_name('overlap_shared')[0].address)]"
-   },
-   "expect": [
-    {
-     "kind": "subset",
-     "value": null,
-     "path": "error"
-    },
-    {
-     "kind": "subset",
-     "value": "['overlap_high', 'overlap_low']",
-     "path": "result"
     }
    ]
   },

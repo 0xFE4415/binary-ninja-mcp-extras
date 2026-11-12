@@ -400,6 +400,11 @@ def core_version(client: McpClient, binary: str) -> str:
     return str(result.data["result"]).strip("'\"")
 
 
+def major_minor(version: str) -> tuple[int, int]:
+    major, minor = version.split(".")[:2]
+    return int(major), int(minor)
+
+
 def run_steps(playbook: dict[str, Any], binary: str, client: McpClient) -> int:
     failed = 0
     for step in playbook["steps"]:
@@ -474,8 +479,8 @@ def run_opened(
             wait_for_analysis(client, binary)
             version = core_version(client, binary)
             print(f"Binary Ninja {version}; fixture {binary}")
-            if version != playbook["binary_ninja_version"]:
-                print(f"WARNING: playbook pinned {playbook['binary_ninja_version']}")
+            if major_minor(version) < (6, 1):
+                print("WARNING: playbook needs Binary Ninja 6.1 or newer")
             failed = run_steps(playbook, binary, client)
     finally:
         closed = close_fixture(client, binary)
