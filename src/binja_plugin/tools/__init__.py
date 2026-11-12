@@ -432,6 +432,26 @@ def _validate_export_path(filename: str) -> None:
             )
 
 
+def _reject_unusable_export_target(filename: str) -> None:
+    """Reject, before any data is computed, a target no write could ever succeed on."""
+    resolved_root = _EXPORT_ROOT.resolve()
+    resolved = (_EXPORT_ROOT / filename).resolve()
+    if not resolved.is_relative_to(resolved_root):
+        # _resolve_export_path raises path_escape for it later.
+        return
+    if resolved.is_dir():
+        raise mcp.ToolError(
+            "invalid_params", "filename names an existing directory; choose a file name"
+        )
+    # The root itself is created on demand, so only a deeper parent must already exist.
+    if resolved.parent != resolved_root and not resolved.parent.is_dir():
+        raise mcp.ToolError(
+            "invalid_params",
+            "the parent of filename is not an existing directory; "
+            "use a plain file name in the export root",
+        )
+
+
 def _resolve_export_path(filename: str) -> Path:
     # Containment is checked after resolve(): a symlink inside the root must not redirect the write.
     try:

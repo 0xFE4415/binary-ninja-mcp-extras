@@ -244,19 +244,21 @@ def test_export_disasm_rejects_out_of_function_addresses_and_ranges() -> None:
 def test_export_disasm_reports_export_failed_when_the_write_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    root = tmp_path / "exports"
-    root.mkdir()
-    # A directory sitting where the file would go makes open() raise IsADirectoryError;
-    # the handler must turn that into export_failed, not leak the OSError.
-    (root / "occupied.txt").mkdir()
-    monkeypatch.setattr(tools, "_EXPORT_ROOT", root)
+    _use_export_root(monkeypatch, tmp_path)
+
+    def refuse_to_open(*arguments: object, **keywords: object) -> object:
+        raise PermissionError(13, "Permission denied")
+
+    # A genuine write failure (permissions, full disk) is not a usable-target problem: the
+    # handler must turn the OSError into export_failed, not leak it.
+    monkeypatch.setattr(tools, "open", refuse_to_open, raising=False)
     view = _disasm_view()
     _, export = get_tool("rex_export_disasm")
     with pytest.raises(FakeToolError) as exc:
-        export(_call(view), 0x1104, filename="occupied.txt")
+        export(_call(view), 0x1104, filename="denied.txt")
     assert exc.value.code == "export_failed"
     # The OSError text is appended, so the message stays explainable to the caller.
-    assert exc.value.message.startswith("could not write export file: ")
+    assert exc.value.message == "could not write export file: [Errno 13] Permission denied"
 
 
 def test_export_symbols_reports_export_failed_when_the_root_cannot_be_created(
@@ -274,19 +276,75 @@ def test_export_symbols_reports_export_failed_when_the_root_cannot_be_created(
     assert "could not prepare export path" in exc.value.message
 
 
-def test_export_disasm_fails_nested_filenames_at_the_write(
+def test_export_disasm_rejects_a_nested_filename_whose_parent_is_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     root = _use_export_root(monkeypatch, tmp_path)
     view = _disasm_view()
     _, export = get_tool("rex_export_disasm")
     # Lexical validation allows a nested relative name, but only the fixed root itself is
-    # ever created on demand, so the write fails into export_failed instead of silently
-    # growing a tree under the root.
+    # ever created on demand, so a missing parent is rejected instead of silently growing
+    # a tree under the root. The rejection comes before any filesystem work.
     with pytest.raises(FakeToolError) as exc:
         export(_call(view), 0x1104, filename="sub/out.txt")
-    assert exc.value.code == "export_failed"
-    assert not (root / "sub").exists()
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == (
+        "the parent of filename is not an existing directory; "
+        "use a plain file name in the export root"
+    )
+    assert not root.exists()
+
+
+def test_export_disasm_writes_into_an_existing_subdirectory_of_the_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    (root / "sub").mkdir(parents=True)
+    _, export = get_tool("rex_export_disasm")
+    result = export(_call(_disasm_view()), 0x1104, filename="sub/out.txt")
+    assert result["path"] == str((root / "sub" / "out.txt").resolve())
+    assert (root / "sub" / "out.txt").exists()
+
+
+def test_export_disasm_rejects_a_filename_that_names_an_existing_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    (root / "occupied.txt").mkdir(parents=True)
+    _, export = get_tool("rex_export_disasm")
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(_disasm_view()), 0x1104, filename="occupied.txt")
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == "filename names an existing directory; choose a file name"
+
+
+def test_every_export_rejects_an_unusable_target_before_computing_any_data(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    (root / "occupied.txt").mkdir(parents=True)
+    # Each view would fail the data step with a different error if the target were not
+    # checked first: no function at the address, a core that must not be asked for symbols,
+    # and a view with no architecture to create a type library for.
+    _, export_disasm = get_tool("rex_export_disasm")
+    _, export_symbols = get_tool("rex_export_symbols")
+    _, export_library = get_tool("rex_type_library_export")
+
+    def forbid_symbols(start: int | None = None, length: int | None = None) -> list[object]:
+        raise AssertionError("symbols were read before the target was checked")
+
+    symbol_view = FakeBinaryView()
+    monkeypatch.setattr(symbol_view, "get_symbols", forbid_symbols)
+    calls = [
+        lambda: export_disasm(_call(FakeBinaryView()), 0x9999, filename="occupied.txt"),
+        lambda: export_symbols(_call(symbol_view), 0, 0x1000, filename="occupied.txt"),
+        lambda: export_library(_call(FakeBinaryView()), "lib", ["a"], filename="occupied.txt"),
+    ]
+    for call in calls:
+        with pytest.raises(FakeToolError) as exc:
+            call()
+        assert exc.value.code == "invalid_params"
+        assert exc.value.message == "filename names an existing directory; choose a file name"
 
 
 def test_export_disasm_accepts_a_component_at_the_name_max_bound(

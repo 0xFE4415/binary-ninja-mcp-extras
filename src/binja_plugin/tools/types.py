@@ -13,6 +13,7 @@ from binaryninja.enums import SymbolType, TypeClass
 from binja_plugin.tools import (
     _MAX_EXPORT_FILE_BYTES,
     _reject_nul,
+    _reject_unusable_export_target,
     _resolve_export_path,
     _truncate,
     _validate_export_path,
@@ -201,6 +202,7 @@ def rex_type_library_export(
     _validate_text("library_name", library_name, _MAX_TYPE_NAME_CHARS, "library_name_too_large")
     _validate_type_names(names)
     _validate_export_path(filename)
+    _reject_unusable_export_target(filename)
     # Widened to str so the body check stays reachable by direct calls; match the Literal.
     requested: str = kind
     if requested not in ("types", "objects"):

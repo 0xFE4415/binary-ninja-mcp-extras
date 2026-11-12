@@ -325,7 +325,12 @@ _EXPORT_FILENAME_CODES = [
     (".", "invalid_params"),
     ("sub/", "invalid_params"),
     ("link.txt", "path_escape"),
-    ("occupied.txt", "export_failed"),
+    ("linkdir", "path_escape"),
+    ("linkdir/out.txt", "path_escape"),
+    ("occupied.txt", "invalid_params"),
+    ("missing/out.txt", "invalid_params"),
+    ("regular.txt/out.txt", "invalid_params"),
+    ("regular.txt/deeper/out.txt", "invalid_params"),
 ]
 
 _EXPORT_FILENAME_TOOLS = ["rex_export_disasm", "rex_export_symbols", "rex_type_library_export"]
@@ -335,7 +340,10 @@ def _use_export_root_with_traps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     root = _use_export_root(monkeypatch, tmp_path)
     root.mkdir(parents=True)
     (root / "link.txt").symlink_to(tmp_path / "outside.txt")
+    (tmp_path / "outside_dir").mkdir()
+    (root / "linkdir").symlink_to(tmp_path / "outside_dir")
     (root / "occupied.txt").mkdir()
+    (root / "regular.txt").write_text("a file, not a directory")
 
 
 def _export_filename_error(tool_name: str, filename: str) -> FakeToolError:

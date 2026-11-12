@@ -384,7 +384,10 @@ present only on some rows.
   is a required parameter with no default, and the advertised schema lists it under
   `required`. It raises `invalid_params` for an empty name, an absolute path, a backslash, a
   NUL byte, a `..` component, a last path component that is `.` or empty (a trailing `/`,
-  which names a directory, not a file), or a component over 255 bytes.
+  which names a directory, not a file), or a component over 255 bytes. Before any data is
+  computed it also raises `invalid_params` for a name that is an existing directory and for
+  a name whose parent is not an existing directory (missing, or a regular file); only the
+  export root itself is created on demand.
   `path_escape` is raised only after resolution, when a symlink inside the export root
   points outside it, and `export_failed` when the root or file cannot be written.
 - `rex_type_library_export` raises `invalid_params` for an empty `library_name`, for `names`
