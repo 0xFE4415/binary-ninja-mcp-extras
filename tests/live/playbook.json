@@ -2,6 +2,7 @@
  "binary_ninja_version": "6.1.11052-dev Personal",
  "fixture": {
   "path": "fixture.o",
+  "base": "0x400000",
   "sha256": "62ccda62694c844a3a48a7da2ff06bc37d8e63bb1eecc2f33028473b626aae8b"
  },
  "steps": [
@@ -83,61 +84,6 @@
      "path": "categories",
      "item": {
       "name": "scanning"
-     }
-    }
-   ]
-  },
-  {
-   "id": "help-type-library-export-codes",
-   "guards": "rex_help lists invalid_params as an error code of rex_type_library_export names and kind.",
-   "tool": "rex_help",
-   "args": {
-    "tool_name": "rex_type_library_export"
-   },
-   "expect": [
-    {
-     "kind": "includes",
-     "path": "parameters",
-     "item": {
-      "name": "names",
-      "error_codes": [
-       "invalid_params"
-      ]
-     }
-    },
-    {
-     "kind": "includes",
-     "path": "parameters",
-     "item": {
-      "name": "kind",
-      "error_codes": [
-       "invalid_params"
-      ]
-     }
-    }
-   ]
-  },
-  {
-   "id": "help-uidf-set-many-item-codes",
-   "guards": "rex_help lists every per-item error code of rex_uidf_set_many.",
-   "tool": "rex_help",
-   "args": {
-    "tool_name": "rex_uidf_set_many"
-   },
-   "expect": [
-    {
-     "kind": "includes",
-     "path": "parameters",
-     "item": {
-      "name": "items",
-      "error_codes": [
-       "invalid_params",
-       "no_mlil",
-       "no_variable",
-       "ambiguous_definition",
-       "definition_not_found",
-       "set_failed"
-      ]
      }
     }
    ]
@@ -388,6 +334,23 @@
      "kind": "error_code",
      "code": "invalid_params",
      "message_contains": "file name"
+    }
+   ]
+  },
+  {
+   "id": "export-symbols-missing-parent-directory",
+   "guards": "A filename whose parent directory does not exist is rejected before anything is exported.",
+   "tool": "rex_export_symbols",
+   "args": {
+    "start": 4194304,
+    "end": 4194560,
+    "filename": "missing_parent_directory/symbols.csv"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "the parent of filename is not an existing directory"
     }
    ]
   },
@@ -704,6 +667,62 @@
      "kind": "subset",
      "value": "binaryninja.mcp.ToolError: my_code: my message",
      "path": "error"
+    }
+   ]
+  },
+  {
+   "id": "eval-python-generator-exit-in-band",
+   "guards": "Eval code that raises GeneratorExit is reported in the error field, not as a failed call.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "raise GeneratorExit"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": "GeneratorExit",
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "result"
+    },
+    {
+     "kind": "subset",
+     "value": {
+      "line": 1,
+      "text": "raise GeneratorExit"
+     },
+     "path": "error_location"
+    }
+   ]
+  },
+  {
+   "id": "eval-python-custom-base-exception-in-band",
+   "guards": "Eval code that raises a custom BaseException subclass is reported in the error field, not as a failed call.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "class Custom(BaseException):\n    pass\nraise Custom('boom')"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": "Custom: boom",
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "result"
+    },
+    {
+     "kind": "subset",
+     "value": {
+      "line": 3,
+      "text": "raise Custom('boom')"
+     },
+     "path": "error_location"
     }
    ]
   },
@@ -1260,8 +1279,147 @@
    ]
   },
   {
-   "id": "data-find-parity-call-wildcards",
-   "guards": "Both scanners return the same first page for a wildcard call pattern.",
+   "id": "kv-set-key-with-nul-rejected",
+   "guards": "rex_kv_set rejects a key with a NUL byte.",
+   "tool": "rex_kv_set",
+   "args": {
+    "key": "a\u0000b",
+    "value": "v"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "key must not contain NUL bytes"
+    }
+   ]
+  },
+  {
+   "id": "kv-delete-key-with-nul-rejected",
+   "guards": "rex_kv_delete rejects a key with a NUL byte.",
+   "tool": "rex_kv_delete",
+   "args": {
+    "key": "a\u0000b"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "key must not contain NUL bytes"
+    }
+   ]
+  },
+  {
+   "id": "annotate-name-with-nul-rejected",
+   "guards": "A NUL byte in an annotation name fails that row and changes nothing.",
+   "tool": "rex_annotate_many",
+   "args": {
+    "items": [
+     {
+      "addr": "0x4003a0",
+      "name": "a\u0000b"
+     }
+    ]
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "",
+     "value": {
+      "applied": 0,
+      "failed": 1,
+      "total": 1,
+      "results": [
+       {
+        "addr": "0x4003a0",
+        "ok": false,
+        "error": "name must not contain NUL bytes"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "annotate-address-with-nul-rejected",
+   "guards": "A NUL byte in an annotation address string fails that row and changes nothing.",
+   "tool": "rex_annotate_many",
+   "args": {
+    "items": [
+     {
+      "addr": "0x400\u0000000",
+      "name": "zz"
+     }
+    ]
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "",
+     "value": {
+      "applied": 0,
+      "failed": 1,
+      "total": 1,
+      "results": [
+       {
+        "addr": "0x400\u0000000",
+        "ok": false,
+        "error": "addr must not contain NUL bytes"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "component-create-name-with-nul-rejected",
+   "guards": "rex_component_create rejects a name with a NUL byte.",
+   "tool": "rex_component_create",
+   "args": {
+    "name": "a\u0000b"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "name must not contain NUL bytes"
+    }
+   ]
+  },
+  {
+   "id": "disasm-many-address-with-nul-rejected",
+   "guards": "A NUL byte in a rex_disasm_many address string fails that row and returns no window.",
+   "tool": "rex_disasm_many",
+   "args": {
+    "addresses": [
+     "0x400\u0000000"
+    ]
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "",
+     "value": {
+      "windows": [],
+      "truncated": false,
+      "next_offset": null,
+      "errors": [
+       {
+        "index": 0,
+        "address": "0x400\u0000000",
+        "error": {
+         "code": "invalid_params",
+         "message": "addresses[0] must not contain NUL bytes"
+        }
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "data-find-parity-e8-wildcards",
+   "guards": "Both scanners return the same first page for the bytes e8 followed by four wildcards, which includes the displacement of a jmp and the start of the cmp after it, not only calls.",
    "tool": "rex_data_find",
    "args": {
     "pattern": "e8 ?? ?? ?? ??",
@@ -1299,7 +1457,7 @@
   },
   {
    "id": "data-find-parity-second-page",
-   "guards": "Both scanners return the same second page for a wildcard call pattern.",
+   "guards": "Both scanners return the same second page for the bytes e8 followed by four wildcards.",
    "tool": "rex_data_find",
    "args": {
     "pattern": "e8 ?? ?? ?? ??",

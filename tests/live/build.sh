@@ -3,6 +3,8 @@
 # the toolchain in fixture.compiler. The object is compiled but never linked.
 # After a rebuild, update fixture.sha256 in playbook.json and re-check every pinned
 # address and count in it against the new binary.
+# The playbook addresses are Binary Ninja's layout of the object file, which it loads
+# (ET_REL) at base 0x400000.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

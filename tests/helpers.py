@@ -14,8 +14,7 @@ from typing import Any
 
 import pytest
 
-# The UIDF and view fakes live in leaf modules: they hold only self-contained fakes so
-# this module's top-level import of them cannot cycle.
+# These fake modules never import helpers, so importing them here cannot cycle.
 from helpers_dataflow import FakeInstruction, FakeMLILInstructions
 from helpers_uidf import FakeRegisterValueType, FakeVariable, FakeVariableSourceType
 from helpers_view import (

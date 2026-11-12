@@ -25,6 +25,10 @@ def structured(data: dict[str, Any], is_error: bool = False) -> str:
     return json.dumps({"jsonrpc": "2.0", "id": 1, "result": result})
 
 
+def opened_reply(start: Any) -> str:
+    return structured({"binary": {"handle": "h1", "start": start}})
+
+
 def drop_connection(arguments: dict[str, Any]) -> None:
     return None
 
@@ -86,7 +90,7 @@ class StubServer(ThreadingHTTPServer):
 @pytest.fixture
 def stub() -> Iterator[StubServer]:
     server = StubServer()
-    server.tools["bn_binary_open"] = lambda arguments: structured({"binary": {"handle": "h1"}})
+    server.tools["bn_binary_open"] = lambda arguments: opened_reply("0x400000")
     server.tools["rex_analysis_wait"] = lambda arguments: structured({"completed": True})
     server.tools["rex_eval_python"] = lambda arguments: structured(
         {"error": None, "result": "'1.0'"}
@@ -137,6 +141,7 @@ def write_playbook(
         "binary_ninja_version": version,
         "fixture": {
             "path": str(fixture_file),
+            "base": "0x400000",
             "sha256": hashlib.sha256(fixture_file.read_bytes()).hexdigest(),
         },
         "steps": steps,
@@ -539,6 +544,83 @@ def test_run_does_not_close_when_the_open_fails(
     assert "rex_binary_close" not in stub.call_names()
 
 
+def test_run_proceeds_when_the_view_starts_at_the_fixture_base(
+    stub: StubServer, tmp_path: Path, fixture_file: Path
+):
+    stub.tools["bn_binary_open"] = lambda arguments: opened_reply("0x400000")
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    assert runner.run(playbook_path, stub.url) == 0
+    assert stub.call_names() == [
+        "bn_binary_open",
+        "rex_analysis_wait",
+        "rex_eval_python",
+        "probe",
+        "rex_binary_close",
+    ]
+
+
+def test_run_refuses_a_view_that_starts_elsewhere_and_closes_it(
+    stub: StubServer, tmp_path: Path, fixture_file: Path
+):
+    stub.tools["bn_binary_open"] = lambda arguments: opened_reply("0x10000")
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    with pytest.raises(
+        runner.HarnessError, match=r"^fixture loaded at 0x10000, expected 0x400000$"
+    ):
+        runner.run(playbook_path, stub.url)
+    assert stub.calls == [
+        ("bn_binary_open", {"path": str(fixture_file.resolve())}),
+        ("rex_binary_close", {"binary": "h1"}),
+    ]
+
+
+def test_main_exits_two_and_reports_a_base_mismatch(
+    stub: StubServer,
+    tmp_path: Path,
+    fixture_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    stub.tools["bn_binary_open"] = lambda arguments: opened_reply("0x10000")
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    monkeypatch.setattr(
+        sys, "argv", ["run_playbook.py", "--url", stub.url, "--playbook", str(playbook_path)]
+    )
+    assert runner.main() == 2
+    captured = capsys.readouterr()
+    assert "ERROR: fixture loaded at 0x10000, expected 0x400000" in captured.err
+    assert "passed" not in captured.out
+    assert stub.call_names() == ["bn_binary_open", "rex_binary_close"]
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        pytest.param(None, id="null"),
+        pytest.param(4194304, id="number"),
+        pytest.param("not hex", id="not-hex"),
+    ],
+)
+def test_run_refuses_an_unreadable_view_start_and_closes_it(
+    stub: StubServer, tmp_path: Path, fixture_file: Path, start: Any
+):
+    stub.tools["bn_binary_open"] = lambda arguments: opened_reply(start)
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    with pytest.raises(runner.HarnessError, match="the view start is not a hex address"):
+        runner.run(playbook_path, stub.url)
+    assert stub.call_names() == ["bn_binary_open", "rex_binary_close"]
+
+
+def test_run_refuses_a_missing_view_start_and_closes_it(
+    stub: StubServer, tmp_path: Path, fixture_file: Path
+):
+    stub.tools["bn_binary_open"] = lambda arguments: structured({"binary": {"handle": "h1"}})
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    with pytest.raises(runner.HarnessError, match="the view start is not a hex address: None"):
+        runner.run(playbook_path, stub.url)
+    assert stub.call_names() == ["bn_binary_open", "rex_binary_close"]
+
+
 def test_run_closes_the_view_when_analysis_never_finishes(
     stub: StubServer, tmp_path: Path, fixture_file: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -622,7 +704,7 @@ def test_termination_during_the_open_stops_before_any_step_and_closes_the_view(
     def slow_open(arguments: dict[str, Any]) -> str:
         open_started.set()
         release_open.wait(TOOL_REPLY_TIMEOUT_SECONDS)
-        return structured({"binary": {"handle": "h1"}})
+        return opened_reply("0x400000")
 
     stub.tools["bn_binary_open"] = slow_open
     playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
@@ -813,7 +895,7 @@ def test_termination_pending_from_the_open_still_closes_with_the_signals_blocked
     close_fixture = runner.close_fixture
     blocked_during_close: list[set[signal.Signals]] = []
 
-    def open_then_signal(client: runner.McpClient, fixture: Path) -> str:
+    def open_then_signal(client: runner.McpClient, fixture: Path) -> runner.OpenedFixture:
         binary = open_fixture(client, fixture)
         signal.raise_signal(termination_signal)
         return binary

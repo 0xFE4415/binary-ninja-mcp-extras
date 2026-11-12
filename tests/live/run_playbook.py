@@ -36,6 +36,12 @@ class ToolResult:
     data: Any
 
 
+@dataclass
+class OpenedFixture:
+    handle: str
+    start: Any
+
+
 def decode_reply(body: str) -> dict[str, Any]:
     if not body:
         return {}
@@ -350,11 +356,22 @@ def verify_fixture(playbook: dict[str, Any]) -> Path:
     return fixture
 
 
-def open_fixture(client: McpClient, fixture: Path) -> str:
+def open_fixture(client: McpClient, fixture: Path) -> OpenedFixture:
     result = client.call("bn_binary_open", {"path": str(fixture)})
     if result.is_error:
         raise HarnessError(f"bn_binary_open failed: {result.data}")
-    return str(result.data["binary"]["handle"])
+    binary = result.data["binary"]
+    return OpenedFixture(str(binary["handle"]), binary.get("start"))
+
+
+def check_fixture_base(opened: OpenedFixture, playbook: dict[str, Any]) -> None:
+    expected = int(playbook["fixture"]["base"], 16)
+    try:
+        actual = int(opened.start, 16)
+    except (TypeError, ValueError) as error:
+        raise HarnessError(f"the view start is not a hex address: {opened.start!r}") from error
+    if actual != expected:
+        raise HarnessError(f"fixture loaded at {actual:#x}, expected {expected:#x}")
 
 
 def wait_for_analysis(client: McpClient, binary: str) -> None:
@@ -439,10 +456,12 @@ def unwind_handlers_installed() -> Generator[None]:
                 signal.signal(number, handler)
 
 
-def run_opened(playbook: dict[str, Any], client: McpClient, binary: str) -> int:
+def run_opened(playbook: dict[str, Any], client: McpClient, opened: OpenedFixture) -> int:
+    binary = opened.handle
     failed = 0
     try:
         with unwind_signals_unblocked():
+            check_fixture_base(opened, playbook)
             wait_for_analysis(client, binary)
             version = core_version(client, binary)
             print(f"Binary Ninja {version}; fixture {binary}")
@@ -464,8 +483,8 @@ def run(playbook_path: Path, url: str) -> int:
     client = McpClient(url)
     client.initialize()
     with unwind_handlers_installed():
-        binary = open_fixture(client, fixture)
-        return run_opened(playbook, client, binary)
+        opened = open_fixture(client, fixture)
+        return run_opened(playbook, client, opened)
 
 
 def main() -> int:
