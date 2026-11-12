@@ -5,8 +5,10 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import FrameType
 from typing import Any, cast, override
 
 import pytest
@@ -99,6 +101,18 @@ def stub() -> Iterator[StubServer]:
     server.shutdown()
     server.server_close()
     thread.join()
+
+
+@pytest.fixture(autouse=True)
+def restored_signals() -> Iterator[None]:
+    handlers = {number: signal.getsignal(number) for number in runner.UNWIND_SIGNALS}
+    mask = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    yield
+    for number in runner.UNWIND_SIGNALS:
+        signal.signal(number, signal.SIG_IGN)
+    signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+    for number, handler in handlers.items():
+        signal.signal(number, handler)
 
 
 @pytest.fixture
@@ -578,31 +592,19 @@ def test_main_exits_two_on_a_harness_error(
     assert runner.main() == 2
 
 
-UNWIND_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+HANDLED_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
 
 
 def test_every_unwind_signal_is_handled():
-    assert set(runner.TERMINATION_SIGNALS) == set(UNWIND_SIGNALS)
-
-
-@pytest.fixture
-def restored_signals() -> Iterator[None]:
-    handlers = {number: signal.getsignal(number) for number in runner.TERMINATION_SIGNALS}
-    mask = signal.pthread_sigmask(signal.SIG_BLOCK, [])
-    yield
-    for number in runner.TERMINATION_SIGNALS:
-        signal.signal(number, signal.SIG_IGN)
-    signal.pthread_sigmask(signal.SIG_SETMASK, mask)
-    for number, handler in handlers.items():
-        signal.signal(number, handler)
+    assert set(runner.UNWIND_SIGNALS) == set(HANDLED_SIGNALS)
 
 
 def blocked_termination_signals() -> set[signal.Signals]:
     blocked = signal.pthread_sigmask(signal.SIG_BLOCK, [])
-    return {number for number in runner.TERMINATION_SIGNALS if number in blocked}
+    return {number for number in runner.UNWIND_SIGNALS if number in blocked}
 
 
-@pytest.mark.parametrize("termination_signal", UNWIND_SIGNALS)
+@pytest.mark.parametrize("termination_signal", HANDLED_SIGNALS)
 def test_termination_during_the_open_stops_before_any_step_and_closes_the_view(
     stub: StubServer, tmp_path: Path, fixture_file: Path, termination_signal: signal.Signals
 ):
@@ -641,13 +643,12 @@ def test_termination_during_the_open_stops_before_any_step_and_closes_the_view(
     assert stub.call_names() == ["bn_binary_open", "rex_binary_close"]
 
 
-@pytest.mark.parametrize("termination_signal", UNWIND_SIGNALS)
+@pytest.mark.parametrize("termination_signal", HANDLED_SIGNALS)
 def test_termination_during_the_steps_stops_the_run_and_closes_the_view(
     stub: StubServer,
     tmp_path: Path,
     fixture_file: Path,
     monkeypatch: pytest.MonkeyPatch,
-    restored_signals: None,
     termination_signal: signal.Signals,
 ):
     reached_after_signal: list[str] = []
@@ -666,13 +667,12 @@ def test_termination_during_the_steps_stops_the_run_and_closes_the_view(
     assert stub.call_names()[-1] == "rex_binary_close"
 
 
-@pytest.mark.parametrize("termination_signal", UNWIND_SIGNALS)
+@pytest.mark.parametrize("termination_signal", HANDLED_SIGNALS)
 def test_termination_arriving_at_the_close_request_waits_for_the_close(
     stub: StubServer,
     tmp_path: Path,
     fixture_file: Path,
     monkeypatch: pytest.MonkeyPatch,
-    restored_signals: None,
     termination_signal: signal.Signals,
 ):
     close_fixture = runner.close_fixture
@@ -694,7 +694,6 @@ def test_termination_signals_are_blocked_during_the_close_request(
     tmp_path: Path,
     fixture_file: Path,
     monkeypatch: pytest.MonkeyPatch,
-    restored_signals: None,
 ):
     close_fixture = runner.close_fixture
     blocked_during_close: list[set[signal.Signals]] = []
@@ -706,35 +705,110 @@ def test_termination_signals_are_blocked_during_the_close_request(
     monkeypatch.setattr(runner, "close_fixture", record_mask)
     playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
     assert runner.run(playbook_path, stub.url) == 0
-    assert blocked_during_close == [set(runner.TERMINATION_SIGNALS)]
+    assert blocked_during_close == [set(runner.UNWIND_SIGNALS)]
 
 
-def test_run_unblocks_the_termination_signals_after_a_successful_run(
-    stub: StubServer, tmp_path: Path, fixture_file: Path, restored_signals: None
+def sentinel_handler(signal_number: int, frame: FrameType | None) -> None:
+    raise AssertionError("the sentinel handler must never run")
+
+
+def install_sentinel_state(blocked: signal.Signals) -> None:
+    for number in runner.UNWIND_SIGNALS:
+        signal.signal(number, sentinel_handler)
+    signal.pthread_sigmask(signal.SIG_BLOCK, [blocked])
+
+
+def signal_state() -> tuple[dict[signal.Signals, Any], set[int]]:
+    handlers = {number: signal.getsignal(number) for number in runner.UNWIND_SIGNALS}
+    return handlers, signal.pthread_sigmask(signal.SIG_BLOCK, [])
+
+
+LEAK_SCENARIOS = [
+    pytest.param(1, False, nullcontext(), id="pass"),
+    pytest.param(2, False, nullcontext(), id="step-failure"),
+    pytest.param(1, True, pytest.raises(runner.HarnessError), id="open-failure"),
+]
+
+
+@pytest.mark.parametrize(("expected_value", "open_fails", "outcome"), LEAK_SCENARIOS)
+def test_run_leaves_the_signal_handlers_and_mask_as_it_found_them(
+    stub: StubServer,
+    tmp_path: Path,
+    fixture_file: Path,
+    expected_value: int,
+    open_fails: bool,
+    outcome: AbstractContextManager[object],
 ):
-    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
-    assert runner.run(playbook_path, stub.url) == 0
-    assert blocked_termination_signals() == set()
-
-
-def test_run_unblocks_the_termination_signals_after_a_failed_open(
-    stub: StubServer, tmp_path: Path, fixture_file: Path, restored_signals: None
-):
-    stub.tools["bn_binary_open"] = lambda arguments: structured({"errorCode": "x"}, True)
-    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
-    with pytest.raises(runner.HarnessError, match="bn_binary_open failed"):
+    if open_fails:
+        stub.tools["bn_binary_open"] = lambda arguments: structured({"errorCode": "x"}, True)
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("step", expected_value)])
+    install_sentinel_state(signal.SIGHUP)
+    before = signal_state()
+    with outcome:
         runner.run(playbook_path, stub.url)
-    assert blocked_termination_signals() == set()
+    assert signal_state() == before
 
 
-@pytest.mark.parametrize("termination_signal", UNWIND_SIGNALS)
-def test_unwinding_ignores_every_further_termination_signal(
-    restored_signals: None, termination_signal: signal.Signals
+@pytest.mark.parametrize("termination_signal", HANDLED_SIGNALS)
+def test_termination_leaves_the_signal_handlers_and_mask_as_it_found_them(
+    stub: StubServer,
+    tmp_path: Path,
+    fixture_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    termination_signal: signal.Signals,
 ):
-    for number in runner.TERMINATION_SIGNALS:
+    close_fixture = runner.close_fixture
+
+    def close_after_signal(client: runner.McpClient, binary: str) -> bool:
+        signal.raise_signal(termination_signal)
+        return close_fixture(client, binary)
+
+    monkeypatch.setattr(runner, "close_fixture", close_after_signal)
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    install_sentinel_state(signal.SIGUSR1)
+    before = signal_state()
+    with pytest.raises(SystemExit):
+        runner.run(playbook_path, stub.url)
+    assert signal_state() == before
+
+
+@pytest.mark.parametrize("termination_signal", HANDLED_SIGNALS)
+def test_termination_pending_from_the_open_still_closes_with_the_signals_blocked(
+    stub: StubServer,
+    tmp_path: Path,
+    fixture_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    termination_signal: signal.Signals,
+):
+    open_fixture = runner.open_fixture
+    close_fixture = runner.close_fixture
+    blocked_during_close: list[set[signal.Signals]] = []
+
+    def open_then_signal(client: runner.McpClient, fixture: Path) -> str:
+        binary = open_fixture(client, fixture)
+        signal.raise_signal(termination_signal)
+        return binary
+
+    def record_mask(client: runner.McpClient, binary: str) -> bool:
+        blocked_during_close.append(blocked_termination_signals())
+        return close_fixture(client, binary)
+
+    monkeypatch.setattr(runner, "open_fixture", open_then_signal)
+    monkeypatch.setattr(runner, "close_fixture", record_mask)
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    with pytest.raises(SystemExit) as exit_info:
+        runner.run(playbook_path, stub.url)
+    assert exit_info.value.code == 128 + termination_signal
+    assert blocked_during_close == [set(runner.UNWIND_SIGNALS)]
+    assert stub.call_names() == ["bn_binary_open", "rex_binary_close"]
+
+
+@pytest.mark.parametrize("termination_signal", HANDLED_SIGNALS)
+def test_unwinding_ignores_every_further_termination_signal(termination_signal: signal.Signals):
+    for number in runner.UNWIND_SIGNALS:
         signal.signal(number, runner.unwind_on_termination)
     with pytest.raises(SystemExit) as exit_info:
         runner.unwind_on_termination(termination_signal, None)
     assert exit_info.value.code == 128 + termination_signal
-    for number in runner.TERMINATION_SIGNALS:
+    for number in runner.UNWIND_SIGNALS:
         assert signal.getsignal(number) == signal.SIG_IGN

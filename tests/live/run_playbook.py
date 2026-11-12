@@ -23,7 +23,7 @@ DEFAULT_PLAYBOOK = HERE / "playbook.json"
 CALL_TIMEOUT_SECONDS = 120
 ANALYSIS_BUDGET_SECONDS = 120
 ANALYSIS_RETRY_SECONDS = 1
-TERMINATION_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+UNWIND_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
 
 
 class HarnessError(Exception):
@@ -409,24 +409,40 @@ def close_fixture(client: McpClient, binary: str) -> bool:
 
 
 def unwind_on_termination(signal_number: int, frame: FrameType | None) -> None:
-    for ignored in TERMINATION_SIGNALS:
+    for ignored in UNWIND_SIGNALS:
         signal.signal(ignored, signal.SIG_IGN)
     raise SystemExit(128 + signal_number)
 
 
 @contextmanager
-def termination_signals_unblocked() -> Generator[None]:
-    signal.pthread_sigmask(signal.SIG_UNBLOCK, TERMINATION_SIGNALS)
+def unwind_signals_unblocked() -> Generator[None]:
     try:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, UNWIND_SIGNALS)
         yield
     finally:
-        signal.pthread_sigmask(signal.SIG_BLOCK, TERMINATION_SIGNALS)
+        signal.pthread_sigmask(signal.SIG_BLOCK, UNWIND_SIGNALS)
+
+
+@contextmanager
+def unwind_handlers_installed() -> Generator[None]:
+    previous_handlers = {number: signal.getsignal(number) for number in UNWIND_SIGNALS}
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, UNWIND_SIGNALS)
+    try:
+        for number in UNWIND_SIGNALS:
+            signal.signal(number, unwind_on_termination)
+        yield
+    finally:
+        try:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        finally:
+            for number, handler in previous_handlers.items():
+                signal.signal(number, handler)
 
 
 def run_opened(playbook: dict[str, Any], client: McpClient, binary: str) -> int:
     failed = 0
     try:
-        with termination_signals_unblocked():
+        with unwind_signals_unblocked():
             wait_for_analysis(client, binary)
             version = core_version(client, binary)
             print(f"Binary Ninja {version}; fixture {binary}")
@@ -447,14 +463,9 @@ def run(playbook_path: Path, url: str) -> int:
     fixture = verify_fixture(playbook)
     client = McpClient(url)
     client.initialize()
-    for termination_signal in TERMINATION_SIGNALS:
-        signal.signal(termination_signal, unwind_on_termination)
-    signal.pthread_sigmask(signal.SIG_BLOCK, TERMINATION_SIGNALS)
-    try:
+    with unwind_handlers_installed():
         binary = open_fixture(client, fixture)
         return run_opened(playbook, client, binary)
-    finally:
-        signal.pthread_sigmask(signal.SIG_UNBLOCK, TERMINATION_SIGNALS)
 
 
 def main() -> int:
