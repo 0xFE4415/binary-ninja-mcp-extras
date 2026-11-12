@@ -376,6 +376,10 @@ def test_call_paths_depth_shortcut_and_errors() -> None:
     with pytest.raises(FakeToolError) as exc:
         paths(_call(view), 0x7777, 0x3000)
     assert exc.value.code == "no_function"
+    assert exc.value.message == plain_gap_message("function", 0x7777)
+    with pytest.raises(FakeToolError) as exc:
+        paths(_call(view), 0x1100, 0x7777)
+    assert exc.value.message == plain_gap_message("function", 0x7777)
 
 
 def test_call_paths_reports_truncation_and_caps_depth() -> None:
