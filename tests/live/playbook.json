@@ -1,0 +1,1619 @@
+{
+ "binary_ninja_version": "6.1.11052-dev Personal",
+ "fixture": {
+  "path": "fixture.elf",
+  "sha256": "a58e72525e56d08f060a3835fd63f60e529481bcbb3cd98a41276c5d40b6fbb7"
+ },
+ "steps": [
+  {
+   "id": "help-call-paths-wording",
+   "guards": "rex_help says rex_call_paths walks callers by default and needs callees to reach a callee.",
+   "tool": "rex_help",
+   "args": {
+    "tool_name": "rex_call_paths"
+   },
+   "expect": [
+    {
+     "kind": "contains",
+     "text": "direction defaults to callers",
+     "path": "description"
+    },
+    {
+     "kind": "contains",
+     "text": "needs callees",
+     "path": "description"
+    },
+    {
+     "kind": "includes",
+     "path": "parameters",
+     "item": {
+      "name": "direction",
+      "default": "callers"
+     }
+    }
+   ]
+  },
+  {
+   "id": "help-lists-rx-scanners",
+   "guards": "The scanning help category lists the native rx_data_find and rx_multi_find tools.",
+   "tool": "rex_help",
+   "args": {
+    "category": "scanning"
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "tools",
+     "item": {
+      "name": "rx_data_find"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "tools",
+     "item": {
+      "name": "rx_multi_find"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "tools",
+     "item": {
+      "name": "rex_data_find"
+     }
+    }
+   ]
+  },
+  {
+   "id": "help-index-lists-rx-scanners",
+   "guards": "The help index names the native scanners and the scanning category.",
+   "tool": "rex_help",
+   "args": {},
+   "expect": [
+    {
+     "kind": "contains",
+     "text": "rx_data_find"
+    },
+    {
+     "kind": "contains",
+     "text": "rx_multi_find"
+    },
+    {
+     "kind": "includes",
+     "path": "categories",
+     "item": {
+      "name": "scanning"
+     }
+    }
+   ]
+  },
+  {
+   "id": "help-type-library-export-codes",
+   "guards": "rex_help lists invalid_params as an error code of rex_type_library_export names and kind.",
+   "tool": "rex_help",
+   "args": {
+    "tool_name": "rex_type_library_export"
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "parameters",
+     "item": {
+      "name": "names",
+      "error_codes": [
+       "invalid_params"
+      ]
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "parameters",
+     "item": {
+      "name": "kind",
+      "error_codes": [
+       "invalid_params"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "help-uidf-set-many-item-codes",
+   "guards": "rex_help lists every per-item error code of rex_uidf_set_many.",
+   "tool": "rex_help",
+   "args": {
+    "tool_name": "rex_uidf_set_many"
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "parameters",
+     "item": {
+      "name": "items",
+      "error_codes": [
+       "invalid_params",
+       "no_mlil",
+       "no_variable",
+       "ambiguous_definition",
+       "definition_not_found",
+       "set_failed"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "help-constant-find-schema",
+   "guards": "The rex_constant_find value schema allows up to 2^64-1, not the rounded float 2^64.",
+   "tool": "rex_help",
+   "args": {
+    "tool_name": "rex_constant_find"
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "parameters",
+     "item": {
+      "name": "value",
+      "maximum": 18446744073709551615
+     }
+    },
+    {
+     "kind": "not_contains",
+     "text": "18446744073709552000"
+    }
+   ]
+  },
+  {
+   "id": "call-paths-one-route-two-call-sites",
+   "guards": "A callee reached from two call sites of one caller is one route, not two.",
+   "tool": "rex_call_paths",
+   "args": {
+    "from_addr": "dup_root",
+    "to_addr": "dup_leaf",
+    "direction": "callees"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": true,
+     "path": "reachable"
+    },
+    {
+     "kind": "length",
+     "path": "paths",
+     "value": 1
+    },
+    {
+     "kind": "unique",
+     "path": "paths"
+    },
+    {
+     "kind": "subset",
+     "value": [
+      [
+       {
+        "name": "dup_root"
+       },
+       {
+        "name": "dup_mid"
+       },
+       {
+        "name": "dup_leaf"
+       }
+      ]
+     ],
+     "path": "paths"
+    }
+   ]
+  },
+  {
+   "id": "call-paths-callees-through-real-main",
+   "guards": "Callee paths from the real main body list each route once.",
+   "tool": "rex_call_paths",
+   "args": {
+    "from_addr": "real_main",
+    "to_addr": "dup_leaf",
+    "direction": "callees"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "paths",
+     "value": 1
+    },
+    {
+     "kind": "unique",
+     "path": "paths"
+    },
+    {
+     "kind": "subset",
+     "value": [
+      [
+       {
+        "name": "real_main"
+       },
+       {
+        "name": "dup_root"
+       },
+       {
+        "name": "dup_mid"
+       },
+       {
+        "name": "dup_leaf"
+       }
+      ]
+     ],
+     "path": "paths"
+    }
+   ]
+  },
+  {
+   "id": "call-paths-diamond-keeps-both-routes",
+   "guards": "Two genuinely different routes through a diamond are both kept.",
+   "tool": "rex_call_paths",
+   "args": {
+    "from_addr": "diamond_top",
+    "to_addr": "diamond_bottom",
+    "direction": "callees"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "paths",
+     "value": 2
+    },
+    {
+     "kind": "unique",
+     "path": "paths"
+    },
+    {
+     "kind": "includes",
+     "path": "paths",
+     "item": [
+      {
+       "name": "diamond_top"
+      },
+      {
+       "name": "diamond_left"
+      },
+      {
+       "name": "diamond_bottom"
+      }
+     ]
+    },
+    {
+     "kind": "includes",
+     "path": "paths",
+     "item": [
+      {
+       "name": "diamond_top"
+      },
+      {
+       "name": "diamond_right"
+      },
+      {
+       "name": "diamond_bottom"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "call-paths-callers-default-direction",
+   "guards": "Caller paths list each route once.",
+   "tool": "rex_call_paths",
+   "args": {
+    "from_addr": "dup_leaf",
+    "to_addr": "dup_root"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "paths",
+     "value": 1
+    },
+    {
+     "kind": "unique",
+     "path": "paths"
+    },
+    {
+     "kind": "subset",
+     "value": [
+      [
+       {
+        "name": "dup_leaf"
+       },
+       {
+        "name": "dup_mid"
+       },
+       {
+        "name": "dup_root"
+       }
+      ]
+     ],
+     "path": "paths"
+    }
+   ]
+  },
+  {
+   "id": "call-paths-default-direction-is-callers",
+   "guards": "Without a direction, rex_call_paths walks callers, so a downward query finds nothing.",
+   "tool": "rex_call_paths",
+   "args": {
+    "from_addr": "dup_root",
+    "to_addr": "dup_leaf"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": false,
+     "path": "reachable"
+    },
+    {
+     "kind": "length",
+     "path": "paths",
+     "value": 0
+    }
+   ]
+  },
+  {
+   "id": "export-symbols-dot-filename",
+   "guards": "A filename of '.' is rejected as an invalid file name.",
+   "tool": "rex_export_symbols",
+   "args": {
+    "start": 4198400,
+    "end": 4198656,
+    "filename": "."
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "file name"
+    }
+   ]
+  },
+  {
+   "id": "export-symbols-trailing-slash-filename",
+   "guards": "A filename that ends in a slash is rejected as an invalid file name.",
+   "tool": "rex_export_symbols",
+   "args": {
+    "start": 4198400,
+    "end": 4198656,
+    "filename": "sub/"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "file name"
+    }
+   ]
+  },
+  {
+   "id": "constraints-minus-one-at-each-width",
+   "guards": "A comparison with -1 prints the all-ones value of its own width at 1, 2, 4, and 8 bytes.",
+   "tool": "rex_function_constraints",
+   "args": {
+    "function": "compare_minus_one"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "constraints",
+     "value": 4
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0xff",
+      "subject": {
+       "variable": "arg1"
+      }
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0xffff",
+      "subject": {
+       "variable": "arg2"
+      }
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0xffffffff",
+      "subject": {
+       "variable": "arg3"
+      }
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0xffffffffffffffff",
+      "subject": {
+       "variable": "arg4"
+      }
+     }
+    },
+    {
+     "kind": "not_regex",
+     "pattern": "\"constant\": \"-"
+    }
+   ]
+  },
+  {
+   "id": "constraints-negative-displacements",
+   "guards": "Loads at negative displacements are reported with signed offsets and unsigned constants.",
+   "tool": "rex_function_constraints",
+   "args": {
+    "function": "negative_displacements"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "constraints",
+     "value": 3
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0x1234",
+      "subject": {
+       "kind": "load",
+       "base": "arg1",
+       "offset": "-0x8"
+      }
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0x41",
+      "char": "A",
+      "subject": {
+       "kind": "load",
+       "base": "arg2",
+       "offset": "-0x8"
+      }
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0xffffffff",
+      "subject": {
+       "kind": "load",
+       "base": "arg1",
+       "offset": "-0xc"
+      }
+     }
+    },
+    {
+     "kind": "not_regex",
+     "pattern": "\"constant\": \"-"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-max-uint64-integer",
+   "guards": "The maximum unsigned 64-bit integer is found exactly, not rounded.",
+   "tool": "rex_constant_find",
+   "args": {
+    "value": 18446744073709551615
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "compare_minus_one"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "store_big_constants"
+     }
+    },
+    {
+     "kind": "subset",
+     "value": false,
+     "path": "truncated"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-max-uint64-hex-string",
+   "guards": "The maximum unsigned 64-bit value as a hex string finds the same functions as the integer.",
+   "tool": "rex_constant_find",
+   "args": {
+    "value": "0xffffffffffffffff"
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "compare_minus_one"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "store_big_constants"
+     }
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_constant_find",
+      "args": {
+       "value": 18446744073709551615
+      }
+     },
+     "fields": [
+      "total",
+      "functions"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "constant-find-uppercase-hex-string",
+   "guards": "A hex string with an uppercase 0X prefix is accepted.",
+   "tool": "rex_constant_find",
+   "args": {
+    "value": "0X7EDCBA9876543210"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "functions",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "value": [
+      {
+       "name": "store_big_constants"
+      }
+     ],
+     "path": "functions"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-float-rounded-max-rejected",
+   "guards": "The float that 2^64-1 rounds to is rejected instead of searched.",
+   "tool": "rex_constant_find",
+   "args": {
+    "value": 18446744073709552000
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-two-pow-64-rejected",
+   "guards": "2^64 is rejected as out of range.",
+   "tool": "rex_constant_find",
+   "args": {
+    "value": 18446744073709551616
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-bare-0x-rejected",
+   "guards": "A bare 0x prefix with no digits is rejected.",
+   "tool": "rex_constant_find",
+   "args": {
+    "value": "0x"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-signed-string-rejected",
+   "guards": "A signed decimal string is rejected.",
+   "tool": "rex_constant_find",
+   "args": {
+    "value": "-1"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params"
+    }
+   ]
+  },
+  {
+   "id": "eval-python-explicit-cause",
+   "guards": "An explicit exception cause is reported after the main error.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "try:\n    raise KeyError('inner')\nexcept KeyError as cause:\n    raise ValueError('outer') from cause"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": "ValueError: outer; caused by KeyError: 'inner'",
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "result"
+    }
+   ]
+  },
+  {
+   "id": "eval-python-implicit-context",
+   "guards": "An exception raised while handling another one reports the handled error as its context.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "try:\n    raise KeyError('inner')\nexcept KeyError:\n    raise ValueError('outer')"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": "ValueError: outer; while handling KeyError: 'inner'",
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "result"
+    }
+   ]
+  },
+  {
+   "id": "eval-python-tool-error-keeps-code",
+   "guards": "A ToolError raised in eval code keeps its error code in the reported error.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "import binaryninja.mcp as mcp\nraise mcp.ToolError('my_code', 'my message')"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": "binaryninja.mcp.ToolError: my_code: my message",
+     "path": "error"
+    }
+   ]
+  },
+  {
+   "id": "uidf-set-register-parameter-advice",
+   "guards": "Setting a register parameter explains that it is live from function entry.",
+   "tool": "rex_uidf_set",
+   "args": {
+    "function": "many_arguments",
+    "variable": "arg1",
+    "value": "1"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "no_variable",
+     "message_contains": "a register parameter is live from function entry"
+    }
+   ]
+  },
+  {
+   "id": "uidf-set-stack-parameter-advice",
+   "guards": "Setting a stack-passed argument explains that such arguments cannot be informed.",
+   "tool": "rex_uidf_set",
+   "args": {
+    "function": "many_arguments",
+    "variable": "arg7",
+    "value": "1"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "no_variable",
+     "message_contains": "stack-passed arguments cannot be informed"
+    }
+   ]
+  },
+  {
+   "id": "uidf-set-non-parameter-gets-no-advice",
+   "guards": "A variable that is not a parameter gets no parameter advice.",
+   "tool": "rex_uidf_set",
+   "args": {
+    "function": "many_arguments",
+    "variable": "__return_addr",
+    "value": "1"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "no_variable",
+     "message_contains": "has no MediumLevelIL definition sites",
+     "message_lacks": "register parameter"
+    },
+    {
+     "kind": "error_code",
+     "code": "no_variable",
+     "message_lacks": "stack-passed"
+    }
+   ]
+  },
+  {
+   "id": "parameter-variables-unknown-name-lists-variables",
+   "guards": "An unknown parameter name lists the variables and does not carry the removed register-naming tip.",
+   "tool": "rex_parameter_variables",
+   "args": {
+    "function": "many_arguments",
+    "parameter": "nonesuch"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "no_variable",
+     "message_contains": "variables: __return_addr, arg1,",
+     "message_lacks": "Register-allocated parameters"
+    }
+   ]
+  },
+  {
+   "id": "quick-main-tail-call-stub-note",
+   "guards": "A main that only tail-calls another function is reported as a stub with the real body named.",
+   "tool": "rex_quick_main",
+   "args": {},
+   "expect": [
+    {
+     "kind": "subset",
+     "value": "symbol",
+     "path": "method"
+    },
+    {
+     "kind": "subset",
+     "value": "0x401050",
+     "path": "main"
+    },
+    {
+     "kind": "regex",
+     "path": "note",
+     "pattern": "^main is a tail-call stub; its real body is real_main at 0x[0-9a-f]+$"
+    },
+    {
+     "kind": "subset",
+     "value": [
+      "return real_main(argc, argv) __tailcall"
+     ],
+     "path": "lines"
+    }
+   ]
+  },
+  {
+   "id": "mlil-uses-definitions-sorted-from-first-site",
+   "guards": "A variable's definition sites are sorted by address.",
+   "tool": "rex_mlil_uses",
+   "args": {
+    "function": "many_definitions",
+    "address": "0x40116c"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "variables",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "value": "result",
+     "path": "variables.0.variable"
+    },
+    {
+     "kind": "subset",
+     "value": [
+      "0x40116c",
+      "0x401176",
+      "0x401182"
+     ],
+     "path": "variables.0.definitions"
+    },
+    {
+     "kind": "sorted_hex",
+     "path": "variables.0.definitions"
+    }
+   ]
+  },
+  {
+   "id": "mlil-uses-definitions-sorted-from-core-first-site",
+   "guards": "Definition sites are sorted even when queried from the site the core lists first.",
+   "tool": "rex_mlil_uses",
+   "args": {
+    "function": "many_definitions",
+    "address": "0x401176"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": [
+      "0x40116c",
+      "0x401176",
+      "0x401182"
+     ],
+     "path": "variables.0.definitions"
+    },
+    {
+     "kind": "sorted_hex",
+     "path": "variables.0.definitions"
+    }
+   ]
+  },
+  {
+   "id": "pattern-credits-lowest-start-function",
+   "guards": "A match in a block shared by two functions is credited once, to the lowest-start function.",
+   "tool": "rex_find_functions_by_pattern",
+   "args": {
+    "pattern": "b8 34 12 5a 5a"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "functions",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "value": [
+      {
+       "name": "overlap_low",
+       "match_count": 1
+      }
+     ],
+     "path": "functions"
+    },
+    {
+     "kind": "excludes",
+     "path": "functions",
+     "item": {
+      "name": "overlap_high"
+     }
+    },
+    {
+     "kind": "subset",
+     "value": 1,
+     "path": "total"
+    }
+   ]
+  },
+  {
+   "id": "pattern-in-low-only-code",
+   "guards": "A pattern only in the lower function is credited to it.",
+   "tool": "rex_find_functions_by_pattern",
+   "args": {
+    "pattern": "b8 11 11 11 11"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": [
+      {
+       "name": "overlap_low",
+       "match_count": 1
+      }
+     ],
+     "path": "functions"
+    }
+   ]
+  },
+  {
+   "id": "pattern-in-high-only-code",
+   "guards": "A pattern only in the higher function is credited to it.",
+   "tool": "rex_find_functions_by_pattern",
+   "args": {
+    "pattern": "b8 22 22 22 22"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": [
+      {
+       "name": "overlap_high",
+       "match_count": 1
+      }
+     ],
+     "path": "functions"
+    }
+   ]
+  },
+  {
+   "id": "function-containing-lists-lowest-start-first",
+   "guards": "Functions containing one address are listed lowest start first.",
+   "tool": "rex_function_containing",
+   "args": {
+    "addr": "overlap_shared"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": [
+      {
+       "name": "overlap_low"
+      },
+      {
+       "name": "overlap_high"
+      }
+     ],
+     "path": "functions"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-zero-keeps-real-zero-operands",
+   "guards": "Searching for zero keeps real zero operands and drops xor-zeroing hits by default.",
+   "tool": "rex_constant_find",
+   "args": {
+    "value": 0,
+    "limit": 500
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": false,
+     "path": "truncated"
+    },
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "store_real_zero"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "overlap_low"
+     }
+    },
+    {
+     "kind": "excludes",
+     "path": "functions",
+     "item": {
+      "name": "zero_xor_only"
+     }
+    },
+    {
+     "kind": "excludes",
+     "path": "functions",
+     "item": {
+      "name": "_start"
+     }
+    }
+   ]
+  },
+  {
+   "id": "constant-find-zero-opt-in-returns-xor-hits",
+   "guards": "include_non_operand_hits brings the xor-zeroing hits back.",
+   "tool": "rex_constant_find",
+   "args": {
+    "value": 0,
+    "limit": 500,
+    "include_non_operand_hits": true
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "store_real_zero"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "zero_xor_only"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "_start"
+     }
+    }
+   ]
+  },
+  {
+   "id": "constant-find-zero-opt-in-needs-zero",
+   "guards": "include_non_operand_hits is rejected for a value other than zero.",
+   "tool": "rex_constant_find",
+   "args": {
+    "value": 1,
+    "include_non_operand_hits": true
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "only allowed with value 0",
+     "message_lacks": "Unexpected parameter"
+    }
+   ]
+  },
+  {
+   "id": "skip-main-analysis",
+   "guards": "Setup for the skipped-main note: skips analysis of main.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "main = bv.get_function_at(0x401050)\nmain.analysis_skip_override = binaryninja.FunctionAnalysisSkipOverride.AlwaysSkipFunctionAnalysis\nbv.update_analysis_and_wait()\nmain = bv.get_function_at(0x401050)\nresult = (main.analysis_skipped, main.hlil is None)"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "(True, True)",
+     "path": "result"
+    }
+   ]
+  },
+  {
+   "id": "quick-main-skipped-main-note",
+   "guards": "A main whose analysis is skipped is reported with a note that waiting will not help.",
+   "tool": "rex_quick_main",
+   "args": {},
+   "expect": [
+    {
+     "kind": "subset",
+     "value": "symbol",
+     "path": "method"
+    },
+    {
+     "kind": "subset",
+     "value": "0x401050",
+     "path": "main"
+    },
+    {
+     "kind": "subset",
+     "value": [],
+     "path": "lines"
+    },
+    {
+     "kind": "regex",
+     "path": "note",
+     "pattern": "^the main function \\S+ has no HLIL: its analysis is skipped \\(.+\\); waiting for analysis will not produce one$"
+    }
+   ]
+  },
+  {
+   "id": "restore-main-analysis",
+   "guards": "Teardown for the skipped-main note: restores analysis of main.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "main = bv.get_function_at(0x401050)\nmain.analysis_skip_override = binaryninja.FunctionAnalysisSkipOverride.DefaultFunctionAnalysisSkip\nbv.update_analysis_and_wait()\nresult = bv.get_function_at(0x401050).analysis_skipped"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "False",
+     "path": "result"
+    }
+   ]
+  },
+  {
+   "id": "quick-main-stub-note-after-restore",
+   "guards": "After analysis is restored, main is a tail-call stub again.",
+   "tool": "rex_quick_main",
+   "args": {},
+   "expect": [
+    {
+     "kind": "regex",
+     "path": "note",
+     "pattern": "^main is a tail-call stub; its real body is real_main at 0x[0-9a-f]+$"
+    }
+   ]
+  },
+  {
+   "id": "section-with-nul-python",
+   "guards": "A section name with a NUL byte is reported with the NUL replaced, matching the native scanner.",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "e8",
+    "section": ".te\u0000xt"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "section_not_found",
+     "message_contains": "no section named '.te\ufffdxt'"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "e8",
+       "section": ".te\u0000xt"
+      }
+     },
+     "fields": [
+      "errorCode",
+      "errorMessage"
+     ],
+     "expect_error": true
+    }
+   ]
+  },
+  {
+   "id": "section-with-nul-rust",
+   "guards": "The native scanner reports a section name with a NUL byte the same way.",
+   "tool": "rx_data_find",
+   "args": {
+    "pattern": "e8",
+    "section": ".te\u0000xt"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "section_not_found",
+     "message_contains": "no section named '.te\ufffdxt'"
+    }
+   ]
+  },
+  {
+   "id": "pattern-token-with-nul-parity",
+   "guards": "A pattern token with a NUL byte is reported as invalid, the same in both scanners.",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "e8 \u0000z"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_pattern",
+     "message_contains": "invalid hex byte token '\ufffdz'"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "e8 \u0000z"
+      }
+     },
+     "fields": [
+      "errorCode",
+      "errorMessage"
+     ],
+     "expect_error": true
+    }
+   ]
+  },
+  {
+   "id": "data-find-parity-call-wildcards",
+   "guards": "Both scanners return the same first page for a wildcard call pattern.",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "e8 ?? ?? ?? ??",
+    "section": ".text",
+    "limit": 5
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": true,
+     "path": "truncated"
+    },
+    {
+     "kind": "length",
+     "path": "matches",
+     "value": 5
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "e8 ?? ?? ?? ??",
+       "section": ".text",
+       "limit": 5
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "data-find-parity-second-page",
+   "guards": "Both scanners return the same second page for a wildcard call pattern.",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "e8 ?? ?? ?? ??",
+    "section": ".text",
+    "limit": 5,
+    "offset": 5
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "",
+     "value": {
+      "total": 11,
+      "truncated": true,
+      "matches": [
+       "0x401214",
+       "0x401238",
+       "0x401254",
+       "0x401274",
+       "0x4013d7"
+      ]
+     }
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "e8 ?? ?? ?? ??",
+       "section": ".text",
+       "limit": 5,
+       "offset": 5
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "data-find-parity-whole-view",
+   "guards": "Both scanners return the same matches for a whole-view scan.",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "c3",
+    "limit": 20
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "",
+     "value": {
+      "total": 21,
+      "truncated": true
+     }
+    },
+    {
+     "kind": "length",
+     "path": "matches",
+     "value": 20
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "c3",
+       "limit": 20
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "data-find-parity-no-match",
+   "guards": "Both scanners agree on a pattern with no match.",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "de ad be ef 5a 5a 5a 5a"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": {
+      "total": 0,
+      "truncated": false,
+      "matches": []
+     }
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "de ad be ef 5a 5a 5a 5a"
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "data-find-parity-invalid-token",
+   "guards": "Both scanners reject an invalid token with the same error.",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "zz"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_pattern"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "zz"
+      }
+     },
+     "fields": [
+      "errorCode",
+      "errorMessage"
+     ],
+     "expect_error": true
+    }
+   ]
+  },
+  {
+   "id": "multi-find-parity-with-data-find",
+   "guards": "rx_multi_find returns the pinned matches and agrees with rex_data_find for each pattern.",
+   "tool": "rx_multi_find",
+   "args": {
+    "patterns": [
+     "e8 ?? ?? ?? ??",
+     "b8 34 12 5a 5a",
+     "ff 25 ?? ?? ?? ??",
+     "31 c0"
+    ],
+    "limit": 4
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "results",
+     "value": 4
+    },
+    {
+     "kind": "subset",
+     "path": "results.0",
+     "value": {
+      "pattern": "e8 ?? ?? ?? ??",
+      "total": 5,
+      "truncated": true,
+      "matches": [
+       "0x400428",
+       "0x401131",
+       "0x401186",
+       "0x4011b8"
+      ]
+     }
+    },
+    {
+     "kind": "subset",
+     "path": "results.1",
+     "value": {
+      "pattern": "b8 34 12 5a 5a",
+      "total": 1,
+      "truncated": false,
+      "matches": [
+       "0x401196"
+      ]
+     }
+    },
+    {
+     "kind": "subset",
+     "path": "results.2",
+     "value": {
+      "pattern": "ff 25 ?? ?? ?? ??",
+      "total": 3,
+      "truncated": false,
+      "matches": [
+       "0x401026",
+       "0x401030",
+       "0x401040"
+      ]
+     }
+    },
+    {
+     "kind": "subset",
+     "path": "results.3",
+     "value": {
+      "pattern": "31 c0",
+      "total": 4,
+      "truncated": false,
+      "matches": [
+       "0x401074",
+       "0x401160",
+       "0x4012c1",
+       "0x40131f"
+      ]
+     }
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_data_find",
+      "args": {
+       "pattern": "e8 ?? ?? ?? ??",
+       "limit": 4
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ],
+     "path": "results.0"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_data_find",
+      "args": {
+       "pattern": "b8 34 12 5a 5a",
+       "limit": 4
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ],
+     "path": "results.1"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_data_find",
+      "args": {
+       "pattern": "ff 25 ?? ?? ?? ??",
+       "limit": 4
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ],
+     "path": "results.2"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_data_find",
+      "args": {
+       "pattern": "31 c0",
+       "limit": 4
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ],
+     "path": "results.3"
+    }
+   ]
+  },
+  {
+   "id": "multi-find-no-match",
+   "guards": "rx_multi_find reports a pattern with no match as empty, untruncated, and agrees with rex_data_find.",
+   "tool": "rx_multi_find",
+   "args": {
+    "patterns": [
+     "de ad be ef 5a 5a 5a 5a"
+    ]
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": {
+      "total": 0,
+      "results": [
+       {
+        "pattern": "de ad be ef 5a 5a 5a 5a",
+        "total": 0,
+        "truncated": false,
+        "matches": []
+       }
+      ]
+     }
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_data_find",
+      "args": {
+       "pattern": "de ad be ef 5a 5a 5a 5a"
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ],
+     "path": "results.0"
+    }
+   ]
+  },
+  {
+   "id": "multi-find-section-error-parity",
+   "guards": "rx_multi_find and rex_data_find report an unknown section the same way.",
+   "tool": "rx_multi_find",
+   "args": {
+    "patterns": [
+     "e8"
+    ],
+    "section": ".te\u0000xt"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "section_not_found"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_data_find",
+      "args": {
+       "pattern": "e8",
+       "section": ".te\u0000xt"
+      }
+     },
+     "fields": [
+      "errorCode",
+      "errorMessage"
+     ],
+     "expect_error": true
+    }
+   ]
+  }
+ ]
+}
