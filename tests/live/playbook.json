@@ -8,20 +8,21 @@
  "steps": [
   {
    "id": "help-call-paths-wording",
-   "guards": "rex_help says rex_call_paths walks callers by default and needs callees to reach a callee.",
+   "guards": "rex_help shows how to ask \"does A reach B\" and that direction defaults to callers.",
    "tool": "rex_help",
+   "global": true,
    "args": {
     "tool_name": "rex_call_paths"
    },
    "expect": [
     {
      "kind": "contains",
-     "text": "direction defaults to callers",
+     "text": "\"Does A reach B?\" is from_addr=A, to_addr=B",
      "path": "description"
     },
     {
      "kind": "contains",
-     "text": "needs callees",
+     "text": "direction=\"callees\"",
      "path": "description"
     },
     {
@@ -38,6 +39,7 @@
    "id": "help-lists-rx-scanners",
    "guards": "The scanning help category lists the native rx_data_find and rx_multi_find tools.",
    "tool": "rex_help",
+   "global": true,
    "args": {
     "category": "scanning"
    },
@@ -69,6 +71,7 @@
    "id": "help-index-lists-rx-scanners",
    "guards": "The help index names the native scanners and the scanning category.",
    "tool": "rex_help",
+   "global": true,
    "args": {},
    "expect": [
     {
@@ -92,6 +95,7 @@
    "id": "help-constant-find-schema",
    "guards": "The rex_constant_find value schema allows up to 2^64-1, not the rounded float 2^64.",
    "tool": "rex_help",
+   "global": true,
    "args": {
     "tool_name": "rex_constant_find"
    },
@@ -727,8 +731,176 @@
    ]
   },
   {
-   "id": "uidf-set-register-parameter-advice",
-   "guards": "Setting a register parameter explains that it is live from function entry.",
+   "id": "uidf-set-register-parameter-at-function-start",
+   "guards": "A register parameter is informed at the function start and the value folds the decompiled output.",
+   "tool": "rex_uidf_set",
+   "args": {
+    "function": "compare_minus_one",
+    "variable": "arg1",
+    "value": "0xff"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "definition_site",
+     "value": "0x400160"
+    },
+    {
+     "kind": "includes",
+     "path": "lines",
+     "item": "ASSERT(arg1, ConstantValue: 0xff)"
+    },
+    {
+     "kind": "excludes",
+     "path": "lines",
+     "item": "if (arg1 == 0xff)"
+    }
+   ]
+  },
+  {
+   "id": "uidf-set-parameter-other-site-rejected",
+   "guards": "A parameter value at any site but the function start is rejected, because the core stores it without effect and cannot clear it.",
+   "tool": "rex_uidf_set",
+   "args": {
+    "function": "compare_minus_one",
+    "variable": "arg1",
+    "value": "1",
+    "def_address": "0x400164"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "definition_not_found",
+     "message_contains": "definitions: 0x400160"
+    }
+   ]
+  },
+  {
+   "id": "uidf-clear-register-parameter",
+   "guards": "Clearing a register parameter removes the value at the function start.",
+   "tool": "rex_uidf_clear",
+   "args": {
+    "function": "compare_minus_one",
+    "variable": "arg1"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "cleared",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "path": "definition_sites",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "id": "uidf-list-empty-after-register-parameter-clear",
+   "guards": "State restored: no informed value is left on the register parameter's function.",
+   "tool": "rex_uidf_list",
+   "args": {
+    "function": "compare_minus_one"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "values",
+     "value": 0
+    }
+   ]
+  },
+  {
+   "id": "uidf-set-many-stack-parameters-at-function-start",
+   "guards": "Stack-passed parameters are informed at the function start and their product folds to a constant.",
+   "tool": "rex_uidf_set_many",
+   "args": {
+    "function": "many_arguments",
+    "items": [
+     {
+      "variable": "arg7",
+      "value": "3"
+     },
+     {
+      "variable": "arg8",
+      "value": "4"
+     }
+    ]
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "applied",
+     "value": 2
+    },
+    {
+     "kind": "includes",
+     "path": "lines",
+     "item": "return zx.q(0xc + arg1 + arg2 + arg3 + arg4 + arg5 + arg6)"
+    }
+   ]
+  },
+  {
+   "id": "uidf-clear-first-stack-parameter",
+   "guards": "Clearing one stack parameter removes its value at the function start.",
+   "tool": "rex_uidf_clear",
+   "args": {
+    "function": "many_arguments",
+    "variable": "arg7"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "cleared",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "path": "definition_sites",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "id": "uidf-clear-second-stack-parameter",
+   "guards": "Clearing the other stack parameter removes its value at the function start.",
+   "tool": "rex_uidf_clear",
+   "args": {
+    "function": "many_arguments",
+    "variable": "arg8"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "cleared",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "path": "definition_sites",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "id": "uidf-list-empty-after-stack-parameter-clear",
+   "guards": "State restored: no informed value is left on the stack parameters' function.",
+   "tool": "rex_uidf_list",
+   "args": {
+    "function": "many_arguments"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "values",
+     "value": 0
+    }
+   ]
+  },
+  {
+   "id": "uidf-set-overwritten-register-parameter-holds-at-entry",
+   "guards": "A parameter whose register the entry instruction overwrites is informed before that instruction, so the value lands on the parameter, not on the result.",
    "tool": "rex_uidf_set",
    "args": {
     "function": "many_arguments",
@@ -737,32 +909,80 @@
    },
    "expect": [
     {
-     "kind": "error_code",
-     "code": "no_variable",
-     "message_contains": "a register parameter is live from function entry"
+     "kind": "subset",
+     "path": "definition_site",
+     "value": "0x400240"
+    },
+    {
+     "kind": "includes",
+     "path": "lines",
+     "item": "ASSERT(arg1, ConstantValue: 0x1)"
+    },
+    {
+     "kind": "excludes",
+     "path": "lines",
+     "item": "ASSERT(rdi_4, ConstantValue: 0x1)"
     }
    ]
   },
   {
-   "id": "uidf-set-stack-parameter-advice",
-   "guards": "Setting a stack-passed argument explains that such arguments cannot be informed.",
-   "tool": "rex_uidf_set",
+   "id": "uidf-list-shows-the-entry-parameter-value",
+   "guards": "The entry-placed parameter value is listed at the function start.",
+   "tool": "rex_uidf_list",
    "args": {
-    "function": "many_arguments",
-    "variable": "arg7",
-    "value": "1"
+    "function": "many_arguments"
    },
    "expect": [
     {
-     "kind": "error_code",
-     "code": "no_variable",
-     "message_contains": "stack-passed arguments cannot be informed"
+     "kind": "length",
+     "path": "values",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "path": "values",
+     "value": [
+      {
+       "variable": "arg1",
+       "definition_site": "0x400240"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "uidf-clear-all-clears-the-entry-parameter-value",
+   "guards": "Clearing a whole function also clears parameter values placed before the entry instruction.",
+   "tool": "rex_uidf_clear",
+   "args": {
+    "function": "many_arguments"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "cleared",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "id": "uidf-list-empty-after-clear-all",
+   "guards": "No user value survives the whole-function clear.",
+   "tool": "rex_uidf_list",
+   "args": {
+    "function": "many_arguments"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "values",
+     "value": 0
     }
    ]
   },
   {
    "id": "uidf-set-non-parameter-gets-no-advice",
-   "guards": "A variable that is not a parameter gets no parameter advice.",
+   "guards": "A variable that is not a parameter has no definition sites and cannot be informed.",
    "tool": "rex_uidf_set",
    "args": {
     "function": "many_arguments",
@@ -773,13 +993,7 @@
     {
      "kind": "error_code",
      "code": "no_variable",
-     "message_contains": "has no MediumLevelIL definition sites",
-     "message_lacks": "register parameter"
-    },
-    {
-     "kind": "error_code",
-     "code": "no_variable",
-     "message_lacks": "stack-passed"
+     "message_contains": "has no MediumLevelIL definition sites"
     }
    ]
   },
@@ -797,36 +1011,6 @@
      "code": "no_variable",
      "message_contains": "variables: __return_addr, arg1,",
      "message_lacks": "Register-allocated parameters"
-    }
-   ]
-  },
-  {
-   "id": "quick-main-tail-call-stub-note",
-   "guards": "A main that only tail-calls another function is reported as a stub with the real body named.",
-   "tool": "rex_quick_main",
-   "args": {},
-   "expect": [
-    {
-     "kind": "subset",
-     "value": "symbol",
-     "path": "method"
-    },
-    {
-     "kind": "subset",
-     "value": "0x4003a0",
-     "path": "main"
-    },
-    {
-     "kind": "regex",
-     "path": "note",
-     "pattern": "^main is a tail-call stub; its real body is real_main at 0x[0-9a-f]+$"
-    },
-    {
-     "kind": "subset",
-     "value": [
-      "return real_main(arg1, arg2) __tailcall"
-     ],
-     "path": "lines"
     }
    ]
   },
@@ -1122,87 +1306,6 @@
    ]
   },
   {
-   "id": "skip-main-analysis",
-   "guards": "Setup for the skipped-main note: skips analysis of main.",
-   "tool": "rex_eval_python",
-   "args": {
-    "code": "main = bv.get_function_at(0x4003a0)\nmain.analysis_skip_override = binaryninja.FunctionAnalysisSkipOverride.AlwaysSkipFunctionAnalysis\nbv.update_analysis_and_wait()\nmain = bv.get_function_at(0x4003a0)\nresult = (main.analysis_skipped, main.hlil is None)"
-   },
-   "expect": [
-    {
-     "kind": "subset",
-     "value": null,
-     "path": "error"
-    },
-    {
-     "kind": "subset",
-     "value": "(True, True)",
-     "path": "result"
-    }
-   ]
-  },
-  {
-   "id": "quick-main-skipped-main-note",
-   "guards": "A main whose analysis is skipped is reported with a note that waiting will not help.",
-   "tool": "rex_quick_main",
-   "args": {},
-   "expect": [
-    {
-     "kind": "subset",
-     "value": "symbol",
-     "path": "method"
-    },
-    {
-     "kind": "subset",
-     "value": "0x4003a0",
-     "path": "main"
-    },
-    {
-     "kind": "subset",
-     "value": [],
-     "path": "lines"
-    },
-    {
-     "kind": "regex",
-     "path": "note",
-     "pattern": "^the main function \\S+ has no HLIL: its analysis is skipped \\(.+\\); waiting for analysis will not produce one$"
-    }
-   ]
-  },
-  {
-   "id": "restore-main-analysis",
-   "guards": "Teardown for the skipped-main note: restores analysis of main.",
-   "tool": "rex_eval_python",
-   "args": {
-    "code": "main = bv.get_function_at(0x4003a0)\nmain.analysis_skip_override = binaryninja.FunctionAnalysisSkipOverride.DefaultFunctionAnalysisSkip\nbv.update_analysis_and_wait()\nresult = bv.get_function_at(0x4003a0).analysis_skipped"
-   },
-   "expect": [
-    {
-     "kind": "subset",
-     "value": null,
-     "path": "error"
-    },
-    {
-     "kind": "subset",
-     "value": "False",
-     "path": "result"
-    }
-   ]
-  },
-  {
-   "id": "quick-main-stub-note-after-restore",
-   "guards": "After analysis is restored, main is a tail-call stub again.",
-   "tool": "rex_quick_main",
-   "args": {},
-   "expect": [
-    {
-     "kind": "regex",
-     "path": "note",
-     "pattern": "^main is a tail-call stub; its real body is real_main at 0x[0-9a-f]+$"
-    }
-   ]
-  },
-  {
    "id": "section-with-nul-python",
    "guards": "A section name with a NUL byte is reported with the NUL replaced, matching the native scanner.",
    "tool": "rex_data_find",
@@ -1368,6 +1471,114 @@
        }
       ]
      }
+    }
+   ]
+  },
+  {
+   "id": "core-fixture-function-is-global-binding",
+   "guards": "Precondition: a fixture function starts as a global FunctionSymbol with ordinal 0, the symbol the rename step must preserve.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "function = bv.get_functions_by_name('compare_minus_one')[0]\nresult = [function.symbol.binding.name, function.symbol.type.name, function.symbol.ordinal]"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "['GlobalBinding', 'FunctionSymbol', 0]",
+     "path": "result"
+    }
+   ]
+  },
+  {
+   "id": "annotate-rename-applies",
+   "guards": "A rename through rex_annotate_many applies.",
+   "tool": "rex_annotate_many",
+   "args": {
+    "items": [
+     {
+      "addr": "compare_minus_one",
+      "name": "compare_minus_one_renamed"
+     }
+    ]
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "",
+     "value": {
+      "applied": 1,
+      "failed": 0,
+      "total": 1
+     }
+    }
+   ]
+  },
+  {
+   "id": "annotate-rename-keeps-symbol-binding",
+   "guards": "A rename keeps the symbol's binding, type, and ordinal instead of dropping to no binding.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "function = bv.get_functions_by_name('compare_minus_one_renamed')[0]\nresult = [function.symbol.binding.name, function.symbol.type.name, function.symbol.ordinal]"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "['GlobalBinding', 'FunctionSymbol', 0]",
+     "path": "result"
+    }
+   ]
+  },
+  {
+   "id": "annotate-rename-restores-name",
+   "guards": "Restores the fixture function's original name.",
+   "tool": "rex_annotate_many",
+   "args": {
+    "items": [
+     {
+      "addr": "compare_minus_one_renamed",
+      "name": "compare_minus_one"
+     }
+    ]
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "",
+     "value": {
+      "applied": 1,
+      "failed": 0,
+      "total": 1
+     }
+    }
+   ]
+  },
+  {
+   "id": "annotate-rename-restored-binding-intact",
+   "guards": "State restored: the original name is back with its global binding.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "function = bv.get_functions_by_name('compare_minus_one')[0]\nresult = [function.symbol.binding.name, function.symbol.type.name, function.symbol.ordinal]"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "['GlobalBinding', 'FunctionSymbol', 0]",
+     "path": "result"
     }
    ]
   },

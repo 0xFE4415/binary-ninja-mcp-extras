@@ -38,6 +38,7 @@ class Function:
     hlil: HighLevelILFunction | None
     mlil: MediumLevelILFunction | None
     analysis_skipped: bool
+    needs_update: bool
     analysis_skip_reason: AnalysisSkipReason
     comment: str
     type: Type

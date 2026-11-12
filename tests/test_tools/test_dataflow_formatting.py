@@ -115,15 +115,6 @@ def test_unknown_variable_message_gives_no_register_advice(
     )
 
 
-_REGISTER_ADVICE = (
-    "; a register parameter is live from function entry, inform a variable that "
-    "copies it (rex_parameter_variables lists the copies)"
-)
-_STACK_ADVICE = (
-    "; stack-passed arguments cannot be informed, inform the register that loads the value"
-)
-
-
 _REGISTER = FakeVariableSourceType.RegisterVariableSourceType
 _STACK = FakeVariableSourceType.StackVariableSourceType
 _FLAG = FakeVariableSourceType.FlagVariableSourceType
@@ -133,14 +124,16 @@ def _variable_named(name: str, source_type: FakeVariableSourceType) -> FakeVaria
     return FakeVariable(name, source_type=source_type)
 
 
+def _parameter_named(name: str, source_type: FakeVariableSourceType, storage: int) -> FakeVariable:
+    return FakeVariable(name, source_type=source_type, index=0, storage=storage)
+
+
 def _no_definition_message(name: str) -> str:
     return f"MLIL variable '{name}' in check has no MediumLevelIL definition sites"
 
 
-def _assert_advice(
-    variables: list[FakeVariable], parameters: list[FakeVariable], name: str, advice: str
-) -> None:
-    function = FakeFunction(
+def _check_function(variables: list[FakeVariable], parameters: list[FakeVariable]) -> FakeFunction:
+    return FakeFunction(
         "check",
         0x1000,
         0x1100,
@@ -148,54 +141,73 @@ def _assert_advice(
         parameter_vars=parameters,
         mlil=FakeMediumLevelIL({}),
     )
+
+
+def _assert_no_definition_sites(
+    variables: list[FakeVariable], parameters: list[FakeVariable], name: str
+) -> None:
+    function = _check_function(variables, parameters)
     for tool_name, arguments in (
         ("rex_uidf_set", (0x1004, name, "1")),
         ("rex_uidf_clear", (0x1004, name)),
     ):
         assert _error_message(tool_name, function, *arguments) == (
             "no_variable",
-            _no_definition_message(name) + advice,
+            _no_definition_message(name),
         )
 
 
-def test_register_parameter_without_definitions_gets_the_register_advice() -> None:
-    argc = _variable_named("argc", _REGISTER)
-    _assert_advice([argc], [argc], "argc", _REGISTER_ADVICE)
-
-
-def test_stack_parameter_without_definitions_gets_the_stack_advice() -> None:
-    argument = _variable_named("arg8", _STACK)
-    _assert_advice([argument], [argument], "arg8", _STACK_ADVICE)
+def _clear_report(
+    variables: list[FakeVariable], parameters: list[FakeVariable], name: str
+) -> dict[str, Any]:
+    function = _check_function(variables, parameters)
+    _, clear = get_tool("rex_uidf_clear")
+    result = clear(_call(FakeBinaryView(functions=[function])), 0x1004, name)
+    return {
+        "definition_sites": result["definition_sites"],
+        "cleared": function.cleared_user_var_values,
+    }
 
 
 @pytest.mark.parametrize(
     ("name", "source_type"),
     [("rbx", _REGISTER), ("fsbase", _REGISTER), ("category", _STACK), ("cond0", _FLAG)],
 )
-def test_non_parameter_without_definitions_gets_no_advice(
+def test_non_parameter_without_definitions_has_no_definition_sites(
     name: str, source_type: FakeVariableSourceType
 ) -> None:
     local = _variable_named(name, source_type)
     other_parameter = _variable_named("argc", _REGISTER)
-    _assert_advice([local, other_parameter], [other_parameter], name, "")
+    _assert_no_definition_sites([local, other_parameter], [other_parameter], name)
 
 
-def test_parameter_of_another_source_type_gets_no_advice() -> None:
-    flag = _variable_named("flag", _FLAG)
-    _assert_advice([flag], [flag], "flag", "")
+@pytest.mark.parametrize(
+    "source_type", [_REGISTER, _STACK, _FLAG], ids=["register", "stack", "flag"]
+)
+def test_parameter_without_definitions_is_defined_at_the_function_start(
+    source_type: FakeVariableSourceType,
+) -> None:
+    parameter = _parameter_named("arg", source_type, 7)
+    assert _clear_report([parameter], [parameter], "arg") == {
+        "definition_sites": 1,
+        "cleared": [(parameter, 0x1000, True), (parameter, 0x1000, False)],
+    }
 
 
 def test_parameter_membership_compares_variables_by_value_not_identity() -> None:
-    listed = FakeVariable("argc", index=7)
-    parameter = FakeVariable("argc", index=7)
+    listed = FakeVariable("argc", index=0, storage=7)
+    parameter = FakeVariable("argc", index=0, storage=7)
     assert listed is not parameter
-    _assert_advice([listed], [parameter], "argc", _REGISTER_ADVICE)
+    assert _clear_report([listed], [parameter], "argc") == {
+        "definition_sites": 1,
+        "cleared": [(listed, 0x1000, True), (listed, 0x1000, False)],
+    }
 
 
 def test_a_variable_differing_in_index_is_not_the_listed_parameter() -> None:
     local = FakeVariable("argc", index=7)
     other_parameter = FakeVariable("argc", index=8)
-    _assert_advice([local], [other_parameter], "argc", "")
+    _assert_no_definition_sites([local], [other_parameter], "argc")
 
 
 def test_fake_variables_compare_and_hash_by_source_type_index_and_storage() -> None:
@@ -213,14 +225,21 @@ def test_fake_variables_are_distinct_unless_given_the_same_index() -> None:
     assert FakeVariable("v") != FakeVariable("v")
 
 
-def test_same_named_parameter_and_local_get_no_advice() -> None:
-    parameter, local = _variable_named("v", _REGISTER), _variable_named("v", _REGISTER)
-    _assert_advice([parameter, local], [parameter], "v", "")
+def test_same_named_parameter_and_local_leave_only_the_parameter_site() -> None:
+    parameter, local = _parameter_named("v", _REGISTER, 7), _variable_named("v", _REGISTER)
+    assert _clear_report([parameter, local], [parameter], "v") == {
+        "definition_sites": 1,
+        "cleared": [(parameter, 0x1000, True), (parameter, 0x1000, False)],
+    }
 
 
-def test_same_named_parameters_of_different_source_types_get_no_advice() -> None:
-    register, stack = _variable_named("v", _REGISTER), _variable_named("v", _STACK)
-    _assert_advice([register, stack], [register, stack], "v", "")
+def test_same_named_parameters_share_the_function_start_and_are_ambiguous() -> None:
+    register, stack = _parameter_named("v", _REGISTER, 7), _parameter_named("v", _STACK, 8)
+    function = _check_function([register, stack], [register, stack])
+    assert _error_message("rex_uidf_set", function, 0x1004, "v", "1") == (
+        "ambiguous_definition",
+        "variable 'v' matches 2 definitions at 0x1000; pass def_address to choose one",
+    )
 
 
 def test_variable_names_match_exactly_not_by_prefix_or_substring() -> None:
@@ -244,10 +263,13 @@ def test_variable_names_match_exactly_not_by_prefix_or_substring() -> None:
         assert message.startswith("no MLIL variable named 'arg' in check; variables: ")
 
 
-def test_exact_name_advice_ignores_longer_same_prefix_variables() -> None:
-    exact = _variable_named("arg", _REGISTER)
-    longer = _variable_named("arg1", _STACK)
-    _assert_advice([exact, longer], [exact, longer], "arg", _REGISTER_ADVICE)
+def test_exact_name_match_ignores_longer_same_prefix_variables() -> None:
+    exact = _parameter_named("arg", _REGISTER, 7)
+    longer = _parameter_named("arg1", _STACK, 8)
+    assert _clear_report([exact, longer], [exact, longer], "arg") == {
+        "definition_sites": 1,
+        "cleared": [(exact, 0x1000, True), (exact, 0x1000, False)],
+    }
 
 
 def _constraint_row(condition: Any) -> dict[str, Any]:

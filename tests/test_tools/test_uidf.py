@@ -16,6 +16,7 @@ from helpers_uidf import (
     FakePossibleValueSet,
     FakeRegisterValueType,
     FakeVariable,
+    FakeVariableSourceType,
 )
 from helpers_view import (
     FakeAnalysisProgress,
@@ -556,16 +557,109 @@ def test_uidf_set_rejects_unknown_variables() -> None:
     )
     # A variable the function knows but never defines in the MLIL is equally unusable, and
     # the message must not claim the name is unknown while listing it among candidates.
-    main.parameter_vars = [_variable(main, "argc")]
     with pytest.raises(FakeToolError) as exc:
         uidf_set(_call(view), 0x1100, "argc", "1")
     assert exc.value.code == "no_variable"
-    assert exc.value.message == (
-        "MLIL variable 'argc' in main has no MediumLevelIL definition sites; "
-        "a register parameter is live from function entry, inform a variable that "
-        "copies it (rex_parameter_variables lists the copies)"
-    )
+    assert exc.value.message == "MLIL variable 'argc' in main has no MediumLevelIL definition sites"
     assert main.set_user_var_value_calls == []
+
+
+def _parameter_view() -> tuple[FakeBinaryView, FakeFunction, FakeVariable, FakeVariable]:
+    argc = FakeVariable("arg1", index=0, storage=7)
+    stacked = FakeVariable(
+        "arg7", source_type=FakeVariableSourceType.StackVariableSourceType, index=0, storage=8
+    )
+    local = FakeVariable("rax_1")
+    main = FakeFunction(
+        "main",
+        0x1100,
+        0x1200,
+        hlil=RenderableText("return arg1"),
+        vars=[argc, stacked, local],
+        parameter_vars=[argc, stacked],
+        mlil=FakeMediumLevelIL({local: [0x1104]}),
+    )
+    return FakeBinaryView(functions=[main]), main, argc, stacked
+
+
+@pytest.mark.parametrize("name", ["arg1", "arg7"])
+def test_uidf_set_informs_a_parameter_at_the_function_start(name: str) -> None:
+    view, main, argc, stacked = _parameter_view()
+    parameter = argc if name == "arg1" else stacked
+    _, uidf_set = get_tool("rex_uidf_set")
+    result = uidf_set(_call(view), 0x1100, name, "$here")
+    assert result["definition_site"] == "0x1100"
+    assert result["value"] == {"state": "ConstantValue", "rendered": "<const 0x1100>"}
+    assert [
+        (variable, site, after) for variable, site, _, after in main.set_user_var_value_calls
+    ] == [(parameter, 0x1100, False)]
+    explicit = uidf_set(_call(view), 0x1100, name, "1", def_address=0x1100)
+    assert explicit["definition_site"] == "0x1100"
+
+
+def test_uidf_set_rejects_a_parameter_site_other_than_the_function_start() -> None:
+    view, main, _, _ = _parameter_view()
+    _, uidf_set = get_tool("rex_uidf_set")
+    with pytest.raises(FakeToolError) as exc:
+        uidf_set(_call(view), 0x1100, "arg1", "1", def_address=0x1104)
+    assert exc.value.code == "definition_not_found"
+    assert exc.value.message == "variable 'arg1' has no definition at 0x1104; definitions: 0x1100"
+    assert main.set_user_var_value_calls == []
+
+
+def test_uidf_set_many_informs_parameters_at_the_function_start() -> None:
+    view, main, argc, stacked = _parameter_view()
+    _, uidf_set_many = get_tool("rex_uidf_set_many")
+    result = uidf_set_many(
+        _call(view),
+        0x1100,
+        [
+            {"variable": "arg1", "value": "$here"},
+            {"variable": "arg7", "value": "3", "def_address": 0x1100},
+            {"variable": "arg1", "value": "1", "def_address": 0x1104},
+        ],
+    )
+    assert [(row["ok"], row.get("definition_site")) for row in result["results"]] == [
+        (True, "0x1100"),
+        (True, "0x1100"),
+        (False, None),
+    ]
+    assert result["results"][2]["error"] == {
+        "code": "definition_not_found",
+        "message": "variable 'arg1' has no definition at 0x1104; definitions: 0x1100",
+    }
+    assert [
+        (variable, site, after) for variable, site, _, after in main.set_user_var_value_calls
+    ] == [(argc, 0x1100, False), (stacked, 0x1100, False)]
+
+
+def test_uidf_clear_clears_a_parameter_at_the_function_start() -> None:
+    view, main, argc, _ = _parameter_view()
+    _, uidf_set = get_tool("rex_uidf_set")
+    uidf_set(_call(view), 0x1100, "arg1", "1")
+    _, uidf_clear = get_tool("rex_uidf_clear")
+    result = uidf_clear(_call(view), 0x1100, "arg1")
+    assert result["cleared"] == 1
+    assert result["definition_sites"] == 1
+    assert main.cleared_user_var_values == [(argc, 0x1100, True), (argc, 0x1100, False)]
+    assert main.user_var_values == {}
+
+
+def test_uidf_clear_all_clears_parameters_informed_before_the_entry() -> None:
+    view, main, argc, stacked = _parameter_view()
+    _, uidf_set_many = get_tool("rex_uidf_set_many")
+    uidf_set_many(
+        _call(view),
+        0x1100,
+        [
+            {"variable": "arg1", "value": "1"},
+            {"variable": "arg7", "value": "2"},
+            {"variable": "rax_1", "value": "3"},
+        ],
+    )
+    _, uidf_clear = get_tool("rex_uidf_clear")
+    assert uidf_clear(_call(view), 0x1100)["cleared"] == 3
+    assert main.user_var_values == {}
 
 
 def test_uidf_set_lists_up_to_the_candidate_cap_without_a_more_suffix() -> None:
@@ -729,6 +823,45 @@ def test_uidf_set_polls_until_analysis_settles(monkeypatch: pytest.MonkeyPatch) 
     assert clock.sleeps == [float(uidf_tools._UIDF_ANALYSIS_SLICE_MS)]
 
 
+def test_uidf_set_waits_for_the_function_while_the_view_reads_idle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock([0.0, 0.01])
+    _patch_time(monkeypatch, clock)
+    view, main = _uidf_view()
+    main.needs_update_reads = [True, False]
+    _, uidf_set = get_tool("rex_uidf_set")
+    result = uidf_set(_call(view), 0x1100, "rax_1", "1")
+    assert result["analysis_complete"] is True
+    assert clock.sleeps == [float(uidf_tools._UIDF_ANALYSIS_SLICE_MS)]
+
+
+def test_uidf_set_many_waits_for_the_function_while_the_view_reads_idle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock([0.0, 0.01])
+    _patch_time(monkeypatch, clock)
+    view, main = _uidf_view()
+    main.needs_update_reads = [True, False]
+    _, uidf_set_many = get_tool("rex_uidf_set_many")
+    result = uidf_set_many(_call(view), 0x1100, [{"variable": "rax_1", "value": "1"}])
+    assert result["analysis_complete"] is True
+    assert clock.sleeps == [float(uidf_tools._UIDF_ANALYSIS_SLICE_MS)]
+
+
+def test_uidf_set_gives_up_on_a_function_that_never_finishes_updating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock([0.0, 9.999, 10.0])
+    _patch_time(monkeypatch, clock)
+    view, main = _uidf_view()
+    main.needs_update_reads = [True]
+    _, uidf_set = get_tool("rex_uidf_set")
+    result = uidf_set(_call(view), 0x1100, "rax_1", "1")
+    assert result["analysis_complete"] is False
+    assert clock.sleeps == [float(uidf_tools._UIDF_ANALYSIS_SLICE_MS)]
+
+
 def test_uidf_set_stops_at_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
     # Five Holds outlast the 10000 ms budget; the trailing Idle keeps a loop that polls
     # past the deadline from hanging the suite.
@@ -763,9 +896,12 @@ def test_uidf_clear_clears_one_variable_across_sites() -> None:
     assert view.update_analysis_calls == 1
     variable = _variable(main, "var_10")
     assert main.cleared_user_var_values == [
-        (variable, 0x1190),
-        (variable, 0x1196),
-        (variable, 0x119C),
+        (variable, 0x1190, True),
+        (variable, 0x1190, False),
+        (variable, 0x1196, True),
+        (variable, 0x1196, False),
+        (variable, 0x119C, True),
+        (variable, 0x119C, False),
     ]
     assert list(main.user_var_values) == [_variable(main, "rax_1")]
 
@@ -802,7 +938,6 @@ def test_uidf_clear_all_for_a_function() -> None:
         "variable": None,
         "cleared": 2,
     }
-    assert main.cleared_all_user_var_values == 1
     assert main.user_var_values == {}
     assert view.transactions == ["open", "commit"]
     assert view.file.undo_entries == ["rex_annotate_many batch"]
@@ -820,12 +955,11 @@ def test_uidf_clear_rejects_unknown_variables_and_wraps_core_errors() -> None:
     assert exc.value.code == "clear_failed"
     assert "core refused" in exc.value.message
     assert view.transactions == ["open", "revert"]
-    main.clear_user_var_value_error = None
-    main.clear_all_user_var_values_error = Exception("core refused all")
+    _inform(main, "rax_1", 0x1104, "<const 0x3>")
     with pytest.raises(FakeToolError) as exc:
         uidf_clear(_call(view), 0x1100)
     assert exc.value.code == "clear_failed"
-    assert "core refused all" in exc.value.message
+    assert "core refused" in exc.value.message
     assert view.transactions == ["open", "revert", "open", "revert"]
 
 

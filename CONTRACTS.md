@@ -46,11 +46,15 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   read apart.
 - `no_variable` for a name the function does not have (`rex_parameter_variables` and the
   uidf setters and clearers) lists the function's variable names. Names match exactly. A
-  name the function has but the MLIL never defines fails with advice only when every
-  variable of that name is a declared parameter: a register parameter points to
-  `rex_parameter_variables` and the variable that copies it, and a stack parameter to the
-  register that loads it. Any other variable, such as a saved register or a stack local,
-  gets none.
+  name the function has but the MLIL never defines, such as a saved register or a stack
+  local, fails with `no_variable` saying it has no definition sites. A declared parameter
+  with no MLIL definition, register or stack, is defined at the function start: the uidf
+  setters and clearers use that address as its only site, `rex_uidf_set` reports it as
+  `definition_site`, and `$here` resolves to it. The value holds from before the entry
+  instruction, because that instruction may already overwrite the parameter's register. Any
+  other `def_address` for such a parameter fails with `definition_not_found` naming the
+  function start. `rex_uidf_clear` clears every site whether its value holds from before or
+  after the instruction, including values set outside the plugin.
 - `no_mlil` (`rex_function_constraints`, `rex_mlil_uses`, `rex_parameter_variables`, and the
   uidf setters and clearers that resolve a variable name) and `no_hlil`
   (`rex_hlil_statements`) distinguish a skipped function from a pending one. When the core
@@ -59,17 +63,13 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   new-function analysis, `analysis.mode`, or a suspended pipeline), and does not advise
   waiting. Otherwise analysis is pending and the message advises
   `bn_analysis_update_and_wait` or a bounded `rex_analysis_wait`.
-  `rex_quick_main` applies the same rule to its `note` when the entry function has no HLIL
-  and no `main` symbol exists: the note is `the entry`, a space, and that message. It does
-  the same when the `main` it found has no HLIL, whatever the method: `the main`, a space,
-  and that message.
 - An address can lie in several functions: a cold or outlined block belongs to its parent and
   to a function of its own. Every tool that resolves an address expression to a function
   (`rex_function_constraints`, `rex_hlil_statements`, `rex_mlil_uses`,
   `rex_parameter_variables`, `rex_uidf_set`, `rex_uidf_set_many`, `rex_uidf_clear`,
   `rex_uidf_list`, `rex_disasm_at`, `rex_disasm_many`, `rex_decompile_many`,
   `rex_export_disasm`, `rex_call_paths`, `rex_function_undefine`,
-  `rex_component_add_functions`, `rex_annotate_many`, and `rex_quick_main`) picks one: the
+  `rex_component_add_functions`, and `rex_annotate_many`) picks one: the
   containing function with the lowest start address, the architecture name breaking a tie
   between equal starts. The core lists containing functions in no documented order, so the
   pick never follows it. `rex_find_functions_by_pattern` credits each hit to the same pick,
@@ -82,8 +82,6 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   Passing a function name in an address expression is ambiguous too: the core resolves it
   to one address before the plugin sees it and does not say that other functions share the
   name. `same_name` is where that shows, whether the caller passed a name or an address.
-  `rex_quick_main` reports the entry function's containing functions, or the containing
-  functions of main's start when main is found by symbol.
 - For `rex_string_search`, `rex_data_find`, `rx_data_find`, `rex_string_refs`, and
   `rex_uidf_list`, a truncated `total` is a lower bound: scanning stops at the first
   result past the page. `rex_xrefs_to` has the same rule for fetched refs; `rx_multi_find`
@@ -237,14 +235,20 @@ present only on some rows.
   `function_count`, `in_flight` (`{start, name, analysis_time_ms}`, at most 10), and
   `truncated` (more in-flight functions than listed).
 - `rex_annotate_many`: `applied`, `failed`, `failed_count`, `total`, and `results` rows
-  `{addr, ok, function?, error?}`; `function` is the resolved function entry as it was before
-  the batch renamed it, present on every row that passed validation. A `comment` lands at the
+  `{addr, ok, function?, error?}`; `function` is the resolved function entry read after the
+  batch applies, so it carries the new name and its `same_name`, present on every row that
+  passed validation. A `comment` lands at the
   exact `addr` the item named; `name` and `prototype` apply to the whole function.
+  A rename keeps the symbol's type, binding, namespace, and ordinal; only the name changes.
 - `rex_binary_close`: `closed` (always true; a failed close raises `close_failed`) and
   `path`, the closed file's full filename as the core reports it (truncated).
 - `rex_call_paths`: `from_function` and `to_function` (resolved function entries for
   `from_addr` and `to_addr`), `reachable`, `paths` (lists of function entries), `truncated`,
-  and `explored` (functions expanded during the search).
+  and `explored` (functions expanded during the search). `direction` defaults to `callers`.
+  Both directions are bounded by `max_depth` and `max_paths`. Edges come from the core's
+  call graph and include tail calls. A function called from several sites is one edge, so
+  a path is never listed twice. Code pointers passed as data and imports with no function
+  object are not edges.
 - `rex_component_add_functions`: `path`, `added_count`, `applied`, `failed_count`, `total`,
   and `results` rows `{start, name, also_containing, same_name, added}`.
 - `rex_component_create`: `path`, `display_name`, `guid`.
@@ -303,7 +307,9 @@ present only on some rows.
 - `rex_hlil_statements`: `function`, `total`, `truncated`, and `statements` of
   `{address, index, text}`.
 - `rex_kv_delete`: `key`. `rex_kv_get`: `key`, `value`, `truncated`. `rex_kv_set`: `key`,
-  `length`, `value` (preview), `truncated`.
+  `length`, `value` (preview), `truncated`. `rex_kv_set` stores under the `rex/` metadata
+  prefix with the core's persistent-flag default, so values serialize into the BNDB
+  snapshot and survive reload.
 - `rex_memory_write`: `address`, `bytes_written`.
 - `rex_mlil_uses`: `function`, `definition_site` (the queried address), and `variables`,
   one per defined variable: `variable`, `storage`, `type`, `definitions` (a flat list of
@@ -313,17 +319,6 @@ present only on some rows.
   variable in the function's variable order, shaped like `rex_mlil_uses`' `storage`),
   `definitions` (a flat list of addresses over all matching variables, ascending), and
   `carriers` of `{variable, address, text}`.
-- `rex_quick_main`: `entry_point`, `method` (`symbol`, `entry-arg`, or `entry-fallback`),
-  `main` (null when unresolved), `note` and `hint` (each null when it has nothing to add),
-  `function` (main, else the entry function), `lines`, `truncated`. When `main` does
-  nothing but tail-call a constant address, passing on only variables and constants, `main`
-  stays as found and `note` names the real body (`main is a tail-call stub; its real body is
-  NAME at ADDRESS`). A tail call that computes an argument is real work, not a stub. The note
-  follows up to eight stubs. It is null for a loop, a longer chain, a target that is not the
-  start of a function, or a chain that ends in an import thunk (a symbol of type
-  `ImportedFunctionSymbol`, or a function whose only statement tail-calls an import), which
-  has no body of its own. A target whose analysis is pending or skipped has no HLIL to
-  inspect, so it is named as the body (a pending one may later turn out to be a stub).
 - `rex_redo`: `redone`, `undo_left`, `redo_left`. `rex_undo`: `undone`, `undo_left`,
   `redo_left`. `undone` and `redone` are false when the stack was empty and nothing changed.
 - `rex_relocation_at`: `address`, `count`, and `relocations` of `{address, size, type,
@@ -338,7 +333,8 @@ present only on some rows.
   each ref `{function_start, function_name, address}` (the first two are null outside a
   function).
 - `rex_struct_from_access`: `name`, `registered`, `width`, `member_count`, `members` of
-  `{offset, name, type}`, `truncated`.
+  `{offset, name, type}`, `truncated`. It sees only offset accesses analysis has already
+  recorded, and it registers the inferred struct under an auto type id.
 - `rex_tag_list`: `total`, `truncated`, and `tags` of `{address, tag_type, data,
   data_truncated}`. `rex_tag_set`: `address`, `tag_type`, `data`, `data_truncated`,
   `length`. A missing `tag_type` is created when `create_missing` is true (the default),
@@ -429,32 +425,12 @@ present only on some rows.
   values above 2^53. A value that is not an integer or string (a boolean, float, null, list,
   or object), any other string, a sign, whitespace, an empty digit list, or more than 16
   digits returns `invalid_params` naming the violation; strings are never coerced.
-- `rx_multi_find` accepts 1-64 patterns: an empty list returns `invalid_params`, a longer
-  one `too_many_patterns`. Each entry is capped at 8,192 characters like `rex_data_find`'s
-  `pattern`, and an over-cap entry returns `pattern_too_large` naming its index.
-
-### Winning strategies
-
-Usage strategies that do not fit a tool's one-line description.
-
-- The UIDF fold: informing an MLIL value reanalyzes the function, dataflow propagates
-  the value into dependent loads and compares, and statically decided branches are
-  eliminated from HLIL (the core `set_user_var_value` docs warn of exactly this). The
-  highest-leverage target is the base pointer of a key/table load, informed as
-  `ConstantPointerValue`: one value resolves every `base[index]` load in the family, so
-  whole families of per-byte key checks fold away instead of being informed one compare
-  at a time. Find the targets with `rex_function_constraints`, which names the variable
-  or `base+offset` load behind each constant branch comparison, then inform the family
-  with `rex_uidf_set_many` (one reanalysis, not one per value).
-- `rex_help` with no arguments is the discovery step: the category index is short and
-  says when each group applies, so read it before choosing a tool, then open one
-  category for descriptions.
 - `rex_constant_find` matches constants in the core's linear-view disassembly lines (the
   engine behind Search > For Constant), never IL and never raw bytes. A hit counts only on
   an instruction line, one whose tokens include an instruction token. The core also reports
   function header lines and the `{ Continuation of function ... }`, `{ Falls through into
-  ... }`, and `{Case ...}` annotation lines; those never count, so `value` 0 no longer
-  matches every function. The core also matches `value` 0 on an instruction with no zero
+  ... }`, and `{Case ...}` annotation lines; those never count, so `value` 0 does not
+  match every function. The core also matches `value` 0 on an instruction with no zero
   operand, for example `xor eax, eax  {0x0}` (a register's known value in an annotation) or
   a line that carries a string annotation. For `value` 0 the tool keeps a hit only when a
   token that belongs to an operand and carries a number or address (integer, possible
@@ -468,20 +444,8 @@ Usage strategies that do not fit a tool's one-line description.
   after decompiling. The default operand-only results do not depend on this. Other values
   are not filtered. The tool lists a hit under the function the core attributes the line
   to, not by the lowest-start rule, so in overlapping code one address can appear under
-  several functions.
-  A value that is rare or absent makes the core scan the whole view before the search ends.
-  Use it to enumerate every function touching a magic value; when the value lives in data
-  rather than code, use `rex_data_find` or `rx_multi_find` instead.
-- `rex_call_paths` defaults to `direction=callers`: from a sink it answers "who can reach
-  this" without hand-walking xrefs. "Does main reach X?" needs `direction=callees` from
-  main, which answers "what can this reach". Both directions are bounded by `max_depth` and
-  `max_paths`. A function called from several sites is one edge, so a path is never listed
-  twice. Edges come from the core's call graph, and tail calls are included. Code pointers
-  passed as data (for example `_start` handing main to `__libc_start_main`) and imports
-  with no function object are not edges.
-- `rex_struct_from_access` only sees offset accesses analysis has already recorded, so
-  run it after the dereferencing code is analyzed; it registers the inferred struct
-  under an auto type id.
-- `rex_kv_set` stores under the `rex/` metadata prefix with the core's persistent-flag
-  default, so values serialize into the BNDB snapshot and survive reload; use it as
-  cross-call scratch for findings a later phase would otherwise re-derive.
+  several functions. A value that is rare or absent makes the core scan the whole view
+  before the search ends.
+- `rx_multi_find` accepts 1-64 patterns: an empty list returns `invalid_params`, a longer
+  one `too_many_patterns`. Each entry is capped at 8,192 characters like `rex_data_find`'s
+  `pattern`, and an over-cap entry returns `pattern_too_large` naming its index.

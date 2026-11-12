@@ -9,6 +9,7 @@ from helpers import (
     get_tool,
     plain_gap_message,
 )
+from helpers_symbol import FakeSymbolBinding, FakeSymbolType
 from helpers_view import (
     FakeBinaryView,
     FakeFunction,
@@ -21,6 +22,27 @@ def _annotate_view() -> FakeBinaryView:
     main = FakeFunction("main", 0x1100, 0x1200)
     helper = FakeFunction("helper", 0x2000, 0x2100)
     return FakeBinaryView(functions=[main, helper])
+
+
+def test_annotate_many_rename_keeps_symbol_type_binding_namespace_and_ordinal() -> None:
+    exported = FakeFunction(
+        "dup_mid",
+        0x1100,
+        0x1200,
+        symbol_type="LibraryFunctionSymbol",
+        symbol_binding=FakeSymbolBinding.GlobalBinding,
+    )
+    exported.symbol.namespace = "ns"
+    exported.symbol.ordinal = 7
+    view = FakeBinaryView(functions=[exported])
+    _, annotate = get_tool("rex_annotate_many")
+    annotate(FakeParsingToolCall(view), [{"addr": "0x1100", "name": "renamed"}])
+    symbol = exported.symbol
+    assert (symbol.name, symbol.address) == ("renamed", 0x1100)
+    assert symbol.type == FakeSymbolType.LibraryFunctionSymbol
+    assert symbol.binding == FakeSymbolBinding.GlobalBinding
+    assert symbol.namespace == "ns"
+    assert symbol.ordinal == 7
 
 
 def test_annotate_many_applies_name_comment_and_prototype_in_one_transaction() -> None:
@@ -47,7 +69,7 @@ def test_annotate_many_applies_name_comment_and_prototype_in_one_transaction() -
             {
                 "addr": "0x1150",
                 "ok": True,
-                "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+                "function": {"start": "0x1100", "name": "read_config", **NO_ALTERNATIVES},
             },
             {
                 "addr": "0x2000",
@@ -92,7 +114,7 @@ def test_annotate_many_reports_a_missing_function_per_item() -> None:
             {
                 "addr": "0x1100",
                 "ok": True,
-                "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+                "function": {"start": "0x1100", "name": "renamed", **NO_ALTERNATIVES},
             },
         ],
     }
@@ -376,12 +398,12 @@ def test_annotate_many_echoes_the_function_start_for_function_level_fields() -> 
         {
             "addr": "0x1100",
             "ok": True,
-            "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+            "function": {"start": "0x1100", "name": "renamed", **NO_ALTERNATIVES},
         },
         {
             "addr": "0x1100",
             "ok": True,
-            "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+            "function": {"start": "0x1100", "name": "renamed", **NO_ALTERNATIVES},
         },
     ]
     assert main.name == "renamed"
@@ -470,3 +492,28 @@ def test_optional_text_passes_through_strings_and_maps_everything_else_to_none()
     assert annotations_tools._optional_text(None) is None
     assert annotations_tools._optional_text(123) is None
     assert annotations_tools._optional_text(["note"]) is None
+
+
+def test_annotate_many_reports_each_function_as_it_is_after_the_batch() -> None:
+    main = FakeFunction("main", 0x1100, 0x1200)
+    helper = FakeFunction("helper", 0x2000, 0x2100)
+    view = FakeBinaryView(functions=[main, helper])
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [{"addr": 0x1100, "name": "parse_config"}, {"addr": 0x2000, "name": "parse_config"}],
+    )
+    assert [row["function"] for row in result["results"]] == [
+        {
+            "start": "0x1100",
+            "name": "parse_config",
+            "also_containing": [],
+            "same_name": [{"start": "0x2000", "name": "parse_config"}],
+        },
+        {
+            "start": "0x2000",
+            "name": "parse_config",
+            "also_containing": [],
+            "same_name": [{"start": "0x1100", "name": "parse_config"}],
+        },
+    ]

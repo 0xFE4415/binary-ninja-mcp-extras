@@ -328,7 +328,7 @@ def run_assertion(assertion: dict[str, Any], result: ToolResult, client: McpClie
 
 
 def run_step(step: dict[str, Any], binary: str, client: McpClient) -> list[str]:
-    arguments = {"binary": binary, **step["args"]}
+    arguments = dict(step["args"]) if step.get("global") else {"binary": binary, **step["args"]}
     result = client.call(step["tool"], arguments)
     failures = []
     for assertion in step["expect"]:

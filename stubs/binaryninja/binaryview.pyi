@@ -7,11 +7,12 @@ from binaryninja.enums import (
     DerivedStringLocationType,
     RegisterValueType,
     RelocationType,
+    SymbolBinding,
     SymbolType,
 )
 from binaryninja.filemetadata import FileMetadata
 from binaryninja.function import DisassemblyTextLine, Function
-from binaryninja.types import NamedTypeReferenceType, QualifiedName, StructureType, Type
+from binaryninja.types import NamedTypeReferenceType, NameSpace, QualifiedName, StructureType, Symbol, Type
 from binaryninja.variable import PossibleValueSet
 
 
@@ -96,6 +97,9 @@ class CoreSymbol:
     full_name: str
     address: int
     type: SymbolType
+    binding: SymbolBinding
+    namespace: NameSpace
+    ordinal: int
 
 
 class Relocation:
@@ -168,6 +172,7 @@ class BinaryView:
     def update_analysis(self) -> None: ...
     def undo(self) -> None: ...
     def redo(self) -> None: ...
+    def define_user_symbol(self, sym: Symbol) -> None: ...
     def undoable_transaction(self) -> Any: ...
     def add_type_library(self, lib: Any) -> None: ...
     def import_library_type(self, name: str, lib: Any = None) -> NamedTypeReferenceType | None: ...

@@ -120,6 +120,13 @@ class SymbolType(IntEnum):
     LocalLabelSymbol = 8
 
 
+class SymbolBinding(IntEnum):
+    NoBinding = 0
+    LocalBinding = 1
+    GlobalBinding = 2
+    WeakBinding = 3
+
+
 class VariableSourceType(IntEnum):
     StackVariableSourceType = 0
     RegisterVariableSourceType = 1

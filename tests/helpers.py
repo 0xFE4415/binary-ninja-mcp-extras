@@ -16,6 +16,7 @@ import pytest
 
 # These fake modules never import helpers, so importing them here cannot cycle.
 from helpers_dataflow import FakeInstruction, FakeMLILInstructions
+from helpers_symbol import FakeSymbolBinding, FakeSymbolType, fake_symbol_constructor
 from helpers_uidf import FakeRegisterValueType, FakeVariable, FakeVariableSourceType
 from helpers_view import (
     TYPE_LIBRARIES_ON_DISK,
@@ -25,7 +26,6 @@ from helpers_view import (
     FakeBinaryView,
     FakeFunction,
     FakeInstructionTextTokenType,
-    FakeSymbolType,
     FakeType,
     FakeTypeClass,
     FakeTypeLibrary,
@@ -285,6 +285,12 @@ class FakeToolCallBase:
     pass
 
 
+def _fake_types_module() -> types.ModuleType:
+    module = types.ModuleType("binaryninja.types")
+    setattr(module, "Symbol", fake_symbol_constructor)
+    return module
+
+
 def install_fake_binaryninja() -> None:
     """Create the fake binaryninja package in sys.modules when it is absent."""
     if "binaryninja" in sys.modules:
@@ -335,6 +341,7 @@ def install_fake_binaryninja() -> None:
     setattr(enums_module, "TypeClass", FakeTypeClass)
     setattr(enums_module, "InstructionTextTokenType", FakeInstructionTextTokenType)
     setattr(enums_module, "SymbolType", FakeSymbolType)
+    setattr(enums_module, "SymbolBinding", FakeSymbolBinding)
     setattr(enums_module, "VariableSourceType", FakeVariableSourceType)
     setattr(
         enums_module,
@@ -361,14 +368,20 @@ def install_fake_binaryninja() -> None:
 
     hlil_module = _fake_highlevelil_module()
 
+    types_module = _fake_types_module()
+
     package = types.ModuleType("binaryninja")
-    setattr(package, "mcp", mcp_module)
-    setattr(package, "binaryview", bv_module)
-    setattr(package, "function", fn_module)
-    setattr(package, "enums", enums_module)
-    setattr(package, "variable", variable_module)
-    setattr(package, "mediumlevelil", mlil_module)
-    setattr(package, "highlevelil", hlil_module)
+    for attribute, module in (
+        ("mcp", mcp_module),
+        ("types", types_module),
+        ("binaryview", bv_module),
+        ("function", fn_module),
+        ("enums", enums_module),
+        ("variable", variable_module),
+        ("mediumlevelil", mlil_module),
+        ("highlevelil", hlil_module),
+    ):
+        setattr(package, attribute, module)
     setattr(package, "Type", FakeType)
     setattr(package, "TypeLibrary", FakeTypeLibrary)
 
@@ -378,6 +391,7 @@ def install_fake_binaryninja() -> None:
         ("binaryninja.binaryview", bv_module),
         ("binaryninja.function", fn_module),
         ("binaryninja.enums", enums_module),
+        ("binaryninja.types", types_module),
         ("binaryninja.variable", variable_module),
         ("binaryninja.mediumlevelil", mlil_module),
         ("binaryninja.highlevelil", hlil_module),
@@ -462,7 +476,7 @@ def _disasm_view() -> FakeBinaryView:
 
 
 class FakeParsingToolCall(FakeToolCall):
-    """FakeToolCall with the parse_address surface rex_decompile_many/rex_quick_main read.
+    """FakeToolCall with the parse_address surface rex_decompile_many reads.
 
     Deliberately raises a plain ValueError for unparsable input instead of a ToolError:
     the handler owns the conversion of expression-parse failures to invalid_params, so

@@ -91,11 +91,11 @@ def rex_call_paths(
     max_depth: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_CALL_PATH_DEPTH)] = 8,
     max_paths: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_CALL_PATHS)] = 5,
 ) -> _CallPathsResult:
-    """Bounded BFS for call paths; direction defaults to callers, so "A reaches B?" needs callees.
+    """Bounded call paths. "Does A reach B?" is from_addr=A, to_addr=B, direction="callees".
 
-    :param from_addr: Address inside the starting function.
-    :param to_addr: Address inside the target function.
-    :param direction: Default "callers": to_addr reaches from_addr; "callees": the reverse.
+    :param from_addr: Function A: an address or symbol name inside it, such as main.
+    :param to_addr: Function B: an address or symbol name inside it, such as write.
+    :param direction: "callees": from_addr reaches to_addr; "callers" (default): the reverse.
     :param max_depth: Maximum edges walked from the starting function.
     :param max_paths: Maximum paths returned.
     """

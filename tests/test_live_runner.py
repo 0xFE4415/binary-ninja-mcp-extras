@@ -962,3 +962,12 @@ def test_unwinding_ignores_every_further_termination_signal(termination_signal: 
     assert exit_info.value.code == 128 + termination_signal
     for number in runner.UNWIND_SIGNALS:
         assert signal.getsignal(number) == signal.SIG_IGN
+
+
+def test_a_global_step_is_called_without_the_binary(stub: StubServer):
+    client = runner.McpClient(stub.url)
+    client.initialize()
+    global_step = {**probe_step("global", 1), "args": {"category": "x"}, "global": True}
+    assert runner.run_step(global_step, "h1", client) == []
+    assert runner.run_step(probe_step("bound", 1), "h1", client) == []
+    assert stub.calls == [("probe", {"category": "x"}), ("probe", {"binary": "h1"})]

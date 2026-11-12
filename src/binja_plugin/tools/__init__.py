@@ -532,7 +532,6 @@ from .decompile import (
     rex_disasm_at,
     rex_disasm_many,
     rex_hlil_grep,
-    rex_quick_main,
 )
 from .escape import rex_eval_python, rex_eval_result, rex_memory_write
 from .exports import _MAX_EXPORT_SYMBOLS, rex_export_disasm, rex_export_symbols

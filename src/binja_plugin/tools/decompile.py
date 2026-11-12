@@ -1,39 +1,22 @@
-"""IL and disassembly text tools: HLIL search, batch decompilation, and entry discovery."""
+"""IL and disassembly text tools: HLIL search and batch decompilation."""
 
 from __future__ import annotations
 
-import re
-from itertools import takewhile
-from typing import TYPE_CHECKING, Annotated, Literal, TypedDict
+from typing import TYPE_CHECKING, Annotated, TypedDict
 
 from binaryninja import mcp
-from binaryninja.binaryview import BinaryView
-from binaryninja.enums import SymbolType
-from binaryninja.function import Function
-from binaryninja.highlevelil import (
-    HighLevelILConst,
-    HighLevelILConstPtr,
-    HighLevelILImport,
-    HighLevelILTailcall,
-    HighLevelILVar,
-)
 
 from binja_plugin.tools import (
     _MAX_DISASM_CONTEXT,
     _compile_user_regex,
     _disasm_window,
     _drop,
-    _function_order,
     _ItemError,
-    _missing_il_message,
     _name_filter,
     _parse_address_entry,
     _render_function_disassembly,
     _require_address_list,
     _require_analyzed_function,
-    _Resolution,
-    _resolve_containing,
-    _resolved_entry,
     _ResolvedFunction,
     _truncate,
     _validate_disasm_window,
@@ -53,24 +36,6 @@ _MAX_DECOMPILE_LINES = 512
 _MAX_DISASM_BATCH = 64
 _MAX_DISASM_MANY_LINES = 512
 _MAX_DISASM_MANY_TOTAL_LINES = 1024
-
-_MAX_TAILCALL_HOPS = 8
-_FORWARDED_ARGUMENT_TYPES = (HighLevelILVar, HighLevelILConst, HighLevelILConstPtr)
-_MAIN_SYMBOL_NAMES = ("main", "_main")
-_MAIN_LIBC_MARKER = "libc_start_main"
-_MAIN_FALLBACK_NOTE = (
-    "no main symbol and no parsable __libc_start_main pointer in the entry function"
-)
-
-# A trap ends the block, so bytes after it belong to no function even if a handler resumes there.
-_TRAP_MNEMONICS = frozenset({"int3", "breakpoint", "ud2"})
-_QUICK_MAIN_TRAP_HINT = (
-    "function ends in {mnemonic}; if a SIGTRAP-style handler resumes past it, execution "
-    "reaches code outside this function — inspect with rex_disasm_at and rex_function_define"
-)
-
-# Precompiled: _argument_address runs per call argument and should skip the re cache.
-_HEX_ADDRESS_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
 
 
 class _DecompiledFunction(_ResolvedFunction):
@@ -137,149 +102,10 @@ class _HlilGrepResult(TypedDict):
     next_offset: int | None
 
 
-_MainMethod = Literal["symbol", "entry-arg", "entry-fallback"]
-
-
-class _QuickMainResult(TypedDict):
-    entry_point: str
-    method: _MainMethod
-    main: str | None
-    note: str | None
-    hint: str | None
-    function: _ResolvedFunction
-    lines: list[str]
-    truncated: bool
-
-
 def _render_hlil_lines(hlil: HighLevelILFunction | None, max_lines: int) -> tuple[list[str], bool]:
     """Render a function's HLIL to at most ``max_lines`` truncated lines."""
     source_lines = str(hlil).splitlines() if hlil is not None else []
     return [_truncate(line) for line in source_lines[:max_lines]], len(source_lines) > max_lines
-
-
-def _first_call_argument(line: str, marker: str) -> str | None:
-    """Return the first argument token of the call following ``marker`` on ``line``."""
-    start = line.find("(", line.find(marker))
-    if start == -1:
-        return None
-    argument = line[start + 1 :]
-    comma = argument.find(",")
-    if comma != -1:
-        argument = argument[:comma]
-    else:
-        closing = argument.find(")")
-        if closing == -1:
-            return None
-        argument = argument[:closing]
-    return argument.strip()
-
-
-def _argument_address(call: mcp.ToolCall, argument: str | None) -> int | None:
-    """Resolve a rendered HLIL argument token to an address, or None."""
-    if argument is None:
-        return None
-    hex_match = _HEX_ADDRESS_PATTERN.search(argument)
-    if hex_match is not None:
-        return int(hex_match.group(0), 16)
-    try:
-        return call.parse_address(argument)
-    except Exception:
-        return None
-
-
-def _entry_argument_main(
-    bv: BinaryView, call: mcp.ToolCall, entry: Function
-) -> tuple[_Resolution | None, str | None]:
-    """Find main as the __libc_start_main-style pointer argument of the entry function."""
-    hlil = entry.hlil
-    if hlil is None:
-        return None, f"the entry {_missing_il_message(entry, 'HLIL')}"
-    for line in str(hlil).splitlines():
-        if _MAIN_LIBC_MARKER not in line:
-            continue
-        address = _argument_address(call, _first_call_argument(line, _MAIN_LIBC_MARKER))
-        if address is None:
-            return None, _MAIN_FALLBACK_NOTE
-        functions = bv.get_functions_containing(address)
-        if functions:
-            return _resolve_containing(bv, functions), None
-        return (
-            None,
-            f"found candidate main address {address:#x} but no analyzed function contains it",
-        )
-    return None, _MAIN_FALLBACK_NOTE
-
-
-def _sole_tailcall(hlil: HighLevelILFunction | None) -> HighLevelILTailcall | None:
-    if hlil is None:
-        return None
-    only_statement = None
-    for block in hlil.basic_blocks:
-        for statement in block:
-            if only_statement is not None:
-                return None
-            only_statement = statement
-    if not isinstance(only_statement, HighLevelILTailcall):
-        return None
-    return only_statement
-
-
-def _forwarding_target(tailcall: HighLevelILTailcall | None) -> int | None:
-    if tailcall is None:
-        return None
-    if not isinstance(tailcall.dest, HighLevelILConstPtr):
-        return None
-    for argument in tailcall.params:
-        if not isinstance(argument, _FORWARDED_ARGUMENT_TYPES):
-            return None
-    return tailcall.dest.constant
-
-
-def _tailcall_stub_body(bv: BinaryView, main_hlil: HighLevelILFunction | None) -> Function | None:
-    target = _forwarding_target(_sole_tailcall(main_hlil))
-    if target is None:
-        return None
-    for _ in range(_MAX_TAILCALL_HOPS):
-        starting_here = bv.get_functions_at(target)
-        if not starting_here:
-            return None
-        current = min(starting_here, key=_function_order)
-        if current.symbol.type == SymbolType.ImportedFunctionSymbol:
-            return None
-        tailcall = _sole_tailcall(current.hlil)
-        if tailcall is not None and isinstance(tailcall.dest, HighLevelILImport):
-            return None
-        target = _forwarding_target(tailcall)
-        if target is None:
-            return current
-    return None
-
-
-def _main_note(bv: BinaryView, main: Function, main_hlil: HighLevelILFunction | None) -> str | None:
-    if main_hlil is None:
-        return f"the main {_missing_il_message(main, 'HLIL')}"
-    body = _tailcall_stub_body(bv, main_hlil)
-    if body is None:
-        return None
-    return f"main is a tail-call stub; its real body is {_truncate(body.name)} at {body.start:#x}"
-
-
-def _resolve_main(
-    bv: BinaryView, call: mcp.ToolCall, entry: _Resolution
-) -> tuple[_Resolution | None, _MainMethod, str | None]:
-    """Resolve main: function symbol first, then the entry stub's pointer argument."""
-    if entry.function.name in _MAIN_SYMBOL_NAMES:
-        return entry, "symbol", None
-    for name in _MAIN_SYMBOL_NAMES:
-        candidates = bv.get_functions_by_name(name)
-        if candidates:
-            chosen = min(candidates, key=_function_order)
-            resolved = _resolved_entry(bv, chosen, bv.get_functions_containing(chosen.start))
-            return _Resolution(chosen, resolved), "symbol", None
-    main, note = _entry_argument_main(bv, call, entry.function)
-    if main is not None:
-        return main, "entry-arg", note
-    return None, "entry-fallback", note
 
 
 def _render_hlil_matches(
@@ -508,59 +334,4 @@ def rex_hlil_grep(
         "skipped_no_hlil": skipped_no_hlil,
         "functions": matches,
         "next_offset": next_offset,
-    }
-
-
-def _trap_terminator(function: Function) -> str | None:
-    """The trap mnemonic when the function's last addressed instruction is a trap, else None."""
-    lines = _render_function_disassembly(function)
-    if not lines:
-        return None
-    last_address = lines[-1][0]
-    # Lines at the last address include annotation continuations; only the mnemonic decides.
-    last_lines = takewhile(lambda line: line[0] == last_address, reversed(lines))
-    for _, text in last_lines:
-        tokens = text.split()
-        if tokens and tokens[0].lower() in _TRAP_MNEMONICS:
-            return tokens[0].lower()
-    return None
-
-
-@mcp.tool(read_only=True)
-def rex_quick_main(
-    call: mcp.ToolCall,
-    max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
-) -> _QuickMainResult:
-    """One-call fast contact: the entry point, main, and main's HLIL.
-
-    :param max_lines: HLIL lines to render.
-    """
-    bv = call.binary_view
-    max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
-    entry_point = bv.entry_point
-    functions = bv.get_functions_containing(entry_point)
-    if not functions:
-        raise mcp.ToolError(
-            "no_function",
-            f"no analyzed function contains the entry point {entry_point:#x}; "
-            f"define one with rex_function_define(start={entry_point:#x}) if it is code",
-        )
-    entry = _resolve_containing(bv, functions)
-    main, method, unresolved_note = _resolve_main(bv, call, entry)
-    resolution = main if main is not None else entry
-    function = resolution.function
-    hlil = function.hlil
-    note = unresolved_note if main is None else _main_note(bv, function, hlil)
-    lines, truncated = _render_hlil_lines(hlil, max_lines)
-    mnemonic = _trap_terminator(function)
-    hint = _QUICK_MAIN_TRAP_HINT.format(mnemonic=mnemonic) if mnemonic is not None else None
-    return {
-        "entry_point": hex(entry_point),
-        "method": method,
-        "main": hex(main.function.start) if main is not None else None,
-        "note": note,
-        "hint": hint,
-        "function": resolution.entry,
-        "lines": lines,
-        "truncated": truncated,
     }

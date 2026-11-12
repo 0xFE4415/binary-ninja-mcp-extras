@@ -39,8 +39,7 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 1. `rex_help` for discovery: the tool categories, each with a "use when" line. Open one
    with `rex_help(category=...)`, or one tool's parameters with `rex_help(tool_name=...)`.
    It also lists the `rx_*` scanners, under `scanning`, once the native half is loaded.
-2. `rex_quick_main` for fast contact: entry point, `main`, and `main`'s HLIL in one
-   call.
+2. `bn_binary_triage` for fast contact: the entry point and the size of the binary.
 3. Search. `rex_string_search` for strings, `rex_data_find` or `rx_multi_find` for
    byte patterns, `rex_hlil_grep` for code shape, and `rex_constant_find` for magic
    numbers.
@@ -53,7 +52,7 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 
 Each tool registers as read-only or destructive. That mark is the only approval signal an
 MCP client gets, so read the destructive table before you let an agent run those tools.
-The tables list all 52 tools: 50 Python `rex_*` tools and 2 native `rx_*` scanners.
+The tables list all 51 tools: 49 Python `rex_*` tools and 2 native `rx_*` scanners.
 CONTRACTS.md holds the exact rules for every response field and limit.
 
 ### Read-only tools
@@ -77,7 +76,6 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_disasm_at` | Disassemble the lines around an address. |
 | `rex_disasm_many` | Disassemble up to 64 addresses in one call. |
 | `rex_decompile_many` | Decompile up to 1024 functions in one call. |
-| `rex_quick_main` | Show the entry point, `main`, and the HLIL of `main`. |
 | `rex_analysis_wait` | Wait for analysis, with a time limit. |
 | `rex_uidf_list` | List user variable values for one function or the whole view. |
 | `rex_call_paths` | Find call paths; `from_addr` reaching `to_addr` needs `direction=callees`. |
