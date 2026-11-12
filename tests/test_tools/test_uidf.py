@@ -24,6 +24,7 @@ from helpers_view import (
     FakeBinaryView,
     FakeFunction,
     RenderableText,
+    undo_entry,
 )
 from hypothesis import given
 from hypothesis import strategies as st
@@ -155,7 +156,7 @@ def test_uidf_set_many_applies_valid_items_and_reanalyzes_once(
     assert len(main.set_user_var_value_calls) == 2
     # One transaction, so one rex_undo reverts every applied item.
     assert view.transactions == ["open", "commit"]
-    assert view.file.undo_entries == ["rex_annotate_many batch"]
+    assert view.file.undo_entries == [undo_entry("rex_annotate_many batch")]
     assert [str(entry[2]) for entry in main.set_user_var_value_calls] == [
         "<const 0x10>",
         "<const 0x3>",
@@ -925,7 +926,7 @@ def test_uidf_clear_counts_only_the_named_variables_informed_sites() -> None:
     assert list(main.user_var_values) == [_variable(main, "rax_1")]
     # One transaction, so one rex_undo restores every cleared site.
     assert view.transactions == ["open", "commit"]
-    assert view.file.undo_entries == ["rex_annotate_many batch"]
+    assert view.file.undo_entries == [undo_entry("rex_annotate_many batch")]
 
 
 def test_uidf_clear_all_for_a_function() -> None:
@@ -940,7 +941,7 @@ def test_uidf_clear_all_for_a_function() -> None:
     }
     assert main.user_var_values == {}
     assert view.transactions == ["open", "commit"]
-    assert view.file.undo_entries == ["rex_annotate_many batch"]
+    assert view.file.undo_entries == [undo_entry("rex_annotate_many batch")]
 
 
 def test_uidf_clear_rejects_unknown_variables_and_wraps_core_errors() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 from helpers import FakeToolError, _call, get_tool
-from helpers_view import FakeBinaryView, FakeFileMetadata
+from helpers_view import FakeBinaryView, FakeFileMetadata, undo_entry
 
 from binja_plugin import tools
 from binja_plugin.tools import state
@@ -261,21 +261,78 @@ def test_kv_set_caps_key_length() -> None:
 
 
 def test_undo_and_redo_round_trip_and_report_stack_depths() -> None:
+    patch, rename = undo_entry("Patched bytes"), undo_entry("Defined name main", "Set type")
     metadata = FakeFileMetadata()
-    metadata.undo_entries = ["patch bytes", "rename main"]
+    metadata.undo_entries = [patch, rename]
     view = FakeBinaryView(file=metadata)
     _, undo = get_tool("rex_undo")
     # Depths are the post-operation state: undo_left dropped, redo_left gained the entry.
-    assert undo(_call(view)) == {"undone": True, "undo_left": 1, "redo_left": 1}
-    assert metadata.undo_entries == ["patch bytes"]
-    assert metadata.redo_entries == ["rename main"]
+    assert undo(_call(view)) == {
+        "undone": True,
+        "actions": ["Defined name main", "Set type"],
+        "actions_truncated": False,
+        "undo_left": 1,
+        "redo_left": 1,
+    }
+    assert metadata.undo_entries == [patch]
+    assert metadata.redo_entries == [rename]
     _, redo = get_tool("rex_redo")
-    assert redo(_call(view)) == {"redone": True, "undo_left": 2, "redo_left": 0}
-    assert metadata.undo_entries == ["patch bytes", "rename main"]
+    assert redo(_call(view)) == {
+        "redone": True,
+        "actions": ["Defined name main", "Set type"],
+        "actions_truncated": False,
+        "undo_left": 2,
+        "redo_left": 0,
+    }
+    assert metadata.undo_entries == [patch, rename]
     assert metadata.redo_entries == []
     # An empty stack is a core-side no-op, reported as not done rather than as an error.
-    assert undo(_call(FakeBinaryView())) == {"undone": False, "undo_left": 0, "redo_left": 0}
-    assert redo(_call(FakeBinaryView())) == {"redone": False, "undo_left": 0, "redo_left": 0}
+    assert undo(_call(FakeBinaryView())) == {
+        "undone": False,
+        "actions": [],
+        "actions_truncated": False,
+        "undo_left": 0,
+        "redo_left": 0,
+    }
+    assert redo(_call(FakeBinaryView())) == {
+        "redone": False,
+        "actions": [],
+        "actions_truncated": False,
+        "undo_left": 0,
+        "redo_left": 0,
+    }
+
+
+def test_undo_caps_and_truncates_the_listed_actions() -> None:
+    summaries = [f"action {index}" for index in range(state._MAX_UNDO_ACTIONS)]
+    metadata = FakeFileMetadata()
+    metadata.undo_entries = [undo_entry("x" * 600, *summaries)]
+    _, undo = get_tool("rex_undo")
+    result = undo(_call(FakeBinaryView(file=metadata)))
+    assert len(result["actions"]) == state._MAX_UNDO_ACTIONS
+    assert result["actions"][0].endswith("chars truncated]")
+    assert result["actions"][-1] == f"action {state._MAX_UNDO_ACTIONS - 2}"
+    assert result["actions_truncated"] is True
+
+
+def test_undo_lists_exactly_the_cap_without_truncation() -> None:
+    summaries = [f"action {index}" for index in range(state._MAX_UNDO_ACTIONS)]
+    metadata = FakeFileMetadata()
+    metadata.undo_entries = [undo_entry(*summaries)]
+    _, undo = get_tool("rex_undo")
+    result = undo(_call(FakeBinaryView(file=metadata)))
+    assert result["actions"] == summaries
+    assert result["actions_truncated"] is False
+
+
+def test_undo_that_changes_nothing_lists_no_actions() -> None:
+    metadata = FakeFileMetadata()
+    metadata.undo_entries = [undo_entry("Defined name main")]
+    metadata.undo = lambda: None
+    _, undo = get_tool("rex_undo")
+    result = undo(_call(FakeBinaryView(file=metadata)))
+    assert result["undone"] is False
+    assert result["actions"] == []
 
 
 def test_undo_and_redo_report_core_failures() -> None:

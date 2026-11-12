@@ -13,6 +13,7 @@ from helpers_view import (
     FakeBinaryView,
     FakeComponent,
     FakeFunction,
+    undo_entry,
 )
 
 # --- rex_component_get / rex_component_create / rex_component_add_functions ------------
@@ -218,7 +219,7 @@ def test_component_add_functions_resolves_then_adds() -> None:
     assert added_names == ["crypto_mix", "root_fn"]
     # One transaction, so one rex_undo reverts every added function.
     assert view.transactions == ["open", "commit"]
-    assert view.file.undo_entries == ["rex_annotate_many batch"]
+    assert view.file.undo_entries == [undo_entry("rex_annotate_many batch")]
 
 
 def test_component_add_functions_reverts_its_transaction_when_the_core_raises(

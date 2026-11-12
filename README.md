@@ -113,8 +113,8 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_export_symbols` | Write the symbols in an address range to a CSV or JSON file. |
 | `rex_eval_python` | Run Binary Ninja Python with `bv`, `bn`, `binaryninja`, and `call`. |
 | `rex_binary_close` | Discard unsaved changes and close the view. |
-| `rex_undo` | Undo the view's last transaction. |
-| `rex_redo` | Redo the last undone transaction. |
+| `rex_undo` | Undo the view's last transaction and list what it undid. |
+| `rex_redo` | Redo the last undone transaction and list what it redid. |
 
 ### Addresses inside several functions
 

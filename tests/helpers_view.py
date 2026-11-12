@@ -10,6 +10,7 @@ import contextlib
 import enum
 import types
 from collections.abc import Callable, Generator, Iterator, Mapping
+from dataclasses import dataclass
 from typing import Any, override
 
 from helpers_dataflow import FakeMLILInstructions
@@ -515,6 +516,20 @@ class FakeFunction:
             del self.user_var_values[variable]
 
 
+@dataclass(frozen=True)
+class FakeUndoAction:
+    summary_text: str
+
+
+@dataclass(frozen=True)
+class FakeUndoEntry:
+    actions: tuple[FakeUndoAction, ...]
+
+
+def undo_entry(*summaries: str) -> FakeUndoEntry:
+    return FakeUndoEntry(tuple(FakeUndoAction(summary) for summary in summaries))
+
+
 class FakeFileMetadata:
     """Mirrors the FileMetadata surface rex_binary_close and the undo/redo tools touch.
 
@@ -529,8 +544,8 @@ class FakeFileMetadata:
         self.saved_marks = 0
         self.closed = False
         self.close_error: Exception | None = None
-        self.undo_entries: list[str] = []
-        self.redo_entries: list[str] = []
+        self.undo_entries: list[FakeUndoEntry] = []
+        self.redo_entries: list[FakeUndoEntry] = []
         self.undo_error: Exception | None = None
         self.redo_error: Exception | None = None
 
@@ -861,7 +876,7 @@ class FakeBinaryView:
             self.transactions.append("revert")
             raise
         self.transactions.append("commit")
-        self.file.undo_entries.append("rex_annotate_many batch")
+        self.file.undo_entries.append(undo_entry("rex_annotate_many batch"))
 
     @property
     def tag_types(self) -> dict[str, object]:

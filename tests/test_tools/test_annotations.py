@@ -13,6 +13,7 @@ from helpers_symbol import FakeSymbolBinding, FakeSymbolType
 from helpers_view import (
     FakeBinaryView,
     FakeFunction,
+    undo_entry,
 )
 
 from binja_plugin.tools import annotations as annotations_tools
@@ -455,10 +456,16 @@ def test_annotate_batch_leaves_one_undo_entry_that_rex_undo_reverses() -> None:
     # whole. The tag/metadata/type-library writes the API leaves undocumented push
     # nothing here, so the fake cannot pin those either way.
     annotate(FakeParsingToolCall(view), [{"addr": "0x1100", "name": "renamed"}])
-    assert view.file.undo_entries == ["rex_annotate_many batch"]
-    assert undo(_call(view)) == {"undone": True, "undo_left": 0, "redo_left": 1}
+    assert view.file.undo_entries == [undo_entry("rex_annotate_many batch")]
+    assert undo(_call(view)) == {
+        "undone": True,
+        "actions": ["rex_annotate_many batch"],
+        "actions_truncated": False,
+        "undo_left": 0,
+        "redo_left": 1,
+    }
     assert view.file.undo_entries == []
-    assert view.file.redo_entries == ["rex_annotate_many batch"]
+    assert view.file.redo_entries == [undo_entry("rex_annotate_many batch")]
     # A batch the core rolls back mid-apply commits nothing, so there is no entry to undo.
     rollback_view = _annotate_view()
     rollback_view.functions[1].user_type_error = RuntimeError("core exploded")

@@ -319,8 +319,12 @@ present only on some rows.
   variable in the function's variable order, shaped like `rex_mlil_uses`' `storage`),
   `definitions` (a flat list of addresses over all matching variables, ascending), and
   `carriers` of `{variable, address, text}`.
-- `rex_redo`: `redone`, `undo_left`, `redo_left`. `rex_undo`: `undone`, `undo_left`,
-  `redo_left`. `undone` and `redone` are false when the stack was empty and nothing changed.
+- `rex_redo`: `redone`, `actions`, `actions_truncated`, `undo_left`, `redo_left`.
+  `rex_undo`: `undone`, `actions`, `actions_truncated`, `undo_left`, `redo_left`. `undone`
+  and `redone` are false when the stack was empty and nothing changed. `actions` is the
+  core's summary text of each action in the entry that was undone or redone, in the core's
+  order, at most 32; `actions_truncated` says the entry had more. Both are empty and false
+  when nothing changed.
 - `rex_relocation_at`: `address`, `count`, and `relocations` of `{address, size, type,
   addend, implicit_addend, pc_relative, target, reloc, symbol}` (`symbol` is null when the
   relocation has none).

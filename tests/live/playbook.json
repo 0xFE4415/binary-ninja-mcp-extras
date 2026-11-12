@@ -2022,6 +2022,80 @@
      "expect_error": true
     }
    ]
+  },
+  {
+   "id": "undo-probe-comment",
+   "guards": "Setup for the undo steps: one annotate batch that adds a comment.",
+   "tool": "rex_annotate_many",
+   "args": {
+    "items": [
+     {
+      "addr": "0x400060",
+      "comment": "undo probe"
+     }
+    ]
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "applied",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "id": "undo-lists-what-it-undid",
+   "guards": "rex_undo names the actions of the entry it undid.",
+   "tool": "rex_undo",
+   "args": {},
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "undone",
+     "value": true
+    },
+    {
+     "kind": "includes",
+     "path": "actions",
+     "item": "Comment in function dup_leaf at 0x400060: \"undo probe\""
+    },
+    {
+     "kind": "subset",
+     "path": "actions_truncated",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": "redo-lists-what-it-redid",
+   "guards": "rex_redo names the actions of the entry it redid.",
+   "tool": "rex_redo",
+   "args": {},
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "redone",
+     "value": true
+    },
+    {
+     "kind": "includes",
+     "path": "actions",
+     "item": "Comment in function dup_leaf at 0x400060: \"undo probe\""
+    }
+   ]
+  },
+  {
+   "id": "undo-probe-comment-restored",
+   "guards": "Teardown for the undo steps: removes the probe comment again.",
+   "tool": "rex_undo",
+   "args": {},
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "actions",
+     "item": "Comment in function dup_leaf at 0x400060: \"undo probe\""
+    }
+   ]
   }
  ]
 }
