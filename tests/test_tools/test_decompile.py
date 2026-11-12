@@ -12,6 +12,7 @@ from helpers import (
     _disasm_view,
     _view_with_functions,
     get_tool,
+    plain_gap_message,
 )
 from helpers_view import (
     FakeBasicBlock,
@@ -144,7 +145,7 @@ def test_disasm_at_rejects_addresses_outside_functions() -> None:
         with pytest.raises(FakeToolError) as exc:
             disasm(_call(view), address)
         assert exc.value.code == "invalid_params"
-        assert exc.value.message == f"no analyzed function contains {address:#x}"
+        assert exc.value.message == plain_gap_message("analyzed function", address)
 
 
 def test_disasm_at_explains_a_miss_one_byte_past_a_function_end() -> None:
@@ -629,7 +630,7 @@ def test_decompile_many_rejects_the_whole_call_on_any_bad_entry() -> None:
         with pytest.raises(FakeToolError) as exc:
             decompile(FakeParsingToolCall(view), batch)
         assert exc.value.code == "invalid_params"
-        assert exc.value.message == "no analyzed function contains 0x1800"
+        assert exc.value.message == plain_gap_message("analyzed function", 0x1800)
     # An unparsable expression rejects the call the same way.
     with pytest.raises(FakeToolError) as exc:
         decompile(FakeParsingToolCall(view), ["0x1100", "garbage"])
@@ -1113,7 +1114,7 @@ def test_disasm_many_reports_errors_per_address() -> None:
             "address": "0x9999",
             "error": {
                 "code": "invalid_params",
-                "message": "no analyzed function contains 0x9999",
+                "message": plain_gap_message("analyzed function", 0x9999),
             },
         },
         {
@@ -1156,7 +1157,8 @@ def test_disasm_many_reports_pending_analysis() -> None:
                 "code": "analysis_pending",
                 "message": (
                     "function at 0x4000 exists but has not been analyzed yet; wait for analysis "
-                    "(rex_function_define with wait=true) or run bn_analysis_update"
+                    "(rex_analysis_wait, or rex_function_define with wait=true) "
+                    "or run bn_analysis_update"
                 ),
             },
         }

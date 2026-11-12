@@ -125,7 +125,9 @@ def rex_kv_get(call: mcp.ToolCall, key: str) -> _KvGetResult:
     try:
         value = call.binary_view.query_metadata(_METADATA_PREFIX + key)
     except Exception:
-        raise mcp.ToolError("not_found", f"no value stored under '{_truncate(key)}'") from None
+        raise mcp.ToolError(
+            "not_found", f"no value stored under '{_truncate(key)}'; store one with rex_kv_set"
+        ) from None
     text, truncated = _truncate_with_flag(str(value), _MAX_KV_VALUE_CHARS)
     return {"key": _truncate(key), "value": text, "truncated": truncated}
 
@@ -230,7 +232,10 @@ def rex_tag_set(
         raise mcp.ToolError("data_too_large", f"tag data exceeds {_MAX_TAG_DATA_CHARS} characters")
     if tag_type not in bv.tag_types:
         if not create_missing:
-            raise mcp.ToolError("tag_type_not_found", f"no tag type named '{_truncate(tag_type)}'")
+            raise mcp.ToolError(
+                "tag_type_not_found",
+                f"no tag type named '{_truncate(tag_type)}'; pass create_missing=true to create it",
+            )
         if len(tag_type) > _MAX_TAG_TYPE_CHARS:
             # create_tag_type persists the name in the database with no core-side length bound.
             raise mcp.ToolError(

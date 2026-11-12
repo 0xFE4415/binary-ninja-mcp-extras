@@ -370,6 +370,9 @@ present only on some rows.
   `key_too_large`, `value_too_large`, `data_too_large`, `name_too_large`, or
   `library_name_too_large`. Over-cap component paths, type-name list entries, and export
   filenames return `invalid_params` instead.
+- An error a caller can act on names the next step in its message: `analysis_pending` names
+  `rex_analysis_wait`, `no_function` names `rex_function_define`, `ambiguous_definition`
+  names `def_address`.
 - A string the core reads as a C string would be cut at a NUL (U+0000), so one containing a
   NUL returns `invalid_params` with the message `<parameter> must not contain NUL bytes`.
   This covers key-value keys and values, report titles and markdown, tag types and data,

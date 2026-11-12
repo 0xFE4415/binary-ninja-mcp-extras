@@ -11,6 +11,7 @@ from helpers import (
     _disasm_view,
     _use_export_root,
     get_tool,
+    plain_gap_message,
 )
 from helpers_view import (
     FakeBinaryView,
@@ -202,7 +203,7 @@ def test_export_disasm_rejects_out_of_function_addresses_and_ranges() -> None:
     with pytest.raises(FakeToolError) as exc:
         export(_call(view), 0x1800, filename="gap.txt")
     assert exc.value.code == "invalid_params"
-    assert exc.value.message == "no analyzed function contains 0x1800"
+    assert exc.value.message == plain_gap_message("analyzed function", 0x1800)
     for kwargs, message in (
         ({"before": -1}, "Invalid integer parameter 'before': Must be at least 0"),
         ({"after": -1}, "Invalid integer parameter 'after': Must be at least 0"),

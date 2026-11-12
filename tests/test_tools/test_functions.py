@@ -9,6 +9,7 @@ from helpers import (
     _call,
     _view_with_functions,
     get_tool,
+    plain_gap_message,
 )
 from helpers_view import (
     FakeBinaryView,
@@ -41,7 +42,7 @@ def test_function_define_and_undefine() -> None:
     with pytest.raises(FakeToolError) as exc:
         undefine(_call(view), 0x9999)
     assert exc.value.code == "no_function"
-    assert exc.value.message == "no function contains 0x9999"
+    assert exc.value.message == plain_gap_message("function", 0x9999)
 
 
 def test_function_define_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -299,10 +300,10 @@ def test_function_containing_explains_a_containment_miss() -> None:
         exc.value.message
         == "no function contains 0x20000; the address is not mapped by any segment"
     )
-    # A plain gap between functions keeps the original message: nothing specific to add.
+    # A plain gap between functions says it is mapped and names the define action.
     with pytest.raises(FakeToolError) as exc:
         containing(_call(view), 0x1800)
-    assert exc.value.message == "no function contains 0x1800"
+    assert exc.value.message == plain_gap_message("function", 0x1800)
 
 
 def test_function_containing_names_a_one_byte_predecessor() -> None:

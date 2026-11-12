@@ -155,7 +155,10 @@ def _containment_miss_hint(bv: BinaryView, address: int) -> str:
         None,
     )
     if previous is None:
-        return ""
+        return (
+            "the address is mapped but no function covers it; "
+            f"define one with rex_function_define(start={address:#x}) if it is code"
+        )
     return (
         f"the address is immediately past the end of {_truncate(previous.name)} at "
         f"{previous.start:#x} (highest address {previous.highest_address:#x}); when the last "
@@ -165,20 +168,21 @@ def _containment_miss_hint(bv: BinaryView, address: int) -> str:
     )
 
 
-def _raise_containment_miss(bv: BinaryView, address: int, code: str, described: str) -> NoReturn:
+def _containment_miss_message(bv: BinaryView, address: int, described: str) -> str:
     # A defined but unanalyzed function is invisible to containment lookups.
-    pending = bv.get_function_at(address)
-    if pending is not None:
-        raise mcp.ToolError(
-            "analysis_pending",
+    if bv.get_function_at(address) is not None:
+        return (
             f"function at {address:#x} exists but has not been analyzed yet; wait for "
-            "analysis (rex_function_define with wait=true) or run bn_analysis_update",
+            "analysis (rex_analysis_wait, or rex_function_define with wait=true) "
+            "or run bn_analysis_update"
         )
-    message = f"no {described} contains {address:#x}"
-    hint = _containment_miss_hint(bv, address)
-    if hint:
-        message = f"{message}; {hint}"
-    raise mcp.ToolError(code, message)
+    return f"no {described} contains {address:#x}; {_containment_miss_hint(bv, address)}"
+
+
+def _raise_containment_miss(bv: BinaryView, address: int, code: str, described: str) -> NoReturn:
+    if bv.get_function_at(address) is not None:
+        code = "analysis_pending"
+    raise mcp.ToolError(code, _containment_miss_message(bv, address, described))
 
 
 class _FunctionEntry(TypedDict):

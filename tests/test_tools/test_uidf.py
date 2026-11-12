@@ -9,6 +9,7 @@ from helpers import (
     FakeToolError,
     _call,
     get_tool,
+    plain_gap_message,
 )
 from helpers_uidf import (
     FakeMediumLevelIL,
@@ -661,7 +662,7 @@ def test_uidf_set_rejects_bad_function_max_lines_and_state() -> None:
     with pytest.raises(FakeToolError) as exc:
         uidf_set(_call(view), 0x1800, "rax_1", "1")
     assert exc.value.code == "invalid_params"
-    assert exc.value.message == "no analyzed function contains 0x1800"
+    assert exc.value.message == plain_gap_message("analyzed function", 0x1800)
     for kwargs, message in (
         ({"max_lines": 0}, "Invalid integer parameter 'max_lines': Must be at least 1"),
         (
@@ -929,7 +930,7 @@ def test_uidf_list_paginates_and_rejects_bad_arguments() -> None:
     with pytest.raises(FakeToolError) as exc:
         uidf_list(_call(view), 0x1800)
     assert exc.value.code == "invalid_params"
-    assert exc.value.message == "no analyzed function contains 0x1800"
+    assert exc.value.message == plain_gap_message("analyzed function", 0x1800)
 
 
 def test_uidf_list_truncates_long_value_renders() -> None:

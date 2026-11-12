@@ -263,7 +263,8 @@ def rex_type_library_export(
             resolved.unlink()
         raise mcp.ToolError(
             "export_failed",
-            f"type library file exceeds the {_MAX_EXPORT_FILE_BYTES} byte export cap",
+            f"type library file exceeds the {_MAX_EXPORT_FILE_BYTES} byte export cap; "
+            "export fewer names",
         )
     return {
         "path": str(resolved),
@@ -293,7 +294,9 @@ def rex_type_library_import(
     library = TypeLibrary.load_from_file(path)
     if library is None:
         raise mcp.ToolError(
-            "library_not_found", f"could not load a type library from '{_truncate(path)}'"
+            "library_not_found",
+            f"could not load a type library from '{_truncate(path)}'; "
+            "pass the path of a .bntl file, such as one rex_type_library_export wrote",
         )
     bv.add_type_library(library)
     imported: list[_ImportedType] = []
