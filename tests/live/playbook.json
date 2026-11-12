@@ -7,7 +7,7 @@
  "steps": [
   {
    "id": "help-call-paths-wording",
-   "backlog_item": "help",
+   "guards": "rex_help says rex_call_paths walks callers by default and needs callees to reach a callee.",
    "tool": "rex_help",
    "args": {
     "tool_name": "rex_call_paths"
@@ -35,7 +35,7 @@
   },
   {
    "id": "help-lists-rx-scanners",
-   "backlog_item": "help",
+   "guards": "The scanning help category lists the native rx_data_find and rx_multi_find tools.",
    "tool": "rex_help",
    "args": {
     "category": "scanning"
@@ -66,7 +66,7 @@
   },
   {
    "id": "help-index-lists-rx-scanners",
-   "backlog_item": "help",
+   "guards": "The help index names the native scanners and the scanning category.",
    "tool": "rex_help",
    "args": {},
    "expect": [
@@ -89,7 +89,7 @@
   },
   {
    "id": "help-type-library-export-codes",
-   "backlog_item": 5,
+   "guards": "rex_help lists invalid_params as an error code of rex_type_library_export names and kind.",
    "tool": "rex_help",
    "args": {
     "tool_name": "rex_type_library_export"
@@ -119,7 +119,7 @@
   },
   {
    "id": "help-uidf-set-many-item-codes",
-   "backlog_item": 6,
+   "guards": "rex_help lists every per-item error code of rex_uidf_set_many.",
    "tool": "rex_help",
    "args": {
     "tool_name": "rex_uidf_set_many"
@@ -144,7 +144,7 @@
   },
   {
    "id": "help-constant-find-schema",
-   "backlog_item": 4,
+   "guards": "The rex_constant_find value schema allows up to 2^64-1, not the rounded float 2^64.",
    "tool": "rex_help",
    "args": {
     "tool_name": "rex_constant_find"
@@ -166,7 +166,7 @@
   },
   {
    "id": "call-paths-one-route-two-call-sites",
-   "backlog_item": 1,
+   "guards": "A callee reached from two call sites of one caller is one route, not two.",
    "tool": "rex_call_paths",
    "args": {
     "from_addr": "dup_root",
@@ -209,7 +209,7 @@
   },
   {
    "id": "call-paths-callees-through-real-main",
-   "backlog_item": 1,
+   "guards": "Callee paths from the real main body list each route once.",
    "tool": "rex_call_paths",
    "args": {
     "from_addr": "real_main",
@@ -250,7 +250,7 @@
   },
   {
    "id": "call-paths-diamond-keeps-both-routes",
-   "backlog_item": 1,
+   "guards": "Two genuinely different routes through a diamond are both kept.",
    "tool": "rex_call_paths",
    "args": {
     "from_addr": "diamond_top",
@@ -301,7 +301,7 @@
   },
   {
    "id": "call-paths-callers-default-direction",
-   "backlog_item": 1,
+   "guards": "Caller paths list each route once.",
    "tool": "rex_call_paths",
    "args": {
     "from_addr": "dup_leaf",
@@ -338,7 +338,7 @@
   },
   {
    "id": "call-paths-default-direction-is-callers",
-   "backlog_item": "help",
+   "guards": "Without a direction, rex_call_paths walks callers, so a downward query finds nothing.",
    "tool": "rex_call_paths",
    "args": {
     "from_addr": "dup_root",
@@ -359,7 +359,7 @@
   },
   {
    "id": "export-symbols-dot-filename",
-   "backlog_item": 2,
+   "guards": "A filename of '.' is rejected as an invalid file name.",
    "tool": "rex_export_symbols",
    "args": {
     "start": 4198400,
@@ -376,7 +376,7 @@
   },
   {
    "id": "export-symbols-trailing-slash-filename",
-   "backlog_item": 2,
+   "guards": "A filename that ends in a slash is rejected as an invalid file name.",
    "tool": "rex_export_symbols",
    "args": {
     "start": 4198400,
@@ -393,7 +393,7 @@
   },
   {
    "id": "constraints-minus-one-at-each-width",
-   "backlog_item": 3,
+   "guards": "A comparison with -1 prints the all-ones value of its own width at 1, 2, 4, and 8 bytes.",
    "tool": "rex_function_constraints",
    "args": {
     "function": "compare_minus_one"
@@ -452,7 +452,7 @@
   },
   {
    "id": "constraints-negative-displacements",
-   "backlog_item": 3,
+   "guards": "Loads at negative displacements are reported with signed offsets and unsigned constants.",
    "tool": "rex_function_constraints",
    "args": {
     "function": "negative_displacements"
@@ -508,7 +508,7 @@
   },
   {
    "id": "constant-find-max-uint64-integer",
-   "backlog_item": 4,
+   "guards": "The maximum unsigned 64-bit integer is found exactly, not rounded.",
    "tool": "rex_constant_find",
    "args": {
     "value": 18446744073709551615
@@ -537,7 +537,7 @@
   },
   {
    "id": "constant-find-max-uint64-hex-string",
-   "backlog_item": 4,
+   "guards": "The maximum unsigned 64-bit value as a hex string finds the same functions as the integer.",
    "tool": "rex_constant_find",
    "args": {
     "value": "0xffffffffffffffff"
@@ -574,7 +574,7 @@
   },
   {
    "id": "constant-find-uppercase-hex-string",
-   "backlog_item": 4,
+   "guards": "A hex string with an uppercase 0X prefix is accepted.",
    "tool": "rex_constant_find",
    "args": {
     "value": "0X7EDCBA9876543210"
@@ -598,7 +598,7 @@
   },
   {
    "id": "constant-find-float-rounded-max-rejected",
-   "backlog_item": 4,
+   "guards": "The float that 2^64-1 rounds to is rejected instead of searched.",
    "tool": "rex_constant_find",
    "args": {
     "value": 18446744073709552000
@@ -612,7 +612,7 @@
   },
   {
    "id": "constant-find-two-pow-64-rejected",
-   "backlog_item": 4,
+   "guards": "2^64 is rejected as out of range.",
    "tool": "rex_constant_find",
    "args": {
     "value": 18446744073709551616
@@ -626,7 +626,7 @@
   },
   {
    "id": "constant-find-bare-0x-rejected",
-   "backlog_item": 4,
+   "guards": "A bare 0x prefix with no digits is rejected.",
    "tool": "rex_constant_find",
    "args": {
     "value": "0x"
@@ -640,7 +640,7 @@
   },
   {
    "id": "constant-find-signed-string-rejected",
-   "backlog_item": 4,
+   "guards": "A signed decimal string is rejected.",
    "tool": "rex_constant_find",
    "args": {
     "value": "-1"
@@ -654,7 +654,7 @@
   },
   {
    "id": "eval-python-explicit-cause",
-   "backlog_item": 7,
+   "guards": "An explicit exception cause is reported after the main error.",
    "tool": "rex_eval_python",
    "args": {
     "code": "try:\n    raise KeyError('inner')\nexcept KeyError as cause:\n    raise ValueError('outer') from cause"
@@ -673,8 +673,28 @@
    ]
   },
   {
+   "id": "eval-python-implicit-context",
+   "guards": "An exception raised while handling another one reports the handled error as its context.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "try:\n    raise KeyError('inner')\nexcept KeyError:\n    raise ValueError('outer')"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": "ValueError: outer; while handling KeyError: 'inner'",
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "result"
+    }
+   ]
+  },
+  {
    "id": "eval-python-tool-error-keeps-code",
-   "backlog_item": 7,
+   "guards": "A ToolError raised in eval code keeps its error code in the reported error.",
    "tool": "rex_eval_python",
    "args": {
     "code": "import binaryninja.mcp as mcp\nraise mcp.ToolError('my_code', 'my message')"
@@ -689,7 +709,7 @@
   },
   {
    "id": "uidf-set-register-parameter-advice",
-   "backlog_item": 8,
+   "guards": "Setting a register parameter explains that it is live from function entry.",
    "tool": "rex_uidf_set",
    "args": {
     "function": "many_arguments",
@@ -706,7 +726,7 @@
   },
   {
    "id": "uidf-set-stack-parameter-advice",
-   "backlog_item": 8,
+   "guards": "Setting a stack-passed argument explains that such arguments cannot be informed.",
    "tool": "rex_uidf_set",
    "args": {
     "function": "many_arguments",
@@ -723,7 +743,7 @@
   },
   {
    "id": "uidf-set-non-parameter-gets-no-advice",
-   "backlog_item": 8,
+   "guards": "A variable that is not a parameter gets no parameter advice.",
    "tool": "rex_uidf_set",
    "args": {
     "function": "many_arguments",
@@ -746,7 +766,7 @@
   },
   {
    "id": "parameter-variables-unknown-name-lists-variables",
-   "backlog_item": 8,
+   "guards": "An unknown parameter name lists the variables and does not carry the removed register-naming tip.",
    "tool": "rex_parameter_variables",
    "args": {
     "function": "many_arguments",
@@ -757,13 +777,13 @@
      "kind": "error_code",
      "code": "no_variable",
      "message_contains": "variables: __return_addr, arg1,",
-     "message_lacks": "register parameter"
+     "message_lacks": "Register-allocated parameters"
     }
    ]
   },
   {
    "id": "quick-main-tail-call-stub-note",
-   "backlog_item": 9,
+   "guards": "A main that only tail-calls another function is reported as a stub with the real body named.",
    "tool": "rex_quick_main",
    "args": {},
    "expect": [
@@ -793,7 +813,7 @@
   },
   {
    "id": "mlil-uses-definitions-sorted-from-first-site",
-   "backlog_item": 10,
+   "guards": "A variable's definition sites are sorted by address.",
    "tool": "rex_mlil_uses",
    "args": {
     "function": "many_definitions",
@@ -827,7 +847,7 @@
   },
   {
    "id": "mlil-uses-definitions-sorted-from-core-first-site",
-   "backlog_item": 10,
+   "guards": "Definition sites are sorted even when queried from the site the core lists first.",
    "tool": "rex_mlil_uses",
    "args": {
     "function": "many_definitions",
@@ -851,7 +871,7 @@
   },
   {
    "id": "pattern-credits-lowest-start-function",
-   "backlog_item": 11,
+   "guards": "A match in a block shared by two functions is credited once, to the lowest-start function.",
    "tool": "rex_find_functions_by_pattern",
    "args": {
     "pattern": "b8 34 12 5a 5a"
@@ -888,7 +908,7 @@
   },
   {
    "id": "pattern-in-low-only-code",
-   "backlog_item": 11,
+   "guards": "A pattern only in the lower function is credited to it.",
    "tool": "rex_find_functions_by_pattern",
    "args": {
     "pattern": "b8 11 11 11 11"
@@ -908,7 +928,7 @@
   },
   {
    "id": "pattern-in-high-only-code",
-   "backlog_item": 11,
+   "guards": "A pattern only in the higher function is credited to it.",
    "tool": "rex_find_functions_by_pattern",
    "args": {
     "pattern": "b8 22 22 22 22"
@@ -928,7 +948,7 @@
   },
   {
    "id": "function-containing-lists-lowest-start-first",
-   "backlog_item": 11,
+   "guards": "Functions containing one address are listed lowest start first.",
    "tool": "rex_function_containing",
    "args": {
     "addr": "overlap_shared"
@@ -950,7 +970,7 @@
   },
   {
    "id": "constant-find-zero-keeps-real-zero-operands",
-   "backlog_item": 13,
+   "guards": "Searching for zero keeps real zero operands and drops xor-zeroing hits by default.",
    "tool": "rex_constant_find",
    "args": {
     "value": 0,
@@ -994,7 +1014,7 @@
   },
   {
    "id": "constant-find-zero-opt-in-returns-xor-hits",
-   "backlog_item": 13,
+   "guards": "include_non_operand_hits brings the xor-zeroing hits back.",
    "tool": "rex_constant_find",
    "args": {
     "value": 0,
@@ -1027,7 +1047,7 @@
   },
   {
    "id": "constant-find-zero-opt-in-needs-zero",
-   "backlog_item": 13,
+   "guards": "include_non_operand_hits is rejected for a value other than zero.",
    "tool": "rex_constant_find",
    "args": {
     "value": 1,
@@ -1042,7 +1062,7 @@
   },
   {
    "id": "skip-main-analysis",
-   "backlog_item": 12,
+   "guards": "Setup for the skipped-main note: skips analysis of main.",
    "tool": "rex_eval_python",
    "args": {
     "code": "main = bv.get_function_at(0x401050)\nmain.analysis_skip_override = binaryninja.FunctionAnalysisSkipOverride.AlwaysSkipFunctionAnalysis\nbv.update_analysis_and_wait()\nmain = bv.get_function_at(0x401050)\nresult = (main.analysis_skipped, main.hlil is None)"
@@ -1062,7 +1082,7 @@
   },
   {
    "id": "quick-main-skipped-main-note",
-   "backlog_item": 12,
+   "guards": "A main whose analysis is skipped is reported with a note that waiting will not help.",
    "tool": "rex_quick_main",
    "args": {},
    "expect": [
@@ -1090,7 +1110,7 @@
   },
   {
    "id": "restore-main-analysis",
-   "backlog_item": 12,
+   "guards": "Teardown for the skipped-main note: restores analysis of main.",
    "tool": "rex_eval_python",
    "args": {
     "code": "main = bv.get_function_at(0x401050)\nmain.analysis_skip_override = binaryninja.FunctionAnalysisSkipOverride.DefaultFunctionAnalysisSkip\nbv.update_analysis_and_wait()\nresult = bv.get_function_at(0x401050).analysis_skipped"
@@ -1110,7 +1130,7 @@
   },
   {
    "id": "quick-main-stub-note-after-restore",
-   "backlog_item": 12,
+   "guards": "After analysis is restored, main is a tail-call stub again.",
    "tool": "rex_quick_main",
    "args": {},
    "expect": [
@@ -1123,7 +1143,7 @@
   },
   {
    "id": "section-with-nul-python",
-   "backlog_item": "audit-N1",
+   "guards": "A section name with a NUL byte is reported with the NUL replaced, matching the native scanner.",
    "tool": "rex_data_find",
    "args": {
     "pattern": "e8",
@@ -1147,13 +1167,14 @@
      "fields": [
       "errorCode",
       "errorMessage"
-     ]
+     ],
+     "expect_error": true
     }
    ]
   },
   {
    "id": "section-with-nul-rust",
-   "backlog_item": "audit-N1",
+   "guards": "The native scanner reports a section name with a NUL byte the same way.",
    "tool": "rx_data_find",
    "args": {
     "pattern": "e8",
@@ -1169,7 +1190,7 @@
   },
   {
    "id": "pattern-token-with-nul-parity",
-   "backlog_item": "audit-N1",
+   "guards": "A pattern token with a NUL byte is reported as invalid, the same in both scanners.",
    "tool": "rex_data_find",
    "args": {
     "pattern": "e8 \u0000z"
@@ -1191,13 +1212,14 @@
      "fields": [
       "errorCode",
       "errorMessage"
-     ]
+     ],
+     "expect_error": true
     }
    ]
   },
   {
    "id": "data-find-parity-call-wildcards",
-   "backlog_item": "audit-parity",
+   "guards": "Both scanners return the same first page for a wildcard call pattern.",
    "tool": "rex_data_find",
    "args": {
     "pattern": "e8 ?? ?? ?? ??",
@@ -1235,7 +1257,7 @@
   },
   {
    "id": "data-find-parity-second-page",
-   "backlog_item": "audit-parity",
+   "guards": "Both scanners return the same second page for a wildcard call pattern.",
    "tool": "rex_data_find",
    "args": {
     "pattern": "e8 ?? ?? ?? ??",
@@ -1244,6 +1266,21 @@
     "offset": 5
    },
    "expect": [
+    {
+     "kind": "subset",
+     "path": "",
+     "value": {
+      "total": 11,
+      "truncated": true,
+      "matches": [
+       "0x401214",
+       "0x401238",
+       "0x401254",
+       "0x401274",
+       "0x4013d7"
+      ]
+     }
+    },
     {
      "kind": "parity",
      "against": {
@@ -1265,13 +1302,26 @@
   },
   {
    "id": "data-find-parity-whole-view",
-   "backlog_item": "audit-parity",
+   "guards": "Both scanners return the same matches for a whole-view scan.",
    "tool": "rex_data_find",
    "args": {
     "pattern": "c3",
     "limit": 20
    },
    "expect": [
+    {
+     "kind": "subset",
+     "path": "",
+     "value": {
+      "total": 21,
+      "truncated": true
+     }
+    },
+    {
+     "kind": "length",
+     "path": "matches",
+     "value": 20
+    },
     {
      "kind": "parity",
      "against": {
@@ -1291,7 +1341,7 @@
   },
   {
    "id": "data-find-parity-no-match",
-   "backlog_item": "audit-parity",
+   "guards": "Both scanners agree on a pattern with no match.",
    "tool": "rex_data_find",
    "args": {
     "pattern": "de ad be ef 5a 5a 5a 5a"
@@ -1323,7 +1373,7 @@
   },
   {
    "id": "data-find-parity-invalid-token",
-   "backlog_item": "audit-parity",
+   "guards": "Both scanners reject an invalid token with the same error.",
    "tool": "rex_data_find",
    "args": {
     "pattern": "zz"
@@ -1344,13 +1394,14 @@
      "fields": [
       "errorCode",
       "errorMessage"
-     ]
+     ],
+     "expect_error": true
     }
    ]
   },
   {
    "id": "multi-find-parity-with-data-find",
-   "backlog_item": "audit-parity",
+   "guards": "rx_multi_find agrees with rex_data_find for each of its patterns.",
    "tool": "rx_multi_find",
    "args": {
     "patterns": [
@@ -1440,7 +1491,7 @@
   },
   {
    "id": "multi-find-section-error-parity",
-   "backlog_item": "audit-N1",
+   "guards": "rx_multi_find and rex_data_find report an unknown section the same way.",
    "tool": "rx_multi_find",
    "args": {
     "patterns": [
@@ -1465,7 +1516,8 @@
      "fields": [
       "errorCode",
       "errorMessage"
-     ]
+     ],
+     "expect_error": true
     }
    ]
   }

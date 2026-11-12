@@ -164,8 +164,9 @@ uvx nox -s test    # tests only
 uvx nox -s native  # opt-in: cargo fmt, clippy -D warnings, and tests for native/
 ```
 
-Tests never touch Binary Ninja. `tests/conftest.py` installs a fake `binaryninja`
-package before the plugin imports, so the suite runs anywhere Python 3.13 runs.
+The unit tests never touch Binary Ninja. `tests/conftest.py` installs a fake `binaryninja`
+package before the plugin imports, so the suite runs anywhere Python 3.13 runs. Only the
+opt-in `live` session talks to a real Binary Ninja.
 
 The mutation gates are opt-in locally, and CI always runs them in separate jobs:
 
@@ -174,15 +175,16 @@ uvx nox -s mutation          # mutmut; fails when any Python mutant survives or 
 uvx nox -s mutation_native   # cargo-mutants; fails when any Rust mutant is missed or times out
 ```
 
-Another opt-in session drives a running Binary Ninja through its MCP server. Run
-`uvx nox -s live` with the plugin and the native half loaded: it opens the fixture in
-`tests/live`, runs `playbook.json`, and closes the view again.
-
 The `native` session gates the Rust crate in stub-core mode, so it needs a Rust
 toolchain, clang, cmake, and ninja but no Binary Ninja install. See
 [native/README.md](native/README.md) for the crate's build modes and the integration
 lessons the native half already paid for, and [native/BENCH.md](native/BENCH.md) for
 the live benchmark protocol.
+
+The `live` session checks a running Binary Ninja through its MCP server. Start Binary Ninja
+with the plugin and the native half loaded, then run `uvx nox -s live`. It opens
+`tests/live/fixture.elf`, runs `tests/live/playbook.json` against `http://127.0.0.1:24642/mcp`,
+and closes its view again. Pass `-- --url URL` to use another server. CI does not run it.
 
 CI (`.github/workflows/check.yml`) runs four jobs: `check` (markdownlint-cli2 plus
 the format, ruff, size, ty, and test sessions), `native`, and one mutation job per

@@ -4,12 +4,14 @@ import argparse
 import hashlib
 import json
 import re
+import signal
 import sys
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from types import FrameType
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
@@ -18,6 +20,8 @@ DEFAULT_PLAYBOOK = HERE / "playbook.json"
 # The server runs handlers serially and cannot cancel them, so every call is bounded here.
 CALL_TIMEOUT_SECONDS = 120
 ANALYSIS_BUDGET_SECONDS = 120
+ANALYSIS_RETRY_SECONDS = 1
+TERMINATION_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
 
 
 class HarnessError(Exception):
@@ -88,8 +92,8 @@ class McpClient:
             raise HarnessError(f"{tool}: protocol error {reply['error']}")
         result = reply["result"]
         data = result.get("structuredContent")
-        if data is None:
-            data = {"text": "".join(block.get("text", "") for block in result["content"])}
+        if not isinstance(data, dict):
+            raise HarnessError(f"{tool}: the reply has no structured content: {result}")
         return ToolResult(bool(result.get("isError")), data)
 
 
@@ -144,6 +148,7 @@ def subset_mismatch(expected: Any, actual: Any, where: str = "$") -> str | None:
 
 
 def check_subset(assertion: dict[str, Any], value: Any) -> str | None:
+    """Objects match partially; lists must match in length and element by element."""
     return subset_mismatch(assertion["value"], value)
 
 
@@ -253,11 +258,9 @@ def check_error_code(assertion: dict[str, Any], result: ToolResult) -> str | Non
     return None
 
 
-def parity_view(result: ToolResult, path: str, fields: list[str]) -> Any:
+def parity_view(result: ToolResult, path: str, fields: list[str]) -> dict[str, Any]:
     data = at_path(result.data, path)
-    if not fields:
-        return data
-    return {field: data.get(field) for field in fields}
+    return {field: at_path(data, field) for field in fields}
 
 
 def check_parity(assertion: dict[str, Any], result: ToolResult, client: McpClient) -> str | None:
@@ -268,29 +271,37 @@ def check_parity(assertion: dict[str, Any], result: ToolResult, client: McpClien
             f"{other['tool']} error={other_result.is_error} differs from "
             f"error={result.is_error}: {other_result.data} vs {result.data}"
         )
-    fields = assertion.get("fields", [])
-    left = parity_view(result, assertion.get("path", ""), fields)
-    right = parity_view(other_result, assertion.get("against_path", ""), fields)
+    expect_error = assertion.get("expect_error", False)
+    if result.is_error != expect_error:
+        outcome = "both returned errors" if result.is_error else "both succeeded"
+        return f"{outcome}, but the step expects {'errors' if expect_error else 'success'}"
+    left = parity_view(result, assertion.get("path", ""), assertion["fields"])
+    right = parity_view(other_result, assertion.get("against_path", ""), assertion["fields"])
     if left == right:
         return None
     return f"differs from {other['tool']}: {text_of(left)[:300]} vs {text_of(right)[:300]}"
 
 
-def run_assertion(assertion: dict[str, Any], result: ToolResult, client: McpClient) -> str | None:
+def run_value_check(assertion: dict[str, Any], result: ToolResult) -> str | None:
     kind = assertion["kind"]
-    if kind == "error_code":
-        return check_error_code(assertion, result)
-    if kind == "parity":
-        return check_parity(assertion, result, client)
     if kind not in VALUE_CHECKS:
         return f"unknown expect kind {kind!r}"
     if result.is_error:
         return f"tool returned an error: {text_of(result.data)[:300]}"
+    value = at_path(result.data, assertion.get("path", ""))
+    return VALUE_CHECKS[kind](assertion, value)
+
+
+def run_assertion(assertion: dict[str, Any], result: ToolResult, client: McpClient) -> str | None:
+    kind = assertion["kind"]
     try:
-        value = at_path(result.data, assertion.get("path", ""))
-        return VALUE_CHECKS[kind](assertion, value)
+        if kind == "error_code":
+            return check_error_code(assertion, result)
+        if kind == "parity":
+            return check_parity(assertion, result, client)
+        return run_value_check(assertion, result)
     except (KeyError, TypeError, ValueError) as error:
-        return f"{error}"
+        return f"{type(error).__name__}: {error}"
 
 
 def run_step(step: dict[str, Any], binary: str, client: McpClient) -> list[str]:
@@ -326,11 +337,6 @@ def open_fixture(client: McpClient, fixture: Path) -> str:
     result = client.call("bn_binary_open", {"path": str(fixture)})
     if result.is_error:
         raise HarnessError(f"bn_binary_open failed: {result.data}")
-    if not result.data.get("changed"):
-        raise HarnessError(
-            "the fixture is already open (a stale view?); close it in Binary Ninja first, "
-            "this runner only closes views it opened"
-        )
     return str(result.data["binary"]["handle"])
 
 
@@ -340,6 +346,7 @@ def wait_for_analysis(client: McpClient, binary: str) -> None:
         result = client.call("rex_analysis_wait", {"binary": binary, "timeout_ms": 10000})
         if not result.is_error and result.data["completed"]:
             return
+        time.sleep(ANALYSIS_RETRY_SECONDS)
     raise HarnessError(f"analysis did not finish within {ANALYSIS_BUDGET_SECONDS} seconds")
 
 
@@ -355,19 +362,37 @@ def core_version(client: McpClient, binary: str) -> str:
 def run_steps(playbook: dict[str, Any], binary: str, client: McpClient) -> int:
     failed = 0
     for step in playbook["steps"]:
-        label = f"{step['id']} [{step.get('backlog_item', '-')}]"
         try:
             failures = run_step(step, binary, client)
-        except HarnessError as error:
-            failures = [f"harness: {error}"]
+        except Exception as error:
+            failures = [f"unexpected {type(error).__name__}: {error}"]
         if failures:
             failed += 1
-            print(f"FAIL {label}")
+            print(f"FAIL {step['id']}")
+            print(f"       guards: {step['guards']}")
             for failure in failures:
                 print(f"       {failure}")
             continue
-        print(f"PASS {label}")
+        print(f"PASS {step['id']}")
     return failed
+
+
+def close_fixture(client: McpClient, binary: str) -> bool:
+    try:
+        closed = client.call("rex_binary_close", {"binary": binary})
+    except HarnessError as error:
+        print(f"ERROR: could not close the fixture view {binary}: {error}", file=sys.stderr)
+        return False
+    if closed.is_error:
+        print(f"ERROR: could not close the fixture view {binary}: {closed.data}", file=sys.stderr)
+        return False
+    return True
+
+
+def unwind_on_termination(signal_number: int, frame: FrameType | None) -> None:
+    for ignored in TERMINATION_SIGNALS:
+        signal.signal(ignored, signal.SIG_IGN)
+    raise SystemExit(128 + signal_number)
 
 
 def run(playbook_path: Path, url: str) -> int:
@@ -375,6 +400,8 @@ def run(playbook_path: Path, url: str) -> int:
     fixture = verify_fixture(playbook)
     client = McpClient(url)
     client.initialize()
+    for termination_signal in TERMINATION_SIGNALS:
+        signal.signal(termination_signal, unwind_on_termination)
     binary = open_fixture(client, fixture)
     failed = 0
     try:
@@ -385,9 +412,7 @@ def run(playbook_path: Path, url: str) -> int:
             print(f"WARNING: playbook pinned {playbook['binary_ninja_version']}")
         failed = run_steps(playbook, binary, client)
     finally:
-        closed = client.call("rex_binary_close", {"binary": binary})
-        if closed.is_error:
-            print(f"ERROR: could not close the fixture view {binary}: {closed.data}")
+        if not close_fixture(client, binary):
             failed += 1
     total = len(playbook["steps"])
     print(f"{total - failed} passed, {failed} failed of {total} steps")

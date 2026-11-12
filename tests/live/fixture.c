@@ -9,7 +9,7 @@ volatile int64_t sink64;
 volatile uint64_t sink_unsigned64;
 volatile int8_t sink8;
 
-/* Item 1: one callee reached from two call sites; a diamond with two real routes. */
+/* One callee reached from two call sites; a diamond with two real routes. */
 PLANT int dup_leaf(int value)
 {
     puts("dup_leaf");
@@ -50,7 +50,7 @@ PLANT int diamond_top(int value)
     return sink32 ? diamond_left(value) : diamond_right(value);
 }
 
-/* Item 3: -1 compared at widths 1, 2, 4 and 8, and loads at negative displacements. */
+/* -1 compared at widths 1, 2, 4 and 8, and loads at negative displacements. */
 PLANT int compare_minus_one(int8_t narrow, int16_t half, int32_t word, int64_t wide)
 {
     if (narrow == -1) {
@@ -89,7 +89,7 @@ PLANT int negative_displacements(const int32_t *words, const int8_t *bytes)
     return 0;
 }
 
-/* Items 4 and 13: all-ones 64-bit constant, a distinct magic, real zero, xor-only zero. */
+/* All-ones 64-bit constant, a distinct magic, real zero, xor-only zero. */
 PLANT void store_big_constants(void)
 {
     sink_unsigned64 = 0xffffffffffffffffULL;
@@ -109,13 +109,13 @@ __asm__(".text\n"
         "    ret\n"
         ".size zero_xor_only, .-zero_xor_only\n");
 
-/* Item 8: register parameters and stack-passed parameters that MLIL never defines. */
+/* Register parameters and stack-passed parameters that MLIL never defines. */
 PLANT int many_arguments(int a, int b, int c, int d, int e, int f, int g, int h)
 {
     return a + b + c + d + e + f + g * h;
 }
 
-/* Item 10: one variable defined at three addresses; the core lists them out of address order. */
+/* One variable defined at three addresses; the core lists them out of address order. */
 __asm__(".text\n"
         ".globl many_definitions\n"
         ".type many_definitions,@function\n"
@@ -134,7 +134,7 @@ __asm__(".text\n"
 
 int many_definitions(int first, int second, int third);
 
-/* Item 11: overlap_high jumps into the middle of overlap_low, so one block is in both. */
+/* overlap_high jumps into the middle of overlap_low, so one block is in both. */
 __asm__(".text\n"
         ".globl overlap_low\n"
         ".type overlap_low,@function\n"
@@ -156,7 +156,7 @@ __asm__(".text\n"
         "    ret\n"
         ".size overlap_high, .-overlap_high\n");
 
-/* Item 9: main only tail-calls the real body. */
+/* main only tail-calls the real body. */
 PLANT int real_main(int argc, char **argv)
 {
     int total = argc;
