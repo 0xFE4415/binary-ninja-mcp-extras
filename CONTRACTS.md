@@ -158,9 +158,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `ToolError` reads `<type>: <code>: <message>` (just the code when the message is empty; the
   plain message when it has no usable string code). Rendering does not raise an `Exception`: a
   message that cannot render reads `<message unavailable>`, a type name that cannot reads
-  `<unknown exception type>`, and a chain link that cannot be read ends the chain. A
-  `BaseException` that is not an `Exception` (such as `KeyboardInterrupt`) raised while
-  rendering still propagates.
+  `<unknown exception type>`, and a chain link that cannot be read ends the chain. Every
+  `BaseException` the code raises is reported in-band, including `SystemExit`,
+  `KeyboardInterrupt`, and `GeneratorExit`. A `BaseException` that is not an `Exception`
+  raised while rendering still propagates.
   Chained exceptions follow the outermost one. Each link is chosen as Python chooses it:
   `; caused by <error>` for the explicit cause, else `; while handling <error>` for the
   implicit context unless it is suppressed (`raise X from Y` or `from None`). Each link

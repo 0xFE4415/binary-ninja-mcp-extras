@@ -206,7 +206,7 @@ def rex_eval_python(call: mcp.ToolCall, code: str) -> _EvalPythonResult:
         if "result" in namespace:
             # repr() inside the try: a raising __repr__ takes the error path and keeps the stdout.
             raw_result = repr(namespace["result"])
-    except (Exception, SystemExit, KeyboardInterrupt) as error:
+    except BaseException as error:
         # Keep failures out of the mcp layer's uncapped str(error) ToolError path.
         error_message = _describe_error(error)
         error_location = _error_location(error, code)
