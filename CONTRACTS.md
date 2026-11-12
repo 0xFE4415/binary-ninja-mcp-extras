@@ -216,8 +216,8 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `alternatives`.
   Other batch responses: `rex_function_define_many` has `defined`, `failed`, `pending`,
   `waited_ms`; `rex_disasm_many` has `windows` and `errors`; `rex_decompile_many` has
-  `functions`, and any address that fails to resolve rejects the whole batch before any
-  render (its per-item alternative is `rex_disasm_many`). `rex_uidf_set_many` reports
+  `functions` and `errors`, and an address that fails to resolve is an `errors` row while the
+  other entries still render. `rex_uidf_set_many` reports
   per-item `results`, counts, one `analysis_complete` state, and the final HLIL `lines`.
   It stages every item, including each row's rendered `value`, before it informs any
   value, so an unexpected error while staging (a value that cannot render) raises for the
@@ -257,8 +257,10 @@ present only on some rows.
   `rx_multi_find`: `total` (the sum), `truncated` (any pattern truncated), and `results`
   of `{pattern, total, truncated, matches}`, one per input pattern.
 - `rex_data_read`: `address`, `length`, `bytes_read`, `data` (hex), `complete`.
-- `rex_decompile_many`: `functions` of `{start, name, also_containing, same_name, lines,
-  truncated}`.
+- `rex_decompile_many`: `functions` of `{index, start, name, also_containing, same_name,
+  lines, truncated}` and `errors` of `{index, address, error: {code, message}}`; `index` is
+  the position in the request, so every entry lands in exactly one of the two lists. Only a
+  non-list `functions` or a count outside 1-1024 raises for the whole call.
 - `rex_disasm_at`: `function`, `instructions` (`{address, text}`), `truncated`.
   `rex_disasm_many`: `windows` of `{address, index, function, instructions, truncated}`,
   `errors` of `{index, address, error: {code, message}}`, `truncated`, `next_offset` (null
@@ -323,7 +325,7 @@ present only on some rows.
   has no body of its own. A target whose analysis is pending or skipped has no HLIL to
   inspect, so it is named as the body (a pending one may later turn out to be a stub).
 - `rex_redo`: `redone`, `undo_left`, `redo_left`. `rex_undo`: `undone`, `undo_left`,
-  `redo_left`.
+  `redo_left`. `undone` and `redone` are false when the stack was empty and nothing changed.
 - `rex_relocation_at`: `address`, `count`, and `relocations` of `{address, size, type,
   addend, implicit_addend, pc_relative, target, reloc, symbol}` (`symbol` is null when the
   relocation has none).
@@ -346,7 +348,8 @@ present only on some rows.
   `failed_count`, `total`. `rex_type_library_import`: `library` (null when none loaded),
   `imported` of `{requested, resolved}`, `failed`, `applied`, `failed_count`, `total`.
 - `rex_uidf_clear`: `function`, `variable` (null when clearing the whole function),
-  `cleared`, and `definition_sites` when a variable is named. `rex_uidf_list`: `function`
+  `cleared`, and `definition_sites` when a variable is named. A failure at any site rolls back
+  the sites already cleared in that call. `rex_uidf_list`: `function`
   (resolved entry, null when listing the whole view), `total`, `truncated`, and `values` of
   `{function, variable, definition_site, architecture, state, value}`, where each value's
   `function` is a plain function entry. `rex_uidf_set`: `function`, `variable`,

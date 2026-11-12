@@ -31,8 +31,6 @@ _MAX_REPORT_CONTENT_CHARS = 65536
 _METADATA_PREFIX = "rex/"
 _TAG_ICON = "\u25c6"
 
-# Only rex_annotate_many documents its undo entries; check other writes via undo_left live.
-
 
 class _KvKeyResult(TypedDict):
     key: str
@@ -106,7 +104,7 @@ def _run_undo_stack_step(verb: str, step: Callable[[], None], failed_code: str) 
 
 @mcp.tool(destructive=True)
 def rex_kv_delete(call: mcp.ToolCall, key: str) -> _KvKeyResult:
-    """Delete a value previously stored with rex_kv_set.
+    """Delete a value previously stored with rex_kv_set. Writes; not undoable.
 
     :param key: Key to delete.
     """
@@ -134,7 +132,7 @@ def rex_kv_get(call: mcp.ToolCall, key: str) -> _KvGetResult:
 
 @mcp.tool(destructive=True)
 def rex_kv_set(call: mcp.ToolCall, key: str, value: str) -> _KvSetResult:
-    """Persist scratch in the binary view database: it survives tool calls and server restarts.
+    """Persist scratch in the view database across calls and restarts. Writes; not undoable.
 
     :param key: Key to store under.
     :param value: String value to store.
@@ -154,10 +152,11 @@ def rex_kv_set(call: mcp.ToolCall, key: str, value: str) -> _KvSetResult:
 @mcp.tool(destructive=True)
 def rex_redo(call: mcp.ToolCall) -> _RedoResult:
     """Redo the last undone transaction in the view's undo database."""
-    _run_undo_stack_step("redo", call.binary_view.redo, "redo_failed")
     file = call.binary_view.file
+    redo_before = len(file.redo_entries)
+    _run_undo_stack_step("redo", call.binary_view.redo, "redo_failed")
     return {
-        "redone": True,
+        "redone": len(file.redo_entries) < redo_before,
         "undo_left": len(file.undo_entries),
         "redo_left": len(file.redo_entries),
     }
@@ -169,7 +168,7 @@ def rex_report_show(
     title: Annotated[str, mcp.NonEmpty()],
     markdown: Annotated[str, mcp.NonEmpty()],
 ) -> _ReportResult:
-    """Render a markdown triage report inside Binary Ninja.
+    """Show a markdown report in Binary Ninja; returns its title, length, and a preview.
 
     :param title: Title displayed on the report tab.
     :param markdown: Markdown to render; ``binaryninja://?expr=...`` links into the view.
@@ -218,7 +217,7 @@ def rex_tag_list(
 def rex_tag_set(
     call: mcp.ToolCall, addr: mcp.Address, tag_type: str, data: str, create_missing: bool = True
 ) -> _TagSetResult:
-    """Attach a Binary Ninja tag at an address, visible in the GUI.
+    """Attach a tag at an address, visible in the GUI. Writes; undoable.
 
     :param addr: Address expression to tag, e.g. "main" or ".text + 0x10".
     :param tag_type: Tag type name, e.g. "Crashes" or "Finding".
@@ -230,7 +229,8 @@ def rex_tag_set(
     _reject_nul("data", data)
     if len(data) > _MAX_TAG_DATA_CHARS:
         raise mcp.ToolError("data_too_large", f"tag data exceeds {_MAX_TAG_DATA_CHARS} characters")
-    if tag_type not in bv.tag_types:
+    missing_type = tag_type not in bv.tag_types
+    if missing_type:
         if not create_missing:
             raise mcp.ToolError(
                 "tag_type_not_found",
@@ -241,8 +241,10 @@ def rex_tag_set(
             raise mcp.ToolError(
                 "tag_type_too_large", f"tag type name exceeds {_MAX_TAG_TYPE_CHARS} characters"
             )
-        bv.create_tag_type(tag_type, _TAG_ICON)
-    bv.add_tag(addr, tag_type, data)
+    with bv.undoable_transaction():
+        if missing_type:
+            bv.create_tag_type(tag_type, _TAG_ICON)
+        bv.add_tag(addr, tag_type, data)
     data_preview, data_truncated = _truncate_with_flag(data)
     return {
         "address": hex(addr),
@@ -256,10 +258,11 @@ def rex_tag_set(
 @mcp.tool(destructive=True)
 def rex_undo(call: mcp.ToolCall) -> _UndoResult:
     """Undo the last committed transaction in the view's undo database."""
-    _run_undo_stack_step("undo", call.binary_view.undo, "undo_failed")
     file = call.binary_view.file
+    undo_before = len(file.undo_entries)
+    _run_undo_stack_step("undo", call.binary_view.undo, "undo_failed")
     return {
-        "undone": True,
+        "undone": len(file.undo_entries) < undo_before,
         "undo_left": len(file.undo_entries),
         "redo_left": len(file.redo_entries),
     }

@@ -217,7 +217,7 @@ def rex_annotate_many(
     call: mcp.ToolCall,
     items: list[Annotated[object, mcp.Schema(_ANNOTATE_ITEMS_SCHEMA)]],
 ) -> _AnnotateManyResult:
-    """Apply many function annotations in one undoable transaction.
+    """Apply many function annotations in one undoable transaction. Writes; one rex_undo reverts it.
 
     :param items: 1 to 128 annotation objects; the item schema defines the fields.
     """

@@ -385,7 +385,7 @@ def rex_uidf_set(
     state: ValueState = "ConstantValue",
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
 ) -> _UidfSetResult:
-    """Inform an MLIL value; a key-table base pointer as ConstantPointerValue folds its byte checks.
+    """Inform an MLIL value; a ConstantPointerValue key-table base folds byte checks. Undoable.
 
     :param function: Address expression inside the target function.
     :param variable: MLIL variable name, as listed by bn_variable_list.
@@ -429,7 +429,7 @@ def rex_uidf_set_many(
     items: list[Annotated[object, mcp.Schema(_UIDF_ITEMS_SCHEMA)]],
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
 ) -> _UidfSetManyResult:
-    """Inform several MLIL values in one reanalysis: a byte-check family's operands all at once.
+    """Inform several MLIL values in one reanalysis, e.g. byte checks. Writes; one undo.
 
     :param function: Address expression inside the target function.
     :param items: 1 to 128 objects with variable, value, optional def_address and state.
@@ -446,10 +446,11 @@ def rex_uidf_set_many(
             "invalid_params", f"items must contain between 1 and {_MAX_UIDF_BATCH} entries"
         )
     staged = [_stage_uidf_item(call, bv, target, index, item) for index, item in enumerate(items)]
-    results = [
-        _apply_plan(target, outcome) if isinstance(outcome, _UIDFSetPlan) else outcome
-        for outcome in staged
-    ]
+    with bv.undoable_transaction():
+        results = [
+            _apply_plan(target, outcome) if isinstance(outcome, _UIDFSetPlan) else outcome
+            for outcome in staged
+        ]
     applied = sum(1 for row in results if row["ok"])
     analysis_complete = True
     if applied:
@@ -475,7 +476,7 @@ def rex_uidf_clear(
     function: mcp.Address,
     variable: Annotated[str, mcp.NonEmpty()] | None = None,
 ) -> _UidfClearAllResult | _UidfClearVariableResult:
-    """Clear user variable values: one MLIL variable's sites, or all of a function's.
+    """Clear user values of one MLIL variable, or of a whole function. Writes; one undo.
 
     :param function: Address expression inside the target function.
     :param variable: Variable whose user values clear at every definition site; omit for all.
@@ -486,7 +487,8 @@ def rex_uidf_clear(
     if variable is None:
         cleared = sum(len(sites) for sites in target.get_all_user_var_values().values())
         try:
-            target.clear_all_user_var_values()
+            with bv.undoable_transaction():
+                target.clear_all_user_var_values()
         except Exception as error:
             raise mcp.ToolError(
                 "clear_failed", f"could not clear user variable values: {error}"
@@ -500,16 +502,17 @@ def rex_uidf_clear(
             for site in sites:
                 informed_sites.add(site.addr)
     cleared = 0
-    for site_variable, definition in matches:
-        try:
-            target.clear_user_var_value(site_variable, definition.address, after=True)
-        except Exception as error:
-            raise mcp.ToolError(
-                "clear_failed",
-                f"could not clear '{_truncate(variable)}' at {definition.address:#x}: {error}",
-            ) from None
-        if definition.address in informed_sites:
-            cleared += 1
+    with bv.undoable_transaction():
+        for site_variable, definition in matches:
+            try:
+                target.clear_user_var_value(site_variable, definition.address, after=True)
+            except Exception as error:
+                raise mcp.ToolError(
+                    "clear_failed",
+                    f"could not clear '{_truncate(variable)}' at {definition.address:#x}: {error}",
+                ) from None
+            if definition.address in informed_sites:
+                cleared += 1
     bv.update_analysis()
     return {
         "function": resolution.entry,

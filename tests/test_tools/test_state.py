@@ -94,6 +94,25 @@ def test_tag_set_creates_missing_type() -> None:
     assert "Finding" in view.tag_types
     tag_set(_call(view), 0x4020, "Finding", "second")
     assert [tag.data for _, tag in view.get_tags()] == ["C2 config", "second"]
+    # Creating the type and adding the tag share a transaction; the second call opens its own.
+    assert view.transactions == ["open", "commit", "open", "commit"]
+    assert len(view.file.undo_entries) == 2
+
+
+def test_tag_set_reverts_its_transaction_when_the_core_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = FakeBinaryView()
+
+    def refuse(address: int, tag_type_name: str, data: str) -> None:
+        raise RuntimeError("core refused")
+
+    monkeypatch.setattr(view, "add_tag", refuse)
+    _, tag_set = get_tool("rex_tag_set")
+    with pytest.raises(RuntimeError, match="core refused"):
+        tag_set(_call(view), 0x4010, "Finding", "text")
+    assert view.transactions == ["open", "revert"]
+    assert view.file.undo_entries == []
 
 
 def test_tag_set_caps_data_and_truncates_echo() -> None:
@@ -254,9 +273,9 @@ def test_undo_and_redo_round_trip_and_report_stack_depths() -> None:
     assert redo(_call(view)) == {"redone": True, "undo_left": 2, "redo_left": 0}
     assert metadata.undo_entries == ["patch bytes", "rename main"]
     assert metadata.redo_entries == []
-    # An empty stack is a core-side no-op reported as such, not an error.
-    assert undo(_call(FakeBinaryView())) == {"undone": True, "undo_left": 0, "redo_left": 0}
-    assert redo(_call(FakeBinaryView())) == {"redone": True, "undo_left": 0, "redo_left": 0}
+    # An empty stack is a core-side no-op, reported as not done rather than as an error.
+    assert undo(_call(FakeBinaryView())) == {"undone": False, "undo_left": 0, "redo_left": 0}
+    assert redo(_call(FakeBinaryView())) == {"redone": False, "undo_left": 0, "redo_left": 0}
 
 
 def test_undo_and_redo_report_core_failures() -> None:

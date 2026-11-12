@@ -567,6 +567,7 @@ def test_decompile_many_renders_each_requested_function() -> None:
                 "start": "0x1100",
                 "name": "main",
                 **NO_ALTERNATIVES,
+                "index": 0,
                 "lines": ["void main() {", "    return 0;", "}"],
                 "truncated": False,
             },
@@ -574,10 +575,12 @@ def test_decompile_many_renders_each_requested_function() -> None:
                 "start": "0x2000",
                 "name": "handler",
                 **NO_ALTERNATIVES,
+                "index": 1,
                 "lines": ["void handler() {", "    recv(fd, buf, n);", "    return 1;", "}"],
                 "truncated": False,
             },
-        ]
+        ],
+        "errors": [],
     }
     # Output order follows the request, not address order.
     flipped = decompile(FakeParsingToolCall(view), ["0x2000", "0x1100"])
@@ -594,10 +597,12 @@ def test_decompile_many_truncates_lines_and_echoes() -> None:
                 "start": "0x2000",
                 "name": "handler",
                 **NO_ALTERNATIVES,
+                "index": 0,
                 "lines": ["void handler() {", "    recv(fd, buf, n);"],
                 "truncated": True,
             }
-        ]
+        ],
+        "errors": [],
     }
     # Exactly at max_lines nothing is reported as truncated.
     exact = decompile(FakeParsingToolCall(view), ["0x2000"], max_lines=4)
@@ -617,26 +622,52 @@ def test_decompile_many_renders_unlifted_functions_as_empty() -> None:
     _, decompile = get_tool("rex_decompile_many")
     assert decompile(FakeParsingToolCall(view), ["0x3000"]) == {
         "functions": [
-            {"start": "0x3000", "name": "sink", **NO_ALTERNATIVES, "lines": [], "truncated": False}
-        ]
+            {
+                "start": "0x3000",
+                "name": "sink",
+                **NO_ALTERNATIVES,
+                "index": 0,
+                "lines": [],
+                "truncated": False,
+            }
+        ],
+        "errors": [],
     }
 
 
-def test_decompile_many_rejects_the_whole_call_on_any_bad_entry() -> None:
+def test_decompile_many_reports_a_bad_entry_per_item_and_renders_the_rest() -> None:
     view = _decompile_view()
     _, decompile = get_tool("rex_decompile_many")
-    # An unanalyzed address anywhere in the batch rejects the call: no partial results,
-    # no snapping to a neighboring function.
-    for batch in (["0x1100", "0x1800"], ["0x1800", "0x1100"]):
-        with pytest.raises(FakeToolError) as exc:
-            decompile(FakeParsingToolCall(view), batch)
-        assert exc.value.code == "invalid_params"
-        assert exc.value.message == plain_gap_message("analyzed function", 0x1800)
-    # An unparsable expression rejects the call the same way.
-    with pytest.raises(FakeToolError) as exc:
-        decompile(FakeParsingToolCall(view), ["0x1100", "garbage"])
-    assert exc.value.code == "invalid_params"
-    assert "bad address expression" in exc.value.message
+    # An unanalyzed address, an unparsable expression, a non-string and a NUL entry each
+    # become an errors row at their input index; the good entries still render.
+    result = decompile(
+        FakeParsingToolCall(view),
+        ["0x1800", "0x1100", "garbage", 7, "0x1100\x00zzz", "0x2000"],
+    )
+    assert [(row["index"], row["name"]) for row in result["functions"]] == [
+        (1, "main"),
+        (5, "handler"),
+    ]
+    assert [(row["index"], row["address"]) for row in result["errors"]] == [
+        (0, "0x1800"),
+        (2, "garbage"),
+        (3, "7"),
+        (4, "0x1100\x00zzz"),
+    ]
+    assert result["errors"][0]["error"] == {
+        "code": "invalid_params",
+        "message": plain_gap_message("analyzed function", 0x1800),
+    }
+    assert result["errors"][1]["error"]["code"] == "invalid_params"
+    assert "bad address expression" in result["errors"][1]["error"]["message"]
+    assert result["errors"][2]["error"]["message"] == (
+        "functions[3] must be a string address expression"
+    )
+    assert result["errors"][3]["error"]["message"] == "functions[4] must not contain NUL bytes"
+    # Every entry bad: no functions, one error each, and the call still succeeds.
+    all_bad = decompile(FakeParsingToolCall(view), ["0x1800", "0x1801"])
+    assert all_bad["functions"] == []
+    assert [row["index"] for row in all_bad["errors"]] == [0, 1]
 
 
 def test_decompile_many_rejects_bad_batch_and_max_lines() -> None:
@@ -653,15 +684,11 @@ def test_decompile_many_rejects_bad_batch_and_max_lines() -> None:
     # Exactly the batch cap is accepted.
     at_cap = decompile(FakeParsingToolCall(view), ["0x1100"] * decompile_tools._MAX_DECOMPILE_BATCH)
     assert len(at_cap["functions"]) == decompile_tools._MAX_DECOMPILE_BATCH
-    # The argument must be a list of strings, not a bare value or non-string entries.
+    # The argument must be a list, not a bare value; bad entries are per-item errors.
     with pytest.raises(FakeToolError) as exc:
         decompile(FakeParsingToolCall(view), "0x1100")
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "functions must be a list of address expressions"
-    with pytest.raises(FakeToolError) as exc:
-        decompile(FakeParsingToolCall(view), [0x1100])
-    assert exc.value.code == "invalid_params"
-    assert exc.value.message == "functions[0] must be a string address expression"
     # Range errors win over address resolution, and both bounds are inclusive.
     for kwargs, message in (
         ({"max_lines": 0}, "Invalid integer parameter 'max_lines': Must be at least 1"),
@@ -1200,9 +1227,9 @@ def test_disasm_many_reports_pending_analysis() -> None:
         at(_call(view), 0x4000)
     assert exc.value.code == "analysis_pending"
     _, decompile = get_tool("rex_decompile_many")
-    with pytest.raises(FakeToolError) as exc:
-        decompile(FakeParsingToolCall(view), ["0x4000"])
-    assert exc.value.code == "analysis_pending"
+    decompile_result = decompile(FakeParsingToolCall(view), ["0x4000"])
+    assert decompile_result["functions"] == []
+    assert decompile_result["errors"] == pending_result["errors"]
     # An address with no function at all keeps the caller's own miss code.
     with pytest.raises(FakeToolError) as exc:
         at(_call(view), 0x9999)

@@ -144,11 +144,11 @@ def _tool_view(registered: dict[str, mcp.Tool], tool_name: str) -> _ToolView:
     return {"name": tool_name, "description": tool.description, "parameters": parameters}
 
 
-@mcp.tool(read_only=True)
+@mcp.tool(read_only=True, scope=mcp.McpToolScope.GlobalScope)
 def rex_help(
     call: mcp.ToolCall, tool_name: str = "", category: str = ""
 ) -> _CategoryView | _CategoriesView | _ToolView:
-    """Describe the plugin's rex_ tools, and the native rx_ tools when loaded, from the registry.
+    """Describe the rex_ tools, and rx_ tools if present, from the registry.
 
     :param tool_name: Tool whose parameters to describe; empty selects the category views.
     :param category: Category whose tools to list with purposes; empty lists the categories.

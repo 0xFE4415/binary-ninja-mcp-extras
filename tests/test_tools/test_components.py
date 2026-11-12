@@ -216,6 +216,25 @@ def test_component_add_functions_resolves_then_adds() -> None:
     ]
     added_names = [function.name for function in view.root_component.children[0].added_functions]
     assert added_names == ["crypto_mix", "root_fn"]
+    # One transaction, so one rex_undo reverts every added function.
+    assert view.transactions == ["open", "commit"]
+    assert view.file.undo_entries == ["rex_annotate_many batch"]
+
+
+def test_component_add_functions_reverts_its_transaction_when_the_core_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _component_view()
+
+    def refuse(function: object) -> bool:
+        raise RuntimeError("core refused")
+
+    monkeypatch.setattr(view.root_component.children[0], "add_function", refuse)
+    _, add = get_tool("rex_component_add_functions")
+    with pytest.raises(RuntimeError, match="core refused"):
+        add(FakeParsingToolCall(view), "/Network", ["0x3000"])
+    assert view.transactions == ["open", "revert"]
+    assert view.file.undo_entries == []
 
 
 def test_component_add_functions_is_all_or_nothing() -> None:

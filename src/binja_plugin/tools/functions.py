@@ -168,7 +168,7 @@ def rex_function_define(
     wait: bool = True,
     timeout_ms: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DEFINE_WAIT_MS)] = 10000,
 ) -> _FunctionDefinitionResult:
-    """Turn the bytes at an address into a function, optionally waiting for analysis.
+    """Turn the bytes at an address into a function, optionally awaiting analysis. Writes; undoable.
 
     :param start: Address of the new function's entry point.
     :param wait: Poll until the function has at least one basic block.
@@ -189,7 +189,7 @@ def rex_function_define_many(
     wait: bool = True,
     timeout_ms: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DEFINE_WAIT_MS)] = 10000,
 ) -> _FunctionDefineManyResult:
-    """Turn the bytes at many addresses into functions, then optionally wait for analysis.
+    """Turn bytes at many addresses into functions, optionally awaiting analysis. Writes; one undo.
 
     :param addresses: 1 to 128 address expressions; the batch fails whole on a bad entry.
     :param wait: Poll until every defined function has at least one basic block.
@@ -199,12 +199,13 @@ def rex_function_define_many(
     parsed = _parse_address_batch(call, addresses, _MAX_DEFINE_BATCH, "addresses")
     defined: list[Function] = []
     failed: list[str] = []
-    for address in parsed:
-        function = call.binary_view.create_user_function(address)
-        if function is None:
-            failed.append(hex(address))
-        else:
-            defined.append(function)
+    with call.binary_view.undoable_transaction():
+        for address in parsed:
+            function = call.binary_view.create_user_function(address)
+            if function is None:
+                failed.append(hex(address))
+            else:
+                defined.append(function)
     pending, waited_ms = _settle_analysis(defined, wait, timeout_ms)
     still_pending = {function.start for function in pending}
     return {
@@ -222,7 +223,7 @@ def rex_function_define_many(
 
 @mcp.tool(destructive=True)
 def rex_function_undefine(call: mcp.ToolCall, start: mcp.Address) -> _ResolvedFunction:
-    """Remove the user function covering an address.
+    """Remove the user function covering an address. Writes; undoable.
 
     :param start: Any address inside the function to remove.
     """

@@ -221,6 +221,25 @@ def test_function_define_many_defines_and_waits(monkeypatch: pytest.MonkeyPatch)
     assert result["pending"] == []
     assert result["waited_ms"] == 0
     assert len(view.created_functions) == 2
+    # One transaction, so one rex_undo reverts the whole batch.
+    assert view.transactions == ["open", "commit"]
+    assert view.file.undo_entries == ["rex_annotate_many batch"]
+
+
+def test_function_define_many_reverts_its_transaction_when_the_core_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = FakeBinaryView()
+
+    def refuse(address: int) -> None:
+        raise RuntimeError("core refused")
+
+    monkeypatch.setattr(view, "create_user_function", refuse)
+    _, define_many = get_tool("rex_function_define_many")
+    with pytest.raises(RuntimeError, match="core refused"):
+        define_many(FakeParsingToolCall(view), ["0x4000", "0x4100"], wait=False)
+    assert view.transactions == ["open", "revert"]
+    assert view.file.undo_entries == []
 
 
 def test_function_define_many_is_all_or_nothing_on_parse_errors() -> None:

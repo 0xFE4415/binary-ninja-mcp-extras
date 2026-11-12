@@ -325,7 +325,7 @@ def _parse_address_entry(call: mcp.ToolCall, index: int, entry: object, noun: st
         ) from None
 
 
-def _parse_address_batch(call: mcp.ToolCall, entries: object, maximum: int, noun: str) -> list[int]:
+def _require_address_list(entries: object, maximum: int, noun: str) -> list[object]:
     if not isinstance(entries, list):
         raise mcp.ToolError("invalid_params", f"{noun} must be a list of address expressions")
     if not 1 <= len(entries) <= maximum:
@@ -333,6 +333,11 @@ def _parse_address_batch(call: mcp.ToolCall, entries: object, maximum: int, noun
             "invalid_params",
             f"{noun} must contain between 1 and {maximum} address expressions",
         )
+    return list(entries)
+
+
+def _parse_address_batch(call: mcp.ToolCall, entries: object, maximum: int, noun: str) -> list[int]:
+    entries = _require_address_list(entries, maximum, noun)
     return [_parse_address_entry(call, index, entry, noun) for index, entry in enumerate(entries)]
 
 

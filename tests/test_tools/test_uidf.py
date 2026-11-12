@@ -152,6 +152,9 @@ def test_uidf_set_many_applies_valid_items_and_reanalyzes_once(
     assert result["results"][3]["definition_site"] == "0x1196"
     assert view.update_analysis_calls == 1
     assert len(main.set_user_var_value_calls) == 2
+    # One transaction, so one rex_undo reverts every applied item.
+    assert view.transactions == ["open", "commit"]
+    assert view.file.undo_entries == ["rex_annotate_many batch"]
     assert [str(entry[2]) for entry in main.set_user_var_value_calls] == [
         "<const 0x10>",
         "<const 0x3>",
@@ -784,6 +787,9 @@ def test_uidf_clear_counts_only_the_named_variables_informed_sites() -> None:
     assert result["cleared"] == 0
     assert result["definition_sites"] == 2
     assert list(main.user_var_values) == [_variable(main, "rax_1")]
+    # One transaction, so one rex_undo restores every cleared site.
+    assert view.transactions == ["open", "commit"]
+    assert view.file.undo_entries == ["rex_annotate_many batch"]
 
 
 def test_uidf_clear_all_for_a_function() -> None:
@@ -798,6 +804,8 @@ def test_uidf_clear_all_for_a_function() -> None:
     }
     assert main.cleared_all_user_var_values == 1
     assert main.user_var_values == {}
+    assert view.transactions == ["open", "commit"]
+    assert view.file.undo_entries == ["rex_annotate_many batch"]
 
 
 def test_uidf_clear_rejects_unknown_variables_and_wraps_core_errors() -> None:
@@ -811,12 +819,14 @@ def test_uidf_clear_rejects_unknown_variables_and_wraps_core_errors() -> None:
         uidf_clear(_call(view), 0x1100, "rax_1")
     assert exc.value.code == "clear_failed"
     assert "core refused" in exc.value.message
+    assert view.transactions == ["open", "revert"]
     main.clear_user_var_value_error = None
     main.clear_all_user_var_values_error = Exception("core refused all")
     with pytest.raises(FakeToolError) as exc:
         uidf_clear(_call(view), 0x1100)
     assert exc.value.code == "clear_failed"
     assert "core refused all" in exc.value.message
+    assert view.transactions == ["open", "revert", "open", "revert"]
 
 
 def test_uidf_clear_needs_mlil_only_for_named_variables() -> None:

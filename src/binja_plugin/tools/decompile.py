@@ -29,9 +29,9 @@ from binja_plugin.tools import (
     _name_filter,
     _parse_address_entry,
     _render_function_disassembly,
+    _require_address_list,
     _require_analyzed_function,
     _Resolution,
-    _resolve_address_batch,
     _resolve_containing,
     _resolved_entry,
     _ResolvedFunction,
@@ -74,12 +74,20 @@ _HEX_ADDRESS_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
 
 
 class _DecompiledFunction(_ResolvedFunction):
+    index: int
     lines: list[str]
     truncated: bool
 
 
+class _DecompileError(TypedDict):
+    index: int
+    address: str
+    error: _ItemError
+
+
 class _DecompileManyResult(TypedDict):
     functions: list[_DecompiledFunction]
+    errors: list[_DecompileError]
 
 
 class _InstructionLine(TypedDict):
@@ -300,19 +308,34 @@ def rex_decompile_many(
     functions: list[str],
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
 ) -> _DecompileManyResult:
-    """Batch HLIL triage; a bad address rejects the whole batch (rex_disasm_many reports per item).
+    """Return decompiled HLIL lines for many functions; a bad address is a per-item error.
 
-    :param functions: 1 to 1024 address expressions, rendered in the order given.
+    :param functions: 1 to 1024 address expressions; each result carries its input index.
     :param max_lines: HLIL lines rendered per function.
     """
     bv = call.binary_view
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
-    resolved = _resolve_address_batch(call, bv, functions, _MAX_DECOMPILE_BATCH)
+    expressions = _require_address_list(functions, _MAX_DECOMPILE_BATCH, "functions")
     rendered: list[_DecompiledFunction] = []
-    for resolution in resolved:
+    errors: list[_DecompileError] = []
+    for index, expression in enumerate(expressions):
+        try:
+            address = _parse_address_entry(call, index, expression, "functions")
+            resolution = _require_analyzed_function(bv, address)
+        except mcp.ToolError as error:
+            errors.append(
+                {
+                    "index": index,
+                    "address": _truncate(str(expression)),
+                    "error": {"code": error.code, "message": error.message},
+                }
+            )
+            continue
         lines, truncated = _render_hlil_lines(resolution.function.hlil, max_lines)
-        rendered.append({**resolution.entry, "lines": lines, "truncated": truncated})
-    return {"functions": rendered}
+        rendered.append(
+            {**resolution.entry, "index": index, "lines": lines, "truncated": truncated}
+        )
+    return {"functions": rendered, "errors": errors}
 
 
 @mcp.tool(read_only=True)
@@ -322,7 +345,7 @@ def rex_disasm_at(
     before: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DISASM_CONTEXT)] = 4,
     after: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DISASM_CONTEXT)] = 8,
 ) -> _DisasmAtResult:
-    """Address-anchored disassembly window.
+    """Return the disassembly lines around an address, with the containing function.
 
     :param address: Address expression inside the target function.
     :param before: Instructions to include before the anchor.
@@ -420,7 +443,7 @@ def rex_hlil_grep(
     context_before: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_HLIL_GREP_CONTEXT)] = 0,
     context_after: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_HLIL_GREP_CONTEXT)] = 0,
 ) -> _HlilGrepResult:
-    """Regex search over rendered HLIL text; find calls and code shapes across the view in one pass.
+    """Return functions whose HLIL lines match a regex, with up to 3 matching lines each.
 
     :param regex: Regular expression applied to every rendered HLIL line.
     :param function_filter: Case-insensitive regex matched against function names.
