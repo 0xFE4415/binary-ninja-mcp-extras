@@ -224,7 +224,8 @@ some rows.
   lines, truncated}` and `errors` of `{index, address, error: {code, message}}`; `index` is
   the position in the request; every entry lands in exactly one list, and an address that
   fails to resolve is an `errors` row. Only a non-list `functions` or a count outside 1-1024
-  raises for the whole call.
+  raises for the whole call. `lines` starts with the function's signature, then the HLIL
+  body; the signature counts toward `max_lines`.
 - `rex_disasm_at`: `function`, `instructions` (`{address, text}`), `truncated`.
   `rex_disasm_many`: `windows` of `{address, index, function, instructions, truncated}`,
   `errors` of `{index, address, error: {code, message}}`, `truncated`, `next_offset` (an

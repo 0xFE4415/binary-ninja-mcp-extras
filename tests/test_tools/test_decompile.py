@@ -542,15 +542,14 @@ def test_hlil_grep_offset_and_next_offset() -> None:
 
 
 def _decompile_view() -> FakeBinaryView:
-    main = FakeFunction(
-        "main", 0x1100, 0x1200, hlil=RenderableText("void main() {\n    return 0;\n}")
-    )
+    # Real str(hlil) is the body only; str(function) is the signature.
+    main = FakeFunction("main", 0x1100, 0x1200, hlil=RenderableText("return 0"))
+    main.prototype_after_name = "(int32_t argc, char** argv, char** envp)"
     handler = FakeFunction(
-        "handler",
-        0x2000,
-        0x2100,
-        hlil=RenderableText("void handler() {\n    recv(fd, buf, n);\n    return 1;\n}"),
+        "handler", 0x2000, 0x2100, hlil=RenderableText("recv(fd, buf, n)\nreturn 1")
     )
+    handler.prototype_before_name = "char*"
+    handler.prototype_after_name = "(int32_t fd)"
     # "sink" models a function that was never lifted: it contains addresses but has no HLIL.
     sink = FakeFunction("sink", 0x3000, 0x3100)
     return FakeBinaryView(functions=[main, handler, sink])
@@ -567,7 +566,7 @@ def test_decompile_many_renders_each_requested_function() -> None:
                 "name": "main",
                 **NO_ALTERNATIVES,
                 "index": 0,
-                "lines": ["void main() {", "    return 0;", "}"],
+                "lines": ["int32_t main(int32_t argc, char** argv, char** envp)", "return 0"],
                 "truncated": False,
             },
             {
@@ -575,7 +574,7 @@ def test_decompile_many_renders_each_requested_function() -> None:
                 "name": "handler",
                 **NO_ALTERNATIVES,
                 "index": 1,
-                "lines": ["void handler() {", "    recv(fd, buf, n);", "    return 1;", "}"],
+                "lines": ["char* handler(int32_t fd)", "recv(fd, buf, n)", "return 1"],
                 "truncated": False,
             },
         ],
@@ -597,26 +596,36 @@ def test_decompile_many_truncates_lines_and_echoes() -> None:
                 "name": "handler",
                 **NO_ALTERNATIVES,
                 "index": 0,
-                "lines": ["void handler() {", "    recv(fd, buf, n);"],
+                "lines": ["char* handler(int32_t fd)", "recv(fd, buf, n)"],
                 "truncated": True,
             }
         ],
         "errors": [],
     }
-    # Exactly at max_lines nothing is reported as truncated.
-    exact = decompile(FakeParsingToolCall(view), ["0x2000"], max_lines=4)
+    # The signature counts toward max_lines: exactly at it nothing is truncated, and
+    # max_lines=1 is the signature alone.
+    exact = decompile(FakeParsingToolCall(view), ["0x2000"], max_lines=3)
     assert exact["functions"][0]["truncated"] is False
+    signature_only = decompile(FakeParsingToolCall(view), ["0x2000"], max_lines=1)
+    assert signature_only["functions"][0]["lines"] == ["char* handler(int32_t fd)"]
+    assert signature_only["functions"][0]["truncated"] is True
     # Rendered lines go through the same per-line echo cap as the other tools.
     long_view = FakeBinaryView(
         functions=[FakeFunction("f", 0x1000, 0x1010, hlil=RenderableText("a" * 600))]
     )
     echoed = decompile(FakeParsingToolCall(long_view), ["0x1000"])
-    assert echoed["functions"][0]["lines"] == ["a" * tools._MAX_CHARS + "... [88 chars truncated]"]
+    assert echoed["functions"][0]["lines"][1:] == [
+        "a" * tools._MAX_CHARS + "... [88 chars truncated]"
+    ]
+    # The signature line takes the same cap: a long prototype is not echoed whole.
+    long_view.functions[0].prototype_after_name = "(" + "b" * 600
+    signature = decompile(FakeParsingToolCall(long_view), ["0x1000"])["functions"][0]["lines"][0]
+    assert signature.startswith("int32_t f(b") and signature.endswith(" chars truncated]")
 
 
 def test_decompile_many_renders_unlifted_functions_as_empty() -> None:
-    # A function can contain addresses without having lifted HLIL; that is an empty
-    # render, not an error and not a truncation.
+    # A function can contain addresses without having lifted HLIL; that renders the
+    # signature alone, not an error and not a truncation.
     view = _decompile_view()
     _, decompile = get_tool("rex_decompile_many")
     assert decompile(FakeParsingToolCall(view), ["0x3000"]) == {
@@ -626,7 +635,7 @@ def test_decompile_many_renders_unlifted_functions_as_empty() -> None:
                 "name": "sink",
                 **NO_ALTERNATIVES,
                 "index": 0,
-                "lines": [],
+                "lines": ["int32_t sink()"],
                 "truncated": False,
             }
         ],

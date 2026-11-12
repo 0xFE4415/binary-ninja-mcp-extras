@@ -406,6 +406,9 @@ class FakeFunction:
         self.comments: dict[int, str] = {}
         self.user_type: object | None = None
         self.type: FakeType | None = None
+        # str(Function) is the core's rendered prototype; these surround the current name.
+        self.prototype_before_name = "int32_t"
+        self.prototype_after_name = "()"
         self.user_type_error: Exception | None = None
         self.vars = vars if vars is not None else []
         self.parameter_vars = parameter_vars if parameter_vars is not None else []
@@ -426,6 +429,10 @@ class FakeFunction:
         # Successive needs_update reads; the last value repeats once the list is spent.
         self.needs_update_reads: list[bool] = [False]
         self._needs_update_index = 0
+
+    @override
+    def __str__(self) -> str:
+        return f"{self.prototype_before_name} {self.name}{self.prototype_after_name}"
 
     @property
     def name(self) -> str:
