@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import http.client
 import json
 import re
 import signal
@@ -34,6 +35,23 @@ class ToolResult:
     data: Any
 
 
+def decode_reply(body: str) -> dict[str, Any]:
+    if not body:
+        return {}
+    payload = body
+    for line in body.splitlines():
+        if line.startswith("data:"):
+            payload = line[len("data:") :]
+            break
+    try:
+        reply = json.loads(payload)
+    except json.JSONDecodeError as error:
+        raise HarnessError(f"the reply is not JSON: {body[:300]!r}") from error
+    if not isinstance(reply, dict):
+        raise HarnessError(f"the reply is not a JSON object: {body[:300]!r}")
+    return reply
+
+
 class McpClient:
     def __init__(self, url: str) -> None:
         self.url = url
@@ -52,14 +70,9 @@ class McpClient:
             with urllib.request.urlopen(request, timeout=CALL_TIMEOUT_SECONDS) as response:
                 self.session_id = response.headers.get("Mcp-Session-Id") or self.session_id
                 body = response.read().decode().strip()
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
-            raise HarnessError(f"cannot reach the MCP server at {self.url}: {error}") from error
-        if not body:
-            return {}
-        for line in body.splitlines():
-            if line.startswith("data:"):
-                return json.loads(line[len("data:") :])
-        return json.loads(body)
+        except (OSError, http.client.HTTPException, UnicodeDecodeError) as error:
+            raise HarnessError(f"cannot read from the MCP server at {self.url}: {error}") from error
+        return decode_reply(body)
 
     def initialize(self) -> None:
         reply = self._post(
@@ -76,6 +89,8 @@ class McpClient:
         )
         if "error" in reply:
             raise HarnessError(f"initialize failed: {reply['error']}")
+        if "result" not in reply:
+            raise HarnessError(f"initialize failed: the reply has no result: {reply}")
         self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
     def call(self, tool: str, arguments: dict[str, Any]) -> ToolResult:
@@ -90,7 +105,9 @@ class McpClient:
         )
         if "error" in reply:
             raise HarnessError(f"{tool}: protocol error {reply['error']}")
-        result = reply["result"]
+        result = reply.get("result")
+        if not isinstance(result, dict):
+            raise HarnessError(f"{tool}: the reply has no result: {reply}")
         data = result.get("structuredContent")
         if not isinstance(data, dict):
             raise HarnessError(f"{tool}: the reply has no structured content: {result}")
@@ -148,7 +165,7 @@ def subset_mismatch(expected: Any, actual: Any, where: str = "$") -> str | None:
 
 
 def check_subset(assertion: dict[str, Any], value: Any) -> str | None:
-    """Objects match partially; lists must match in length and element by element."""
+    """Objects match by key subset, lists by length, scalars exactly including type."""
     return subset_mismatch(assertion["value"], value)
 
 
@@ -276,7 +293,7 @@ def check_parity(assertion: dict[str, Any], result: ToolResult, client: McpClien
         outcome = "both returned errors" if result.is_error else "both succeeded"
         return f"{outcome}, but the step expects {'errors' if expect_error else 'success'}"
     left = parity_view(result, assertion.get("path", ""), assertion["fields"])
-    right = parity_view(other_result, assertion.get("against_path", ""), assertion["fields"])
+    right = parity_view(other_result, "", assertion["fields"])
     if left == right:
         return None
     return f"differs from {other['tool']}: {text_of(left)[:300]} vs {text_of(right)[:300]}"
@@ -364,6 +381,8 @@ def run_steps(playbook: dict[str, Any], binary: str, client: McpClient) -> int:
     for step in playbook["steps"]:
         try:
             failures = run_step(step, binary, client)
+        except HarnessError as error:
+            failures = [f"HarnessError: {error}"]
         except Exception as error:
             failures = [f"unexpected {type(error).__name__}: {error}"]
         if failures:
@@ -395,16 +414,11 @@ def unwind_on_termination(signal_number: int, frame: FrameType | None) -> None:
     raise SystemExit(128 + signal_number)
 
 
-def run(playbook_path: Path, url: str) -> int:
-    playbook = json.loads(playbook_path.read_text())
-    fixture = verify_fixture(playbook)
-    client = McpClient(url)
-    client.initialize()
-    for termination_signal in TERMINATION_SIGNALS:
-        signal.signal(termination_signal, unwind_on_termination)
-    binary = open_fixture(client, fixture)
+def run_opened(playbook: dict[str, Any], client: McpClient, binary: str) -> int:
     failed = 0
+    closed = False
     try:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, TERMINATION_SIGNALS)
         wait_for_analysis(client, binary)
         version = core_version(client, binary)
         print(f"Binary Ninja {version}; fixture {binary}")
@@ -412,11 +426,27 @@ def run(playbook_path: Path, url: str) -> int:
             print(f"WARNING: playbook pinned {playbook['binary_ninja_version']}")
         failed = run_steps(playbook, binary, client)
     finally:
-        if not close_fixture(client, binary):
-            failed += 1
+        closed = close_fixture(client, binary)
     total = len(playbook["steps"])
     print(f"{total - failed} passed, {failed} failed of {total} steps")
-    return 1 if failed else 0
+    if not closed:
+        print(f"ERROR: the fixture view {binary} is still open; close it by hand", file=sys.stderr)
+    return 1 if failed or not closed else 0
+
+
+def run(playbook_path: Path, url: str) -> int:
+    playbook = json.loads(playbook_path.read_text())
+    fixture = verify_fixture(playbook)
+    client = McpClient(url)
+    client.initialize()
+    for termination_signal in TERMINATION_SIGNALS:
+        signal.signal(termination_signal, unwind_on_termination)
+    signal.pthread_sigmask(signal.SIG_BLOCK, TERMINATION_SIGNALS)
+    try:
+        binary = open_fixture(client, fixture)
+        return run_opened(playbook, client, binary)
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, TERMINATION_SIGNALS)
 
 
 def main() -> int:

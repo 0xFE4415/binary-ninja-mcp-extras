@@ -1401,14 +1401,14 @@
   },
   {
    "id": "multi-find-parity-with-data-find",
-   "guards": "rx_multi_find agrees with rex_data_find for each of its patterns.",
+   "guards": "rx_multi_find returns the pinned matches and agrees with rex_data_find for each pattern.",
    "tool": "rx_multi_find",
    "args": {
     "patterns": [
      "e8 ?? ?? ?? ??",
      "b8 34 12 5a 5a",
-     "de ad be ef 5a 5a 5a 5a",
-     "ff ff ff ff ff ff ff ff"
+     "ff 25 ?? ?? ?? ??",
+     "31 c0"
     ],
     "limit": 4
    },
@@ -1420,8 +1420,59 @@
     },
     {
      "kind": "subset",
-     "value": "b8 34 12 5a 5a",
-     "path": "results.1.pattern"
+     "path": "results.0",
+     "value": {
+      "pattern": "e8 ?? ?? ?? ??",
+      "total": 5,
+      "truncated": true,
+      "matches": [
+       "0x400428",
+       "0x401131",
+       "0x401186",
+       "0x4011b8"
+      ]
+     }
+    },
+    {
+     "kind": "subset",
+     "path": "results.1",
+     "value": {
+      "pattern": "b8 34 12 5a 5a",
+      "total": 1,
+      "truncated": false,
+      "matches": [
+       "0x401196"
+      ]
+     }
+    },
+    {
+     "kind": "subset",
+     "path": "results.2",
+     "value": {
+      "pattern": "ff 25 ?? ?? ?? ??",
+      "total": 3,
+      "truncated": false,
+      "matches": [
+       "0x401026",
+       "0x401030",
+       "0x401040"
+      ]
+     }
+    },
+    {
+     "kind": "subset",
+     "path": "results.3",
+     "value": {
+      "pattern": "31 c0",
+      "total": 4,
+      "truncated": false,
+      "matches": [
+       "0x401074",
+       "0x401160",
+       "0x4012c1",
+       "0x40131f"
+      ]
+     }
     },
     {
      "kind": "parity",
@@ -1460,7 +1511,7 @@
      "against": {
       "tool": "rex_data_find",
       "args": {
-       "pattern": "de ad be ef 5a 5a 5a 5a",
+       "pattern": "ff 25 ?? ?? ?? ??",
        "limit": 4
       }
      },
@@ -1476,7 +1527,7 @@
      "against": {
       "tool": "rex_data_find",
       "args": {
-       "pattern": "ff ff ff ff ff ff ff ff",
+       "pattern": "31 c0",
        "limit": 4
       }
      },
