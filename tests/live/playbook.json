@@ -1,0 +1,1473 @@
+{
+ "binary_ninja_version": "6.1.11052-dev Personal",
+ "fixture": {
+  "path": "fixture.elf",
+  "sha256": "a58e72525e56d08f060a3835fd63f60e529481bcbb3cd98a41276c5d40b6fbb7"
+ },
+ "steps": [
+  {
+   "id": "help-call-paths-wording",
+   "backlog_item": "help",
+   "tool": "rex_help",
+   "args": {
+    "tool_name": "rex_call_paths"
+   },
+   "expect": [
+    {
+     "kind": "contains",
+     "text": "direction defaults to callers",
+     "path": "description"
+    },
+    {
+     "kind": "contains",
+     "text": "needs callees",
+     "path": "description"
+    },
+    {
+     "kind": "includes",
+     "path": "parameters",
+     "item": {
+      "name": "direction",
+      "default": "callers"
+     }
+    }
+   ]
+  },
+  {
+   "id": "help-lists-rx-scanners",
+   "backlog_item": "help",
+   "tool": "rex_help",
+   "args": {
+    "category": "scanning"
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "tools",
+     "item": {
+      "name": "rx_data_find"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "tools",
+     "item": {
+      "name": "rx_multi_find"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "tools",
+     "item": {
+      "name": "rex_data_find"
+     }
+    }
+   ]
+  },
+  {
+   "id": "help-index-lists-rx-scanners",
+   "backlog_item": "help",
+   "tool": "rex_help",
+   "args": {},
+   "expect": [
+    {
+     "kind": "contains",
+     "text": "rx_data_find"
+    },
+    {
+     "kind": "contains",
+     "text": "rx_multi_find"
+    },
+    {
+     "kind": "includes",
+     "path": "categories",
+     "item": {
+      "name": "scanning"
+     }
+    }
+   ]
+  },
+  {
+   "id": "help-type-library-export-codes",
+   "backlog_item": 5,
+   "tool": "rex_help",
+   "args": {
+    "tool_name": "rex_type_library_export"
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "parameters",
+     "item": {
+      "name": "names",
+      "error_codes": [
+       "invalid_params"
+      ]
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "parameters",
+     "item": {
+      "name": "kind",
+      "error_codes": [
+       "invalid_params"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "help-uidf-set-many-item-codes",
+   "backlog_item": 6,
+   "tool": "rex_help",
+   "args": {
+    "tool_name": "rex_uidf_set_many"
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "parameters",
+     "item": {
+      "name": "items",
+      "error_codes": [
+       "invalid_params",
+       "no_mlil",
+       "no_variable",
+       "ambiguous_definition",
+       "definition_not_found",
+       "set_failed"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "help-constant-find-schema",
+   "backlog_item": 4,
+   "tool": "rex_help",
+   "args": {
+    "tool_name": "rex_constant_find"
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "parameters",
+     "item": {
+      "name": "value",
+      "maximum": 18446744073709551615
+     }
+    },
+    {
+     "kind": "not_contains",
+     "text": "18446744073709552000"
+    }
+   ]
+  },
+  {
+   "id": "call-paths-one-route-two-call-sites",
+   "backlog_item": 1,
+   "tool": "rex_call_paths",
+   "args": {
+    "from_addr": "dup_root",
+    "to_addr": "dup_leaf",
+    "direction": "callees"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": true,
+     "path": "reachable"
+    },
+    {
+     "kind": "length",
+     "path": "paths",
+     "value": 1
+    },
+    {
+     "kind": "unique",
+     "path": "paths"
+    },
+    {
+     "kind": "subset",
+     "value": [
+      [
+       {
+        "name": "dup_root"
+       },
+       {
+        "name": "dup_mid"
+       },
+       {
+        "name": "dup_leaf"
+       }
+      ]
+     ],
+     "path": "paths"
+    }
+   ]
+  },
+  {
+   "id": "call-paths-callees-through-real-main",
+   "backlog_item": 1,
+   "tool": "rex_call_paths",
+   "args": {
+    "from_addr": "real_main",
+    "to_addr": "dup_leaf",
+    "direction": "callees"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "paths",
+     "value": 1
+    },
+    {
+     "kind": "unique",
+     "path": "paths"
+    },
+    {
+     "kind": "subset",
+     "value": [
+      [
+       {
+        "name": "real_main"
+       },
+       {
+        "name": "dup_root"
+       },
+       {
+        "name": "dup_mid"
+       },
+       {
+        "name": "dup_leaf"
+       }
+      ]
+     ],
+     "path": "paths"
+    }
+   ]
+  },
+  {
+   "id": "call-paths-diamond-keeps-both-routes",
+   "backlog_item": 1,
+   "tool": "rex_call_paths",
+   "args": {
+    "from_addr": "diamond_top",
+    "to_addr": "diamond_bottom",
+    "direction": "callees"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "paths",
+     "value": 2
+    },
+    {
+     "kind": "unique",
+     "path": "paths"
+    },
+    {
+     "kind": "includes",
+     "path": "paths",
+     "item": [
+      {
+       "name": "diamond_top"
+      },
+      {
+       "name": "diamond_left"
+      },
+      {
+       "name": "diamond_bottom"
+      }
+     ]
+    },
+    {
+     "kind": "includes",
+     "path": "paths",
+     "item": [
+      {
+       "name": "diamond_top"
+      },
+      {
+       "name": "diamond_right"
+      },
+      {
+       "name": "diamond_bottom"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "call-paths-callers-default-direction",
+   "backlog_item": 1,
+   "tool": "rex_call_paths",
+   "args": {
+    "from_addr": "dup_leaf",
+    "to_addr": "dup_root"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "paths",
+     "value": 1
+    },
+    {
+     "kind": "unique",
+     "path": "paths"
+    },
+    {
+     "kind": "subset",
+     "value": [
+      [
+       {
+        "name": "dup_leaf"
+       },
+       {
+        "name": "dup_mid"
+       },
+       {
+        "name": "dup_root"
+       }
+      ]
+     ],
+     "path": "paths"
+    }
+   ]
+  },
+  {
+   "id": "call-paths-default-direction-is-callers",
+   "backlog_item": "help",
+   "tool": "rex_call_paths",
+   "args": {
+    "from_addr": "dup_root",
+    "to_addr": "dup_leaf"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": false,
+     "path": "reachable"
+    },
+    {
+     "kind": "length",
+     "path": "paths",
+     "value": 0
+    }
+   ]
+  },
+  {
+   "id": "export-symbols-dot-filename",
+   "backlog_item": 2,
+   "tool": "rex_export_symbols",
+   "args": {
+    "start": 4198400,
+    "end": 4198656,
+    "filename": "."
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "file name"
+    }
+   ]
+  },
+  {
+   "id": "export-symbols-trailing-slash-filename",
+   "backlog_item": 2,
+   "tool": "rex_export_symbols",
+   "args": {
+    "start": 4198400,
+    "end": 4198656,
+    "filename": "sub/"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "file name"
+    }
+   ]
+  },
+  {
+   "id": "constraints-minus-one-at-each-width",
+   "backlog_item": 3,
+   "tool": "rex_function_constraints",
+   "args": {
+    "function": "compare_minus_one"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "constraints",
+     "value": 4
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0xff",
+      "subject": {
+       "variable": "arg1"
+      }
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0xffff",
+      "subject": {
+       "variable": "arg2"
+      }
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0xffffffff",
+      "subject": {
+       "variable": "arg3"
+      }
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0xffffffffffffffff",
+      "subject": {
+       "variable": "arg4"
+      }
+     }
+    },
+    {
+     "kind": "not_regex",
+     "pattern": "\"constant\": \"-"
+    }
+   ]
+  },
+  {
+   "id": "constraints-negative-displacements",
+   "backlog_item": 3,
+   "tool": "rex_function_constraints",
+   "args": {
+    "function": "negative_displacements"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "constraints",
+     "value": 3
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0x1234",
+      "subject": {
+       "kind": "load",
+       "base": "arg1",
+       "offset": "-0x8"
+      }
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0x41",
+      "char": "A",
+      "subject": {
+       "kind": "load",
+       "base": "arg2",
+       "offset": "-0x8"
+      }
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "constraints",
+     "item": {
+      "constant": "0xffffffff",
+      "subject": {
+       "kind": "load",
+       "base": "arg1",
+       "offset": "-0xc"
+      }
+     }
+    },
+    {
+     "kind": "not_regex",
+     "pattern": "\"constant\": \"-"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-max-uint64-integer",
+   "backlog_item": 4,
+   "tool": "rex_constant_find",
+   "args": {
+    "value": 18446744073709551615
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "compare_minus_one"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "store_big_constants"
+     }
+    },
+    {
+     "kind": "subset",
+     "value": false,
+     "path": "truncated"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-max-uint64-hex-string",
+   "backlog_item": 4,
+   "tool": "rex_constant_find",
+   "args": {
+    "value": "0xffffffffffffffff"
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "compare_minus_one"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "store_big_constants"
+     }
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_constant_find",
+      "args": {
+       "value": 18446744073709551615
+      }
+     },
+     "fields": [
+      "total",
+      "functions"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "constant-find-uppercase-hex-string",
+   "backlog_item": 4,
+   "tool": "rex_constant_find",
+   "args": {
+    "value": "0X7EDCBA9876543210"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "functions",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "value": [
+      {
+       "name": "store_big_constants"
+      }
+     ],
+     "path": "functions"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-float-rounded-max-rejected",
+   "backlog_item": 4,
+   "tool": "rex_constant_find",
+   "args": {
+    "value": 18446744073709552000
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-two-pow-64-rejected",
+   "backlog_item": 4,
+   "tool": "rex_constant_find",
+   "args": {
+    "value": 18446744073709551616
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-bare-0x-rejected",
+   "backlog_item": 4,
+   "tool": "rex_constant_find",
+   "args": {
+    "value": "0x"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-signed-string-rejected",
+   "backlog_item": 4,
+   "tool": "rex_constant_find",
+   "args": {
+    "value": "-1"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params"
+    }
+   ]
+  },
+  {
+   "id": "eval-python-explicit-cause",
+   "backlog_item": 7,
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "try:\n    raise KeyError('inner')\nexcept KeyError as cause:\n    raise ValueError('outer') from cause"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": "ValueError: outer; caused by KeyError: 'inner'",
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "result"
+    }
+   ]
+  },
+  {
+   "id": "eval-python-tool-error-keeps-code",
+   "backlog_item": 7,
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "import binaryninja.mcp as mcp\nraise mcp.ToolError('my_code', 'my message')"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": "binaryninja.mcp.ToolError: my_code: my message",
+     "path": "error"
+    }
+   ]
+  },
+  {
+   "id": "uidf-set-register-parameter-advice",
+   "backlog_item": 8,
+   "tool": "rex_uidf_set",
+   "args": {
+    "function": "many_arguments",
+    "variable": "arg1",
+    "value": "1"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "no_variable",
+     "message_contains": "a register parameter is live from function entry"
+    }
+   ]
+  },
+  {
+   "id": "uidf-set-stack-parameter-advice",
+   "backlog_item": 8,
+   "tool": "rex_uidf_set",
+   "args": {
+    "function": "many_arguments",
+    "variable": "arg7",
+    "value": "1"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "no_variable",
+     "message_contains": "stack-passed arguments cannot be informed"
+    }
+   ]
+  },
+  {
+   "id": "uidf-set-non-parameter-gets-no-advice",
+   "backlog_item": 8,
+   "tool": "rex_uidf_set",
+   "args": {
+    "function": "many_arguments",
+    "variable": "__return_addr",
+    "value": "1"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "no_variable",
+     "message_contains": "has no MediumLevelIL definition sites",
+     "message_lacks": "register parameter"
+    },
+    {
+     "kind": "error_code",
+     "code": "no_variable",
+     "message_lacks": "stack-passed"
+    }
+   ]
+  },
+  {
+   "id": "parameter-variables-unknown-name-lists-variables",
+   "backlog_item": 8,
+   "tool": "rex_parameter_variables",
+   "args": {
+    "function": "many_arguments",
+    "parameter": "nonesuch"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "no_variable",
+     "message_contains": "variables: __return_addr, arg1,",
+     "message_lacks": "register parameter"
+    }
+   ]
+  },
+  {
+   "id": "quick-main-tail-call-stub-note",
+   "backlog_item": 9,
+   "tool": "rex_quick_main",
+   "args": {},
+   "expect": [
+    {
+     "kind": "subset",
+     "value": "symbol",
+     "path": "method"
+    },
+    {
+     "kind": "subset",
+     "value": "0x401050",
+     "path": "main"
+    },
+    {
+     "kind": "regex",
+     "path": "note",
+     "pattern": "^main is a tail-call stub; its real body is real_main at 0x[0-9a-f]+$"
+    },
+    {
+     "kind": "subset",
+     "value": [
+      "return real_main(argc, argv) __tailcall"
+     ],
+     "path": "lines"
+    }
+   ]
+  },
+  {
+   "id": "mlil-uses-definitions-sorted-from-first-site",
+   "backlog_item": 10,
+   "tool": "rex_mlil_uses",
+   "args": {
+    "function": "many_definitions",
+    "address": "0x40116c"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "variables",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "value": "result",
+     "path": "variables.0.variable"
+    },
+    {
+     "kind": "subset",
+     "value": [
+      "0x40116c",
+      "0x401176",
+      "0x401182"
+     ],
+     "path": "variables.0.definitions"
+    },
+    {
+     "kind": "sorted_hex",
+     "path": "variables.0.definitions"
+    }
+   ]
+  },
+  {
+   "id": "mlil-uses-definitions-sorted-from-core-first-site",
+   "backlog_item": 10,
+   "tool": "rex_mlil_uses",
+   "args": {
+    "function": "many_definitions",
+    "address": "0x401176"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": [
+      "0x40116c",
+      "0x401176",
+      "0x401182"
+     ],
+     "path": "variables.0.definitions"
+    },
+    {
+     "kind": "sorted_hex",
+     "path": "variables.0.definitions"
+    }
+   ]
+  },
+  {
+   "id": "pattern-credits-lowest-start-function",
+   "backlog_item": 11,
+   "tool": "rex_find_functions_by_pattern",
+   "args": {
+    "pattern": "b8 34 12 5a 5a"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "functions",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "value": [
+      {
+       "name": "overlap_low",
+       "match_count": 1
+      }
+     ],
+     "path": "functions"
+    },
+    {
+     "kind": "excludes",
+     "path": "functions",
+     "item": {
+      "name": "overlap_high"
+     }
+    },
+    {
+     "kind": "subset",
+     "value": 1,
+     "path": "total"
+    }
+   ]
+  },
+  {
+   "id": "pattern-in-low-only-code",
+   "backlog_item": 11,
+   "tool": "rex_find_functions_by_pattern",
+   "args": {
+    "pattern": "b8 11 11 11 11"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": [
+      {
+       "name": "overlap_low",
+       "match_count": 1
+      }
+     ],
+     "path": "functions"
+    }
+   ]
+  },
+  {
+   "id": "pattern-in-high-only-code",
+   "backlog_item": 11,
+   "tool": "rex_find_functions_by_pattern",
+   "args": {
+    "pattern": "b8 22 22 22 22"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": [
+      {
+       "name": "overlap_high",
+       "match_count": 1
+      }
+     ],
+     "path": "functions"
+    }
+   ]
+  },
+  {
+   "id": "function-containing-lists-lowest-start-first",
+   "backlog_item": 11,
+   "tool": "rex_function_containing",
+   "args": {
+    "addr": "overlap_shared"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": [
+      {
+       "name": "overlap_low"
+      },
+      {
+       "name": "overlap_high"
+      }
+     ],
+     "path": "functions"
+    }
+   ]
+  },
+  {
+   "id": "constant-find-zero-keeps-real-zero-operands",
+   "backlog_item": 13,
+   "tool": "rex_constant_find",
+   "args": {
+    "value": 0,
+    "limit": 500
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": false,
+     "path": "truncated"
+    },
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "store_real_zero"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "overlap_low"
+     }
+    },
+    {
+     "kind": "excludes",
+     "path": "functions",
+     "item": {
+      "name": "zero_xor_only"
+     }
+    },
+    {
+     "kind": "excludes",
+     "path": "functions",
+     "item": {
+      "name": "_start"
+     }
+    }
+   ]
+  },
+  {
+   "id": "constant-find-zero-opt-in-returns-xor-hits",
+   "backlog_item": 13,
+   "tool": "rex_constant_find",
+   "args": {
+    "value": 0,
+    "limit": 500,
+    "include_non_operand_hits": true
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "store_real_zero"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "zero_xor_only"
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "functions",
+     "item": {
+      "name": "_start"
+     }
+    }
+   ]
+  },
+  {
+   "id": "constant-find-zero-opt-in-needs-zero",
+   "backlog_item": 13,
+   "tool": "rex_constant_find",
+   "args": {
+    "value": 1,
+    "include_non_operand_hits": true
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params"
+    }
+   ]
+  },
+  {
+   "id": "skip-main-analysis",
+   "backlog_item": 12,
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "main = bv.get_function_at(0x401050)\nmain.analysis_skip_override = binaryninja.FunctionAnalysisSkipOverride.AlwaysSkipFunctionAnalysis\nbv.update_analysis_and_wait()\nmain = bv.get_function_at(0x401050)\nresult = (main.analysis_skipped, main.hlil is None)"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "(True, True)",
+     "path": "result"
+    }
+   ]
+  },
+  {
+   "id": "quick-main-skipped-main-note",
+   "backlog_item": 12,
+   "tool": "rex_quick_main",
+   "args": {},
+   "expect": [
+    {
+     "kind": "subset",
+     "value": "symbol",
+     "path": "method"
+    },
+    {
+     "kind": "subset",
+     "value": "0x401050",
+     "path": "main"
+    },
+    {
+     "kind": "subset",
+     "value": [],
+     "path": "lines"
+    },
+    {
+     "kind": "regex",
+     "path": "note",
+     "pattern": "^the main function \\S+ has no HLIL: its analysis is skipped \\(.+\\); waiting for analysis will not produce one$"
+    }
+   ]
+  },
+  {
+   "id": "restore-main-analysis",
+   "backlog_item": 12,
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "main = bv.get_function_at(0x401050)\nmain.analysis_skip_override = binaryninja.FunctionAnalysisSkipOverride.DefaultFunctionAnalysisSkip\nbv.update_analysis_and_wait()\nresult = bv.get_function_at(0x401050).analysis_skipped"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "False",
+     "path": "result"
+    }
+   ]
+  },
+  {
+   "id": "quick-main-stub-note-after-restore",
+   "backlog_item": 12,
+   "tool": "rex_quick_main",
+   "args": {},
+   "expect": [
+    {
+     "kind": "regex",
+     "path": "note",
+     "pattern": "^main is a tail-call stub; its real body is real_main at 0x[0-9a-f]+$"
+    }
+   ]
+  },
+  {
+   "id": "section-with-nul-python",
+   "backlog_item": "audit-N1",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "e8",
+    "section": ".te\u0000xt"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "section_not_found",
+     "message_contains": "no section named '.te\ufffdxt'"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "e8",
+       "section": ".te\u0000xt"
+      }
+     },
+     "fields": [
+      "errorCode",
+      "errorMessage"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "section-with-nul-rust",
+   "backlog_item": "audit-N1",
+   "tool": "rx_data_find",
+   "args": {
+    "pattern": "e8",
+    "section": ".te\u0000xt"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "section_not_found",
+     "message_contains": "no section named '.te\ufffdxt'"
+    }
+   ]
+  },
+  {
+   "id": "pattern-token-with-nul-parity",
+   "backlog_item": "audit-N1",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "e8 \u0000z"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_pattern",
+     "message_contains": "invalid hex byte token '\ufffdz'"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "e8 \u0000z"
+      }
+     },
+     "fields": [
+      "errorCode",
+      "errorMessage"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "data-find-parity-call-wildcards",
+   "backlog_item": "audit-parity",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "e8 ?? ?? ?? ??",
+    "section": ".text",
+    "limit": 5
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": true,
+     "path": "truncated"
+    },
+    {
+     "kind": "length",
+     "path": "matches",
+     "value": 5
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "e8 ?? ?? ?? ??",
+       "section": ".text",
+       "limit": 5
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "data-find-parity-second-page",
+   "backlog_item": "audit-parity",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "e8 ?? ?? ?? ??",
+    "section": ".text",
+    "limit": 5,
+    "offset": 5
+   },
+   "expect": [
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "e8 ?? ?? ?? ??",
+       "section": ".text",
+       "limit": 5,
+       "offset": 5
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "data-find-parity-whole-view",
+   "backlog_item": "audit-parity",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "c3",
+    "limit": 20
+   },
+   "expect": [
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "c3",
+       "limit": 20
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "data-find-parity-no-match",
+   "backlog_item": "audit-parity",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "de ad be ef 5a 5a 5a 5a"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": {
+      "total": 0,
+      "truncated": false,
+      "matches": []
+     }
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "de ad be ef 5a 5a 5a 5a"
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "data-find-parity-invalid-token",
+   "backlog_item": "audit-parity",
+   "tool": "rex_data_find",
+   "args": {
+    "pattern": "zz"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_pattern"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rx_data_find",
+      "args": {
+       "pattern": "zz"
+      }
+     },
+     "fields": [
+      "errorCode",
+      "errorMessage"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "multi-find-parity-with-data-find",
+   "backlog_item": "audit-parity",
+   "tool": "rx_multi_find",
+   "args": {
+    "patterns": [
+     "e8 ?? ?? ?? ??",
+     "b8 34 12 5a 5a",
+     "de ad be ef 5a 5a 5a 5a",
+     "ff ff ff ff ff ff ff ff"
+    ],
+    "limit": 4
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "results",
+     "value": 4
+    },
+    {
+     "kind": "subset",
+     "value": "b8 34 12 5a 5a",
+     "path": "results.1.pattern"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_data_find",
+      "args": {
+       "pattern": "e8 ?? ?? ?? ??",
+       "limit": 4
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ],
+     "path": "results.0"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_data_find",
+      "args": {
+       "pattern": "b8 34 12 5a 5a",
+       "limit": 4
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ],
+     "path": "results.1"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_data_find",
+      "args": {
+       "pattern": "de ad be ef 5a 5a 5a 5a",
+       "limit": 4
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ],
+     "path": "results.2"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_data_find",
+      "args": {
+       "pattern": "ff ff ff ff ff ff ff ff",
+       "limit": 4
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ],
+     "path": "results.3"
+    }
+   ]
+  },
+  {
+   "id": "multi-find-section-error-parity",
+   "backlog_item": "audit-N1",
+   "tool": "rx_multi_find",
+   "args": {
+    "patterns": [
+     "e8"
+    ],
+    "section": ".te\u0000xt"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "section_not_found"
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_data_find",
+      "args": {
+       "pattern": "e8",
+       "section": ".te\u0000xt"
+      }
+     },
+     "fields": [
+      "errorCode",
+      "errorMessage"
+     ]
+    }
+   ]
+  }
+ ]
+}
