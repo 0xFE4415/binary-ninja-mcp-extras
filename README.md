@@ -174,6 +174,10 @@ uvx nox -s mutation          # mutmut; fails when any Python mutant survives or 
 uvx nox -s mutation_native   # cargo-mutants; fails when any Rust mutant is missed or times out
 ```
 
+Another opt-in session drives a running Binary Ninja through its MCP server. Run
+`uvx nox -s live` with the plugin and the native half loaded: it opens the fixture in
+`tests/live`, runs `playbook.json`, and closes the view again.
+
 The `native` session gates the Rust crate in stub-core mode, so it needs a Rust
 toolchain, clang, cmake, and ninja but no Binary Ninja install. See
 [native/README.md](native/README.md) for the crate's build modes and the integration

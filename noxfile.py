@@ -159,6 +159,12 @@ def bench_native(session: nox.Session) -> None:
     )
 
 
+@nox.session(python=False)
+def live(session: nox.Session) -> None:
+    """Opt-in end-to-end playbook against a running Binary Ninja MCP server."""
+    session.run("python3", "-I", "tests/live/run_playbook.py", *session.posargs, external=True)
+
+
 @nox.session
 def check(session: nox.Session) -> None:
     session.notify("format")
