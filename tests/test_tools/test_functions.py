@@ -42,7 +42,9 @@ def test_function_define_and_undefine() -> None:
     with pytest.raises(FakeToolError) as exc:
         undefine(_call(view), 0x9999)
     assert exc.value.code == "no_function"
-    assert exc.value.message == "no function contains 0x9999"
+    assert exc.value.message == (
+        "no function contains 0x9999; the address is mapped but no function covers it"
+    )
 
 
 def test_function_define_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -550,17 +552,30 @@ def test_call_paths_rejects_out_of_range_bounds() -> None:
     assert at_cap_depth["reachable"] is True
 
 
-def test_function_undefine_misses_give_no_define_advice() -> None:
+def test_function_undefine_misses_keep_the_diagnosis_without_define_advice() -> None:
     view = FakeBinaryView(
         functions=[FakeFunction("main", 0x1000, 0x1100)],
         pending_functions=[FakeFunction("sub_4000", 0x4000, 0x4010)],
     )
     _, undefine = get_tool("rex_function_undefine")
-    for address in (0x1100, 0x1800, 0x20000):
+    expected = {
+        0x1100: (
+            "no function contains 0x1100; the address is immediately past the end of main at "
+            "0x1000 (highest address 0x10ff); when the last instruction ends the block "
+            "(for example int3, ret, or jmp) the next bytes belong to no function"
+        ),
+        0x1800: "no function contains 0x1800; the address is mapped but no function covers it",
+        0x20000: "no function contains 0x20000; the address is not mapped by any segment",
+    }
+    for address, message in expected.items():
         with pytest.raises(FakeToolError) as exc:
             undefine(_call(view), address)
         assert exc.value.code == "no_function"
-        assert exc.value.message == f"no function contains {address:#x}"
+        assert exc.value.message == message
     with pytest.raises(FakeToolError) as exc:
         undefine(_call(view), 0x4000)
     assert exc.value.code == "analysis_pending"
+    assert exc.value.message == (
+        "function at 0x4000 exists but has not been analyzed yet; wait for analysis "
+        "(rex_analysis_wait) or run bn_analysis_update"
+    )

@@ -372,10 +372,10 @@ present only on some rows.
   `library_name_too_large`. Over-cap component paths, type-name list entries, and export
   filenames return `invalid_params` instead.
 - An error a caller can act on names the next step in its message: `analysis_pending` names
-  `rex_analysis_wait`, `no_function` names `rex_function_define` (except for
-  `rex_function_undefine`, which has nothing to define), `ambiguous_definition` names
-  `def_address`, and `not_found` from `rex_eval_result` names the `stdout_key` and
-  `result_key` fields of `rex_eval_python`.
+  `rex_analysis_wait`, `no_function` for a mapped address names `rex_function_define` (except
+  for `rex_function_undefine`, which has nothing to define and gives only the diagnosis),
+  `ambiguous_definition` names `def_address`, and `not_found` from `rex_eval_result` names
+  the `stdout_key` and `result_key` fields of `rex_eval_python`.
 - A string the core reads as a C string would be cut at a NUL (U+0000), so one containing a
   NUL returns `invalid_params` with the message `<parameter> must not contain NUL bytes`.
   This covers key-value keys and values, report titles and markdown, tag types and data,

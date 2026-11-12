@@ -141,7 +141,7 @@ def _paginate[Item](items: Iterable[Item], offset: int, limit: int) -> tuple[lis
     return page, skipped + len(page) + int(truncated), truncated
 
 
-def _containment_miss_hint(bv: BinaryView, address: int) -> str:
+def _containment_miss_hint(bv: BinaryView, address: int, advise_define: bool) -> str:
     if not bv.is_valid_offset(address):
         return "the address is not mapped by any segment"
     # Overlapping functions can hide the owner of address - 1, so check every one containing it.
@@ -153,18 +153,21 @@ def _containment_miss_hint(bv: BinaryView, address: int) -> str:
         ),
         None,
     )
+    define_call = f"rex_function_define(start={address:#x})"
     if previous is None:
-        return (
-            "the address is mapped but no function covers it; "
-            f"define one with rex_function_define(start={address:#x}) if it is code"
-        )
-    return (
+        diagnosis = "the address is mapped but no function covers it"
+        if not advise_define:
+            return diagnosis
+        return f"{diagnosis}; define one with {define_call} if it is code"
+    diagnosis = (
         f"the address is immediately past the end of {_truncate(previous.name)} at "
         f"{previous.start:#x} (highest address {previous.highest_address:#x}); when the last "
         "instruction ends the block (for example int3, ret, or jmp) the next bytes belong to "
-        f"no function, so define one with rex_function_define(start={address:#x}) if "
-        "execution continues"
+        "no function"
     )
+    if not advise_define:
+        return diagnosis
+    return f"{diagnosis}, so define one with {define_call} if execution continues"
 
 
 def _containment_miss(
@@ -172,15 +175,15 @@ def _containment_miss(
 ) -> tuple[bool, str]:
     # A defined but unanalyzed function is invisible to containment lookups.
     if bv.get_function_at(address) is not None:
+        wait_advice = "rex_analysis_wait, or rex_function_define with wait=true"
+        if not advise_define:
+            wait_advice = "rex_analysis_wait"
         return True, (
             f"function at {address:#x} exists but has not been analyzed yet; wait for "
-            "analysis (rex_analysis_wait, or rex_function_define with wait=true) "
-            "or run bn_analysis_update"
+            f"analysis ({wait_advice}) or run bn_analysis_update"
         )
     message = f"no {described} contains {address:#x}"
-    if advise_define:
-        message = f"{message}; {_containment_miss_hint(bv, address)}"
-    return False, message
+    return False, f"{message}; {_containment_miss_hint(bv, address, advise_define)}"
 
 
 def _raise_containment_miss(

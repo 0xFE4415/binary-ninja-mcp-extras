@@ -17,6 +17,7 @@ from binja_plugin.tools import (
     _MAX_LIMIT,
     _missing_il_error,
     _require_analyzed_function,
+    _show_nul,
     _truncate,
     _unknown_variable_error,
     _validate_range,
@@ -424,7 +425,7 @@ def rex_mlil_uses(
         names = ", ".join(_variable_text(target.arch, defined) for defined in at_address)
         raise mcp.ToolError(
             "no_variable",
-            f"no variable named '{_truncate(str(variable))}' is defined at {address:#x} "
+            f"no variable named '{_show_nul(_truncate(str(variable)))}' is defined at {address:#x} "
             f"in {_truncate(target.name)}; defined there: {names}",
         )
     return {
