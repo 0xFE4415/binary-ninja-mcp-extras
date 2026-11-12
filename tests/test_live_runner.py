@@ -731,6 +731,10 @@ def signal_state() -> tuple[dict[signal.Signals, Any], set[int]]:
     return handlers, signal.pthread_sigmask(signal.SIG_BLOCK, [])
 
 
+def test_restored_signals_applies_to_every_test(request: pytest.FixtureRequest):
+    assert "restored_signals" in request.fixturenames
+
+
 @pytest.mark.parametrize("raises", [False, True], ids=["returns", "raises"])
 def test_signals_restored_puts_back_every_unwind_handler_and_the_mask(raises: bool):
     signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGUSR2])

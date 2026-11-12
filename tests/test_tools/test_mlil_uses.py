@@ -4,10 +4,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from helpers import NO_ALTERNATIVES, FakeToolError, _call, get_tool
+from helpers import NO_ALTERNATIVES, FakeToolError, _call, _run_uses, _uses_view, get_tool
 from helpers_dataflow import (
     FakeInstruction,
     FakeMLILInstructions,
+    _flag_variable,
+    _stack_variable,
     add,
     branch,
     compare,
@@ -27,24 +29,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 
-def _uses_view(
-    instructions: list[FakeInstruction],
-    definitions: dict[FakeVariable, list[FakeInstruction]],
-    uses: dict[FakeVariable, list[FakeInstruction]] | None = None,
-) -> FakeBinaryView:
-    mlil = FakeMLILInstructions(instructions, uses=uses, definitions=definitions)
-    return FakeBinaryView(functions=[FakeFunction("check", 0x1000, 0x1100, mlil=mlil)])
-
-
 def _read_of(variable: FakeVariable, address: int = 0x1030) -> FakeInstruction:
     return branch(address, compare("MLIL_CMP_NE", var(variable), const(0x68)))
-
-
-def _run_uses(view: FakeBinaryView, **arguments: Any) -> dict[str, Any]:
-    _, uses = get_tool("rex_mlil_uses")
-    arguments.setdefault("function", 0x1000)
-    arguments.setdefault("address", 0x1020)
-    return uses(_call(view), **arguments)
 
 
 def _no_uses_report(name: str, definitions: list[str], register: str = "rax") -> dict[str, Any]:
@@ -357,15 +343,6 @@ def test_uses_filter_to_the_named_defined_variable() -> None:
     ]
 
 
-def _stack_variable(name: str, offset: int, type_string: str = "int32_t") -> FakeVariable:
-    return FakeVariable(
-        name,
-        source_type=FakeVariableSourceType.StackVariableSourceType,
-        storage=offset,
-        type_string=type_string,
-    )
-
-
 def _category_view() -> tuple[FakeBinaryView, list[FakeVariable]]:
     first = _stack_variable("category", 8)
     second = _stack_variable("category", 16)
@@ -423,12 +400,6 @@ def test_uses_filter_returns_every_same_named_variable_and_no_other() -> None:
     assert _run_uses(view, variable="rax")["variables"] == [
         {**_no_uses_report("rax", ["0x1020"]), "type": "char*"}
     ]
-
-
-def _flag_variable(storage: int) -> FakeVariable:
-    return FakeVariable(
-        "f", source_type=FakeVariableSourceType.FlagVariableSourceType, storage=storage
-    )
 
 
 def test_uses_tell_same_named_same_storage_variables_apart_by_type() -> None:

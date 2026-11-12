@@ -16,7 +16,8 @@ import pytest
 
 # The UIDF and view fakes live in leaf modules: they hold only self-contained fakes so
 # this module's top-level import of them cannot cycle.
-from helpers_uidf import FakeRegisterValueType, FakeVariableSourceType
+from helpers_dataflow import FakeInstruction, FakeMLILInstructions
+from helpers_uidf import FakeRegisterValueType, FakeVariable, FakeVariableSourceType
 from helpers_view import (
     TYPE_LIBRARIES_ON_DISK,
     FakeAnalysisSkipReason,
@@ -481,3 +482,19 @@ def _use_export_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     root = tmp_path / "exports"
     monkeypatch.setattr(tools, "_EXPORT_ROOT", root)
     return root
+
+
+def _uses_view(
+    instructions: list[FakeInstruction],
+    definitions: dict[FakeVariable, list[FakeInstruction]],
+    uses: dict[FakeVariable, list[FakeInstruction]] | None = None,
+) -> FakeBinaryView:
+    mlil = FakeMLILInstructions(instructions, uses=uses, definitions=definitions)
+    return FakeBinaryView(functions=[FakeFunction("check", 0x1000, 0x1100, mlil=mlil)])
+
+
+def _run_uses(view: FakeBinaryView, **arguments: Any) -> dict[str, Any]:
+    _, uses = get_tool("rex_mlil_uses")
+    arguments.setdefault("function", 0x1000)
+    arguments.setdefault("address", 0x1020)
+    return uses(_call(view), **arguments)

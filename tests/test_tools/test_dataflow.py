@@ -3,11 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from helpers import NO_ALTERNATIVES, FakeToolError, _call, get_tool
+from helpers import NO_ALTERNATIVES, FakeToolError, _call, _run_uses, _uses_view, get_tool
 from helpers_dataflow import (
     FakeHLIL,
     FakeInstruction,
     FakeMLILInstructions,
+    _flag_variable,
+    _stack_variable,
     add,
     branch,
     compare,
@@ -25,7 +27,6 @@ from helpers_view import (
     FakeBinaryView,
     FakeFunction,
 )
-from test_mlil_uses import _flag_variable, _run_uses, _stack_variable, _uses_view
 
 from binja_plugin.tools import dataflow as dataflow_tools
 
