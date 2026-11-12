@@ -8,8 +8,9 @@ import re
 import signal
 import sys
 import time
-import urllib.error
 import urllib.request
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
@@ -22,7 +23,7 @@ DEFAULT_PLAYBOOK = HERE / "playbook.json"
 CALL_TIMEOUT_SECONDS = 120
 ANALYSIS_BUDGET_SECONDS = 120
 ANALYSIS_RETRY_SECONDS = 1
-TERMINATION_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+TERMINATION_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
 
 
 class HarnessError(Exception):
@@ -165,7 +166,6 @@ def subset_mismatch(expected: Any, actual: Any, where: str = "$") -> str | None:
 
 
 def check_subset(assertion: dict[str, Any], value: Any) -> str | None:
-    """Objects match by key subset, lists by length, scalars exactly including type."""
     return subset_mismatch(assertion["value"], value)
 
 
@@ -414,17 +414,25 @@ def unwind_on_termination(signal_number: int, frame: FrameType | None) -> None:
     raise SystemExit(128 + signal_number)
 
 
+@contextmanager
+def termination_signals_unblocked() -> Generator[None]:
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, TERMINATION_SIGNALS)
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_BLOCK, TERMINATION_SIGNALS)
+
+
 def run_opened(playbook: dict[str, Any], client: McpClient, binary: str) -> int:
     failed = 0
-    closed = False
     try:
-        signal.pthread_sigmask(signal.SIG_UNBLOCK, TERMINATION_SIGNALS)
-        wait_for_analysis(client, binary)
-        version = core_version(client, binary)
-        print(f"Binary Ninja {version}; fixture {binary}")
-        if version != playbook["binary_ninja_version"]:
-            print(f"WARNING: playbook pinned {playbook['binary_ninja_version']}")
-        failed = run_steps(playbook, binary, client)
+        with termination_signals_unblocked():
+            wait_for_analysis(client, binary)
+            version = core_version(client, binary)
+            print(f"Binary Ninja {version}; fixture {binary}")
+            if version != playbook["binary_ninja_version"]:
+                print(f"WARNING: playbook pinned {playbook['binary_ninja_version']}")
+            failed = run_steps(playbook, binary, client)
     finally:
         closed = close_fixture(client, binary)
     total = len(playbook["steps"])

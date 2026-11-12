@@ -1056,7 +1056,9 @@
    "expect": [
     {
      "kind": "error_code",
-     "code": "invalid_params"
+     "code": "invalid_params",
+     "message_contains": "only allowed with value 0",
+     "message_lacks": "Unexpected parameter"
     }
    ]
   },
@@ -1537,6 +1539,47 @@
       "matches"
      ],
      "path": "results.3"
+    }
+   ]
+  },
+  {
+   "id": "multi-find-no-match",
+   "guards": "rx_multi_find reports a pattern with no match as empty, untruncated, and agrees with rex_data_find.",
+   "tool": "rx_multi_find",
+   "args": {
+    "patterns": [
+     "de ad be ef 5a 5a 5a 5a"
+    ]
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": {
+      "total": 0,
+      "results": [
+       {
+        "pattern": "de ad be ef 5a 5a 5a 5a",
+        "total": 0,
+        "truncated": false,
+        "matches": []
+       }
+      ]
+     }
+    },
+    {
+     "kind": "parity",
+     "against": {
+      "tool": "rex_data_find",
+      "args": {
+       "pattern": "de ad be ef 5a 5a 5a 5a"
+      }
+     },
+     "fields": [
+      "total",
+      "truncated",
+      "matches"
+     ],
+     "path": "results.0"
     }
    ]
   },

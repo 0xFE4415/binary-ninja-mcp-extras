@@ -578,8 +578,32 @@ def test_main_exits_two_on_a_harness_error(
     assert runner.main() == 2
 
 
-@pytest.mark.parametrize("termination_signal", runner.TERMINATION_SIGNALS)
-def test_termination_during_the_open_still_closes_the_view(
+UNWIND_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+
+
+def test_every_unwind_signal_is_handled():
+    assert set(runner.TERMINATION_SIGNALS) == set(UNWIND_SIGNALS)
+
+
+@pytest.fixture
+def restored_signals() -> Iterator[None]:
+    handlers = {number: signal.getsignal(number) for number in runner.TERMINATION_SIGNALS}
+    mask = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    yield
+    for number in runner.TERMINATION_SIGNALS:
+        signal.signal(number, signal.SIG_IGN)
+    signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+    for number, handler in handlers.items():
+        signal.signal(number, handler)
+
+
+def blocked_termination_signals() -> set[signal.Signals]:
+    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    return {number for number in runner.TERMINATION_SIGNALS if number in blocked}
+
+
+@pytest.mark.parametrize("termination_signal", UNWIND_SIGNALS)
+def test_termination_during_the_open_stops_before_any_step_and_closes_the_view(
     stub: StubServer, tmp_path: Path, fixture_file: Path, termination_signal: signal.Signals
 ):
     open_started = threading.Event()
@@ -614,4 +638,103 @@ def test_termination_during_the_open_still_closes_the_view(
         release_open.set()
         process.kill()
         process.wait()
+    assert stub.call_names() == ["bn_binary_open", "rex_binary_close"]
+
+
+@pytest.mark.parametrize("termination_signal", UNWIND_SIGNALS)
+def test_termination_during_the_steps_stops_the_run_and_closes_the_view(
+    stub: StubServer,
+    tmp_path: Path,
+    fixture_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    restored_signals: None,
+    termination_signal: signal.Signals,
+):
+    reached_after_signal: list[str] = []
+
+    def interrupted_steps(playbook: dict[str, Any], binary: str, client: runner.McpClient) -> int:
+        signal.raise_signal(termination_signal)
+        reached_after_signal.append(binary)
+        return 0
+
+    monkeypatch.setattr(runner, "run_steps", interrupted_steps)
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    with pytest.raises(SystemExit) as exit_info:
+        runner.run(playbook_path, stub.url)
+    assert exit_info.value.code == 128 + termination_signal
+    assert reached_after_signal == []
     assert stub.call_names()[-1] == "rex_binary_close"
+
+
+@pytest.mark.parametrize("termination_signal", UNWIND_SIGNALS)
+def test_termination_arriving_at_the_close_request_waits_for_the_close(
+    stub: StubServer,
+    tmp_path: Path,
+    fixture_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    restored_signals: None,
+    termination_signal: signal.Signals,
+):
+    close_fixture = runner.close_fixture
+
+    def close_after_signal(client: runner.McpClient, binary: str) -> bool:
+        signal.raise_signal(termination_signal)
+        return close_fixture(client, binary)
+
+    monkeypatch.setattr(runner, "close_fixture", close_after_signal)
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    with pytest.raises(SystemExit) as exit_info:
+        runner.run(playbook_path, stub.url)
+    assert exit_info.value.code == 128 + termination_signal
+    assert stub.call_names()[-1] == "rex_binary_close"
+
+
+def test_termination_signals_are_blocked_during_the_close_request(
+    stub: StubServer,
+    tmp_path: Path,
+    fixture_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    restored_signals: None,
+):
+    close_fixture = runner.close_fixture
+    blocked_during_close: list[set[signal.Signals]] = []
+
+    def record_mask(client: runner.McpClient, binary: str) -> bool:
+        blocked_during_close.append(blocked_termination_signals())
+        return close_fixture(client, binary)
+
+    monkeypatch.setattr(runner, "close_fixture", record_mask)
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    assert runner.run(playbook_path, stub.url) == 0
+    assert blocked_during_close == [set(runner.TERMINATION_SIGNALS)]
+
+
+def test_run_unblocks_the_termination_signals_after_a_successful_run(
+    stub: StubServer, tmp_path: Path, fixture_file: Path, restored_signals: None
+):
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    assert runner.run(playbook_path, stub.url) == 0
+    assert blocked_termination_signals() == set()
+
+
+def test_run_unblocks_the_termination_signals_after_a_failed_open(
+    stub: StubServer, tmp_path: Path, fixture_file: Path, restored_signals: None
+):
+    stub.tools["bn_binary_open"] = lambda arguments: structured({"errorCode": "x"}, True)
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    with pytest.raises(runner.HarnessError, match="bn_binary_open failed"):
+        runner.run(playbook_path, stub.url)
+    assert blocked_termination_signals() == set()
+
+
+@pytest.mark.parametrize("termination_signal", UNWIND_SIGNALS)
+def test_unwinding_ignores_every_further_termination_signal(
+    restored_signals: None, termination_signal: signal.Signals
+):
+    for number in runner.TERMINATION_SIGNALS:
+        signal.signal(number, runner.unwind_on_termination)
+    with pytest.raises(SystemExit) as exit_info:
+        runner.unwind_on_termination(termination_signal, None)
+    assert exit_info.value.code == 128 + termination_signal
+    for number in runner.TERMINATION_SIGNALS:
+        assert signal.getsignal(number) == signal.SIG_IGN
