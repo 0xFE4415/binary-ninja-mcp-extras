@@ -56,7 +56,6 @@ class _AnnotationRow(TypedDict):
 
 class _AnnotateManyResult(TypedDict):
     applied: int
-    failed: int
     failed_count: int
     total: int
     results: list[_AnnotationRow]
@@ -266,10 +265,8 @@ def rex_annotate_many(
         else:
             results.append(outcome)
     applied = sum(1 for row in results if row["ok"])
-    # "failed" is this tool's legacy count key, kept so existing callers do not break.
     return {
         "applied": applied,
-        "failed": len(results) - applied,
         "failed_count": len(results) - applied,
         "total": len(results),
         "results": results,

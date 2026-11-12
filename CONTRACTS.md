@@ -160,8 +160,7 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
   `rx_` tools are never listed); otherwise `tool_name` for one raises `unknown_tool`.
 - `rex_annotate_many`, `rex_component_add_functions`, `rex_type_library_export`, and
   `rex_type_library_import` return count fields `applied`, `failed_count`, and `total`.
-  `rex_annotate_many` also has legacy `failed` and `results`; `rex_component_add_functions`
-  has legacy `added_count` and `results`; the type-library tools return a `failed` list.
+  The type-library tools also return a `failed` list.
 - `rex_type_library_export` lists `exported` as `{name, type}` entries for `kind="types"`
   (`type` is the rendered type, truncated; type names are unique in a view, so no `address`
   or `alternatives`). For `kind="objects"` each entry is `{name, type, address,
@@ -208,7 +207,7 @@ some rows.
   graph and include tail calls. A function called from several sites is one edge, so a path
   is never listed twice. Code pointers passed as data and imports with no function object are
   not edges.
-- `rex_component_add_functions`: `path`, `added_count`, `applied`, `failed_count`, `total`,
+- `rex_component_add_functions`: `path`, `applied`, `failed_count`, `total`,
   and `results` rows `{start, name, also_containing, same_name, added}`.
 - `rex_component_create`: `path`, `display_name`, `guid`.
 - `rex_component_get`: `path`, `guid`, `display_name`, `parent_path` (null for the root),

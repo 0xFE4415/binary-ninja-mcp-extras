@@ -58,12 +58,9 @@ def test_annotate_many_applies_name_comment_and_prototype_in_one_transaction() -
         ],
     )
     # A comment-bearing row echoes the exact address the comment lands on; name and
-    # prototype are function-level, so their rows echo the function start. "failed" is
-    # this tool's legacy count key; "applied"/"failed_count"/"total" are the uniform
-    # batch-summary keys every batch tool now carries.
+    # prototype are function-level, so their rows echo the function start.
     assert result == {
         "applied": 2,
-        "failed": 0,
         "failed_count": 0,
         "total": 2,
         "results": [
@@ -104,7 +101,6 @@ def test_annotate_many_reports_a_missing_function_per_item() -> None:
     )
     assert result == {
         "applied": 1,
-        "failed": 1,
         "failed_count": 1,
         "total": 2,
         "results": [
@@ -135,7 +131,6 @@ def test_annotate_many_skips_the_transaction_when_every_item_fails() -> None:
     )
     assert result == {
         "applied": 0,
-        "failed": 2,
         "failed_count": 2,
         "total": 2,
         "results": [
@@ -193,7 +188,7 @@ def test_annotate_many_reports_item_content_errors_per_item() -> None:
     }
     assert unknown == {"addr": "0x1100", "ok": False, "error": "unknown field(s): hue"}
     assert result["applied"] == 0
-    assert result["failed"] == 5
+    assert result["failed_count"] == 5
 
 
 def test_annotate_many_rejects_bad_batch_shape_and_size() -> None:
@@ -230,7 +225,6 @@ def test_annotate_many_rejects_the_removed_type_alias_as_an_unknown_field() -> N
     )
     assert result == {
         "applied": 0,
-        "failed": 1,
         "failed_count": 1,
         "total": 1,
         "results": [{"addr": "0x1100", "ok": False, "error": "unknown field(s): type"}],
@@ -252,7 +246,6 @@ def test_annotate_many_rejects_an_unparsable_prototype_before_applying_anything(
     )
     assert result == {
         "applied": 0,
-        "failed": 1,
         "failed_count": 1,
         "total": 1,
         "results": [{"addr": "0x1100", "ok": False, "error": "bad type: expected ';'"}],
@@ -322,7 +315,7 @@ def test_annotate_many_rejects_oversized_or_mistyped_strings_per_item() -> None:
         == f"prototype exceeds {annotations_tools._MAX_ANNOTATE_PROTOTYPE_CHARS} characters"
     )
     assert result["applied"] == 0
-    assert result["failed"] == 7
+    assert result["failed_count"] == 7
     assert view.transactions == []
 
 
@@ -361,7 +354,7 @@ def test_annotate_many_accepts_strings_exactly_at_the_caps() -> None:
         ],
     )
     assert result["applied"] == 1
-    assert result["failed"] == 0
+    assert result["failed_count"] == 0
     assert main.name == "n" * annotations_tools._MAX_ANNOTATE_NAME_CHARS
     assert main.get_comment_at(0x1100) == "c" * annotations_tools._MAX_ANNOTATE_COMMENT_CHARS
     assert main.comment == ""

@@ -205,9 +205,6 @@ def test_component_add_functions_resolves_then_adds() -> None:
     _, add = get_tool("rex_component_add_functions")
     result = add(FakeParsingToolCall(view), "/Network", ["0x3000", "0x5000"])
     assert result["path"] == "/Network"
-    assert result["added_count"] == 2
-    # The uniform batch-summary keys, shared with rex_annotate_many and the type-library
-    # tools so a caller reads the same failed summary from every batch response.
     assert result["applied"] == 2
     assert result["failed_count"] == 0
     assert result["total"] == 2
@@ -255,7 +252,6 @@ def test_component_add_functions_reports_declined_adds() -> None:
     network.rejected_functions.append(view.functions[1])
     _, add = get_tool("rex_component_add_functions")
     result = add(FakeParsingToolCall(view), "/Network", ["0x1000"])
-    assert result["added_count"] == 0
     assert result["applied"] == 0
     assert result["failed_count"] == 1
     assert result["total"] == 1
@@ -270,7 +266,6 @@ def test_component_add_functions_into_the_root_component() -> None:
     result = add(FakeParsingToolCall(view), "/", ["0x3000"])
     assert result == {
         "path": "/",
-        "added_count": 1,
         "applied": 1,
         "failed_count": 0,
         "total": 1,
@@ -314,4 +309,4 @@ def test_component_add_functions_validates_inputs() -> None:
     assert "bad address expression" in exc.value.message
     # At the batch cap the call still goes through.
     at_cap = add(FakeParsingToolCall(view), "/Network", ["0x3000"] * 128)
-    assert at_cap["added_count"] == 128
+    assert at_cap["applied"] == 128

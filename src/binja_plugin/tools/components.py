@@ -36,7 +36,6 @@ class _AddedFunction(_ResolvedFunction):
 
 class _ComponentAddResult(TypedDict):
     path: str
-    added_count: int
     applied: int
     failed_count: int
     total: int
@@ -124,13 +123,11 @@ def rex_component_add_functions(
     component = _resolve_component(bv, path)
     with bv.undoable_transaction():
         results = [_add_to_component(component, resolution) for resolution in resolved]
-    added_count = sum(1 for result in results if result["added"])
+    applied = sum(1 for result in results if result["added"])
     return {
         "path": path,
-        "added_count": added_count,
-        # added_count is the legacy name for applied, kept so existing callers do not break.
-        "applied": added_count,
-        "failed_count": len(results) - added_count,
+        "applied": applied,
+        "failed_count": len(results) - applied,
         "total": len(results),
         "results": results,
     }
