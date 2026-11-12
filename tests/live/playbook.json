@@ -1311,7 +1311,7 @@
   },
   {
    "id": "annotate-name-with-nul-rejected",
-   "guards": "A NUL byte in an annotation name fails that row and changes nothing.",
+   "guards": "A NUL byte in an annotation name fails that row with a name error and applies nothing in the batch.",
    "tool": "rex_annotate_many",
    "args": {
     "items": [
@@ -1342,7 +1342,7 @@
   },
   {
    "id": "annotate-address-with-nul-rejected",
-   "guards": "A NUL byte in an annotation address string fails that row and changes nothing.",
+   "guards": "A NUL byte in an annotation address string fails that row with an addr error and applies nothing in the batch.",
    "tool": "rex_annotate_many",
    "args": {
     "items": [

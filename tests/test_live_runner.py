@@ -135,17 +135,19 @@ def fixture_file(tmp_path: Path) -> Path:
 
 
 def write_playbook(
-    tmp_path: Path, fixture_file: Path, steps: list[dict[str, Any]], version: str = "1.0"
+    tmp_path: Path,
+    fixture_file: Path,
+    steps: list[dict[str, Any]],
+    version: str = "1.0",
+    base: str | None = "0x400000",
 ) -> Path:
-    playbook = {
-        "binary_ninja_version": version,
-        "fixture": {
-            "path": str(fixture_file),
-            "base": "0x400000",
-            "sha256": hashlib.sha256(fixture_file.read_bytes()).hexdigest(),
-        },
-        "steps": steps,
+    fixture = {
+        "path": str(fixture_file),
+        "sha256": hashlib.sha256(fixture_file.read_bytes()).hexdigest(),
     }
+    if base is not None:
+        fixture["base"] = base
+    playbook = {"binary_ninja_version": version, "fixture": fixture, "steps": steps}
     path = tmp_path / "playbook.json"
     path.write_text(json.dumps(playbook))
     return path
@@ -559,13 +561,20 @@ def test_run_proceeds_when_the_view_starts_at_the_fixture_base(
     ]
 
 
+MISMATCHED_STARTS = [
+    pytest.param("0x10000", id="below-the-base"),
+    pytest.param("0x500000", id="above-the-base"),
+]
+
+
+@pytest.mark.parametrize("start", MISMATCHED_STARTS)
 def test_run_refuses_a_view_that_starts_elsewhere_and_closes_it(
-    stub: StubServer, tmp_path: Path, fixture_file: Path
+    stub: StubServer, tmp_path: Path, fixture_file: Path, start: str
 ):
-    stub.tools["bn_binary_open"] = lambda arguments: opened_reply("0x10000")
+    stub.tools["bn_binary_open"] = lambda arguments: opened_reply(start)
     playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
     with pytest.raises(
-        runner.HarnessError, match=r"^fixture loaded at 0x10000, expected 0x400000$"
+        runner.HarnessError, match=rf"^fixture loaded at {start}, expected 0x400000$"
     ):
         runner.run(playbook_path, stub.url)
     assert stub.calls == [
@@ -574,21 +583,23 @@ def test_run_refuses_a_view_that_starts_elsewhere_and_closes_it(
     ]
 
 
+@pytest.mark.parametrize("start", MISMATCHED_STARTS)
 def test_main_exits_two_and_reports_a_base_mismatch(
     stub: StubServer,
     tmp_path: Path,
     fixture_file: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    start: str,
 ):
-    stub.tools["bn_binary_open"] = lambda arguments: opened_reply("0x10000")
+    stub.tools["bn_binary_open"] = lambda arguments: opened_reply(start)
     playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
     monkeypatch.setattr(
         sys, "argv", ["run_playbook.py", "--url", stub.url, "--playbook", str(playbook_path)]
     )
     assert runner.main() == 2
     captured = capsys.readouterr()
-    assert "ERROR: fixture loaded at 0x10000, expected 0x400000" in captured.err
+    assert f"ERROR: fixture loaded at {start}, expected 0x400000" in captured.err
     assert "passed" not in captured.out
     assert stub.call_names() == ["bn_binary_open", "rex_binary_close"]
 
@@ -619,6 +630,34 @@ def test_run_refuses_a_missing_view_start_and_closes_it(
     with pytest.raises(runner.HarnessError, match="the view start is not a hex address: None"):
         runner.run(playbook_path, stub.url)
     assert stub.call_names() == ["bn_binary_open", "rex_binary_close"]
+
+
+@pytest.mark.parametrize(
+    ("base", "shown"),
+    [
+        pytest.param(None, "None", id="missing"),
+        pytest.param("not hex", "'not hex'", id="not-hex"),
+        pytest.param("", "''", id="empty"),
+    ],
+)
+def test_main_exits_two_on_a_bad_playbook_base_without_opening_a_view(
+    stub: StubServer,
+    tmp_path: Path,
+    fixture_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    base: str | None,
+    shown: str,
+):
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)], base=base)
+    monkeypatch.setattr(
+        sys, "argv", ["run_playbook.py", "--url", stub.url, "--playbook", str(playbook_path)]
+    )
+    assert runner.main() == 2
+    captured = capsys.readouterr()
+    assert f"ERROR: the playbook fixture base is not a hex address: {shown}" in captured.err
+    assert captured.out == ""
+    assert stub.calls == []
 
 
 def test_run_closes_the_view_when_analysis_never_finishes(

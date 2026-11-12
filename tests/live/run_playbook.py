@@ -364,8 +364,15 @@ def open_fixture(client: McpClient, fixture: Path) -> OpenedFixture:
     return OpenedFixture(str(binary["handle"]), binary.get("start"))
 
 
-def check_fixture_base(opened: OpenedFixture, playbook: dict[str, Any]) -> None:
-    expected = int(playbook["fixture"]["base"], 16)
+def fixture_base(playbook: dict[str, Any]) -> int:
+    base = playbook["fixture"].get("base")
+    try:
+        return int(base, 16)
+    except (TypeError, ValueError) as error:
+        raise HarnessError(f"the playbook fixture base is not a hex address: {base!r}") from error
+
+
+def check_fixture_base(opened: OpenedFixture, expected: int) -> None:
     try:
         actual = int(opened.start, 16)
     except (TypeError, ValueError) as error:
@@ -456,12 +463,14 @@ def unwind_handlers_installed() -> Generator[None]:
                 signal.signal(number, handler)
 
 
-def run_opened(playbook: dict[str, Any], client: McpClient, opened: OpenedFixture) -> int:
+def run_opened(
+    playbook: dict[str, Any], client: McpClient, opened: OpenedFixture, base: int
+) -> int:
     binary = opened.handle
     failed = 0
     try:
         with unwind_signals_unblocked():
-            check_fixture_base(opened, playbook)
+            check_fixture_base(opened, base)
             wait_for_analysis(client, binary)
             version = core_version(client, binary)
             print(f"Binary Ninja {version}; fixture {binary}")
@@ -480,11 +489,12 @@ def run_opened(playbook: dict[str, Any], client: McpClient, opened: OpenedFixtur
 def run(playbook_path: Path, url: str) -> int:
     playbook = json.loads(playbook_path.read_text())
     fixture = verify_fixture(playbook)
+    base = fixture_base(playbook)
     client = McpClient(url)
     client.initialize()
     with unwind_handlers_installed():
         opened = open_fixture(client, fixture)
-        return run_opened(playbook, client, opened)
+        return run_opened(playbook, client, opened, base)
 
 
 def main() -> int:
