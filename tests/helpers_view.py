@@ -1139,6 +1139,7 @@ class FakeTypeLibrary:
         file_bytes: bytes = b"BNTL",
         finalize_result: bool = True,
         write_error: OSError | None = None,
+        writes_file: bool = True,
         named_types: dict[str, FakeType] | None = None,
     ) -> None:
         self.name = name
@@ -1146,6 +1147,7 @@ class FakeTypeLibrary:
         self.file_bytes = file_bytes
         self.finalize_result = finalize_result
         self.write_error = write_error
+        self.writes_file = writes_file
         # Names the library provides, answered by get_named_type; everything else is
         # absent from the library even though the view-level import still returns an NTR.
         self.named_types = named_types or {}
@@ -1172,6 +1174,8 @@ class FakeTypeLibrary:
         # core's BNWriteTypeLibraryToFile does.
         if self.write_error is not None:
             raise self.write_error
+        if not self.writes_file:
+            return
         with open(path, "wb") as handle:
             handle.write(self.file_bytes)
         self.written_paths.append(path)

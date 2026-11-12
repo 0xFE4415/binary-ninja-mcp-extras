@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import ast
 import inspect
-import re
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -28,36 +25,12 @@ from helpers_view import (
     RenderableText,
 )
 
-import binja_plugin
 from binja_plugin.tools.help import (
     _CATEGORY_USE_WHEN,
-    _PARAMETER_ERROR_CODES,
     _UNCATEGORIZED,
     _UNCATEGORIZED_USE_WHEN,
 )
 from binja_plugin.tools.scanning import _MAX_PATTERN_CHARS
-
-# Error codes the handlers define for the tool as a whole — batch or view-level failures
-# no single parameter owns, plus rex_help's own unknown-name rejection. The
-# per-parameter table does not list these.
-_TOOL_LEVEL_CODES = frozenset(
-    {
-        "annotate_failed",
-        "clear_failed",
-        "close_failed",
-        "create_failed",
-        "finalize_failed",
-        "no_arch",
-        "redo_failed",
-        "set_failed",
-        "undo_failed",
-        "unknown_category",
-        "unknown_tool",
-    }
-)
-
-_MUTMUT_VARIANT = re.compile(r"__mutmut_\d+$")
-_MUTMUT_ORIGINAL = re.compile(r"^x_(.+)__mutmut_orig$")
 
 
 def _help(tool_name: str = "", category: str = "") -> Any:
@@ -237,7 +210,6 @@ def test_help_details_types_defaults_and_bounds() -> None:
         "type": "string",
         "required": False,
         "description": "Substring or regular expression to match; empty matches every string.",
-        "error_codes": ["invalid_regex"],
         "default": "",
     }
     assert by_name["limit"] == {
@@ -245,7 +217,6 @@ def test_help_details_types_defaults_and_bounds() -> None:
         "type": "integer",
         "required": False,
         "description": "Maximum strings to return.",
-        "error_codes": [],
         "minimum": 0,
         "maximum": 500,
         "default": 50,
@@ -273,16 +244,10 @@ def test_help_states_that_call_paths_defaults_to_callers_and_reachability_needs_
     )
 
 
-def test_help_details_required_flags_and_per_parameter_error_codes() -> None:
+def test_help_details_required_flags_and_bounds() -> None:
     by_name = {parameter["name"]: parameter for parameter in _help("rex_data_find")["parameters"]}
     assert by_name["pattern"]["required"] is True
     assert by_name["pattern"]["maxLength"] == _MAX_PATTERN_CHARS
-    assert by_name["pattern"]["error_codes"] == [
-        "invalid_params",
-        "pattern_too_large",
-        "invalid_pattern",
-    ]
-    assert by_name["section"]["error_codes"] == ["section_not_found"]
     assert by_name["limit"]["required"] is False
 
 
@@ -318,7 +283,6 @@ def test_help_details_the_uidf_batch_items_schema() -> None:
 def test_help_details_non_empty_strings_and_itself() -> None:
     by_name = {parameter["name"]: parameter for parameter in _help("rex_report_show")["parameters"]}
     assert by_name["title"]["minLength"] == 1
-    assert by_name["title"]["error_codes"] == ["title_too_large"]
 
     own = {parameter["name"]: parameter for parameter in _help("rex_help")["parameters"]}
     assert own["tool_name"] == {
@@ -326,7 +290,6 @@ def test_help_details_non_empty_strings_and_itself() -> None:
         "type": "string",
         "required": False,
         "description": "Tool whose parameters to describe; empty selects the category views.",
-        "error_codes": [],
         "default": "",
     }
     assert own["category"] == {
@@ -334,7 +297,6 @@ def test_help_details_non_empty_strings_and_itself() -> None:
         "type": "string",
         "required": False,
         "description": "Category whose tools to list with purposes; empty lists the categories.",
-        "error_codes": [],
         "default": "",
     }
 
@@ -353,274 +315,6 @@ def test_help_uncategorized_category_reports_the_uncategorized_use_when() -> Non
     assert listing["use_when"] == _UNCATEGORIZED_USE_WHEN
 
 
-def test_help_error_code_table_keys_are_registered_parameters() -> None:
-    registered = {
-        (tool.name, parameter_name)
-        for tool in FakeTool.list()
-        for parameter_name in tool.input_schema["properties"]
-    }
-    assert {key for key in _PARAMETER_ERROR_CODES if key[0].startswith("rex_")} <= registered
-
-
-def _walk_definitions(node: ast.AST) -> Iterator[ast.AST]:
-    # Under mutmut the package source carries every mutant inline as x__name__mutmut_N
-    # copies whose literals are mutated; the pristine bodies live in __mutmut_orig. The
-    # scan must read only the real code, so numbered variants are pruned (the pattern
-    # never matches outside a mutants tree).
-    for child in ast.iter_child_nodes(node):
-        if (
-            isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
-            and _MUTMUT_VARIANT.search(child.name) is not None
-        ):
-            continue
-        yield child
-        yield from _walk_definitions(child)
-
-
-def _defined_error_codes() -> set[str]:
-    """Collect the error-code literals the package's handlers and shared helpers define.
-
-    Covers the ToolError first arguments and the code arguments handed to the shared
-    helpers that raise on a handler's behalf: _validate_text's too-large code and
-    _require_containing_function's containment code.
-    """
-    code_positions = {
-        "ToolError": 0,
-        "_validate_text": 3,
-        "_require_containing_function": 2,
-        "_missing_il_error": 2,
-    }
-    codes: set[str] = set()
-    for path in Path(binja_plugin.__file__).parent.rglob("*.py"):
-        for node in _walk_definitions(ast.parse(path.read_text(encoding="utf-8"))):
-            if not isinstance(node, ast.Call):
-                continue
-            target = node.func
-            if isinstance(target, ast.Attribute):
-                name = target.attr
-            elif isinstance(target, ast.Name):
-                name = target.id
-            else:
-                continue
-            position = code_positions.get(name)
-            if position is not None and len(node.args) > position:
-                argument = node.args[position]
-                if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
-                    codes.add(argument.value)
-    return codes
-
-
-# Tool-level codes a parameter lists anyway because a batch reports them per item, in-band.
-_LISTED_TOOL_LEVEL_CODES = {"rex_uidf_set_many": {"set_failed"}}
-
-
-def test_help_error_code_table_matches_the_handler_sources() -> None:
-    defined = _defined_error_codes() - {"invalid_params"} - _TOOL_LEVEL_CODES
-    listed = {
-        code
-        for (listed_tool, _), codes in _PARAMETER_ERROR_CODES.items()
-        if listed_tool.startswith("rex_")
-        for code in codes
-    }
-    in_band = {code for codes in _LISTED_TOOL_LEVEL_CODES.values() for code in codes}
-    assert listed - {"invalid_params"} - in_band == defined
-
-
-_RAISING_HELPER_CODE_POSITIONS = {
-    "ToolError": 0,
-    "_validate_text": 3,
-    "_require_containing_function": 2,
-    "_raise_containment_miss": 2,
-    "_run_undo_stack_step": 2,
-    "_missing_il_error": 2,
-}
-
-# Reached codes no parameter owns (per-window errors, the entry point), so help leaves them out.
-_UNLISTED_REACHABLE_CODES = {
-    "rex_disasm_many": {"analysis_pending"},
-    "rex_quick_main": {"no_function"},
-}
-
-
-def _function_bodies() -> dict[str, list[ast.FunctionDef]]:
-    bodies: dict[str, list[ast.FunctionDef]] = {}
-    for path in Path(binja_plugin.__file__).parent.rglob("*.py"):
-        for node in ast.parse(path.read_text(encoding="utf-8")).body:
-            if isinstance(node, ast.FunctionDef) and _MUTMUT_VARIANT.search(node.name) is None:
-                bodies.setdefault(_MUTMUT_ORIGINAL.sub(r"\1", node.name), []).append(node)
-    return bodies
-
-
-def _callee_name(call: ast.Call) -> str:
-    target = call.func
-    if isinstance(target, ast.Attribute):
-        return target.attr
-    return target.id if isinstance(target, ast.Name) else ""
-
-
-def _literal_code(call: ast.Call) -> str | None:
-    position = _RAISING_HELPER_CODE_POSITIONS.get(_callee_name(call))
-    if position is None or len(call.args) <= position:
-        return None
-    argument = call.args[position]
-    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
-        return argument.value
-    return None
-
-
-def _reachable_error_codes(tool_name: str, skipped: frozenset[str] = frozenset()) -> set[str]:
-    bodies = _function_bodies()
-    codes: set[str] = set()
-    pending, visited = [tool_name], set[str]()
-    while pending:
-        name = pending.pop()
-        if name in visited or name in skipped:
-            continue
-        visited.add(name)
-        calls = [
-            node
-            for body in bodies.get(name, [])
-            for node in ast.walk(body)
-            if isinstance(node, ast.Call)
-        ]
-        pending.extend(_callee_name(call) for call in calls)
-        codes.update(code for call in calls if (code := _literal_code(call)) is not None)
-    return codes
-
-
-@pytest.mark.parametrize("tool_name", sorted(tool.name for tool in FakeTool.list()))
-def test_help_error_code_table_matches_each_tools_reachable_codes(tool_name: str) -> None:
-    reachable = _reachable_error_codes(tool_name)
-    unlisted = _UNLISTED_REACHABLE_CODES.get(tool_name, set())
-    assert unlisted <= reachable
-    listed = {
-        code
-        for (listed_tool, _), codes in _PARAMETER_ERROR_CODES.items()
-        if listed_tool == tool_name
-        for code in codes
-    }
-    in_band = _LISTED_TOOL_LEVEL_CODES.get(tool_name, set())
-    assert (
-        listed - {"invalid_params"} - in_band
-        == reachable - {"invalid_params"} - _TOOL_LEVEL_CODES - unlisted
-    )
-
-
-# Tools whose handlers raise invalid_params for an argument while no parameter lists it:
-# known help gaps. The set may only shrink; a tool that lists the code must leave it.
-_INVALID_PARAMS_UNLISTED_TOOLS = frozenset(
-    {
-        "rex_annotate_many",
-        "rex_component_add_functions",
-        "rex_component_create",
-        "rex_component_get",
-        "rex_decompile_many",
-        "rex_disasm_at",
-        "rex_disasm_many",
-        "rex_function_constraints",
-        "rex_function_define_many",
-        "rex_help",
-        "rex_hlil_statements",
-        "rex_mlil_uses",
-        "rex_parameter_variables",
-        "rex_report_show",
-        "rex_struct_from_access",
-        "rex_type_library_import",
-        "rex_uidf_clear",
-        "rex_uidf_list",
-        "rex_uidf_set",
-    }
-)
-
-_INVALID_PARAMS_GAPS_AT_INTRODUCTION = frozenset(
-    {
-        "rex_annotate_many",
-        "rex_component_add_functions",
-        "rex_component_create",
-        "rex_component_get",
-        "rex_decompile_many",
-        "rex_disasm_at",
-        "rex_disasm_many",
-        "rex_function_constraints",
-        "rex_function_define_many",
-        "rex_help",
-        "rex_hlil_statements",
-        "rex_mlil_uses",
-        "rex_parameter_variables",
-        "rex_report_show",
-        "rex_struct_from_access",
-        "rex_type_library_import",
-        "rex_uidf_clear",
-        "rex_uidf_list",
-        "rex_uidf_set",
-    }
-)
-
-
-def test_the_invalid_params_gap_list_never_gains_a_tool() -> None:
-    assert _INVALID_PARAMS_UNLISTED_TOOLS <= _INVALID_PARAMS_GAPS_AT_INTRODUCTION
-
-
-# Integer range violations are documented by the schema minimum and maximum, not error_codes.
-_RANGE_CHECK_HELPERS = frozenset({"_validate_range"})
-
-
-@pytest.mark.parametrize("tool_name", sorted(tool.name for tool in FakeTool.list()))
-def test_a_tool_raising_invalid_params_lists_it_unless_it_is_a_known_gap(tool_name: str) -> None:
-    raises = "invalid_params" in _reachable_error_codes(tool_name, _RANGE_CHECK_HELPERS)
-    lists = any(
-        "invalid_params" in codes
-        for (listed_tool, _), codes in _PARAMETER_ERROR_CODES.items()
-        if listed_tool == tool_name
-    )
-    known_gap = tool_name in _INVALID_PARAMS_UNLISTED_TOOLS
-    assert (raises and not lists) == known_gap
-
-
-@pytest.mark.parametrize(
-    ("tool_name", "parameter_name", "error_codes"),
-    [
-        ("rex_constant_find", "function_filter", ["invalid_regex"]),
-        ("rex_constant_find", "value", ["invalid_params"]),
-        ("rex_constant_find", "include_non_operand_hits", ["invalid_params"]),
-        ("rex_hlil_grep", "function_filter", ["invalid_regex"]),
-        ("rex_hlil_grep", "regex", ["invalid_regex"]),
-        ("rex_string_refs", "pattern", ["invalid_regex"]),
-        ("rex_function_containing", "addr", ["no_function", "analysis_pending"]),
-        ("rex_component_add_functions", "functions", ["analysis_pending"]),
-        ("rex_uidf_list", "function", ["analysis_pending"]),
-        ("rex_uidf_set_many", "function", ["analysis_pending", "invalid_params"]),
-        ("rex_function_define_many", "addresses", []),
-    ],
-)
-def test_help_details_the_error_codes_of_the_parameter_that_raises_them(
-    tool_name: str, parameter_name: str, error_codes: list[str]
-) -> None:
-    parameters = {parameter["name"]: parameter for parameter in _help(tool_name)["parameters"]}
-    assert parameters[parameter_name]["error_codes"] == error_codes
-
-
-def test_help_details_the_dataflow_tool_error_codes() -> None:
-    constraints = {
-        parameter["name"]: parameter
-        for parameter in _help("rex_function_constraints")["parameters"]
-    }
-    assert constraints["function"]["error_codes"] == ["no_mlil", "analysis_pending"]
-    statements = {
-        parameter["name"]: parameter for parameter in _help("rex_hlil_statements")["parameters"]
-    }
-    assert statements["function"]["error_codes"] == ["no_hlil", "analysis_pending"]
-    uses = {parameter["name"]: parameter for parameter in _help("rex_mlil_uses")["parameters"]}
-    assert uses["function"]["error_codes"] == ["no_mlil", "analysis_pending"]
-    assert uses["address"]["error_codes"] == ["no_definition"]
-    assert uses["variable"]["error_codes"] == ["no_variable"]
-    parameter = {
-        parameter["name"]: parameter for parameter in _help("rex_parameter_variables")["parameters"]
-    }
-    assert parameter["function"]["error_codes"] == ["no_mlil", "analysis_pending"]
-    assert parameter["parameter"]["error_codes"] == ["no_variable"]
-
-
 _EXPORT_FILENAME_CODES = [
     ("", "invalid_params"),
     ("/abs/path.txt", "invalid_params"),
@@ -631,7 +325,13 @@ _EXPORT_FILENAME_CODES = [
     (".", "invalid_params"),
     ("sub/", "invalid_params"),
     ("link.txt", "path_escape"),
-    ("occupied.txt", "export_failed"),
+    ("linkdir", "path_escape"),
+    ("linkdir/out.txt", "path_escape"),
+    ("inner_link", "invalid_params"),
+    ("occupied.txt", "invalid_params"),
+    ("missing/out.txt", "invalid_params"),
+    ("regular.txt/out.txt", "invalid_params"),
+    ("regular.txt/deeper/out.txt", "invalid_params"),
 ]
 
 _EXPORT_FILENAME_TOOLS = ["rex_export_disasm", "rex_export_symbols", "rex_type_library_export"]
@@ -641,7 +341,12 @@ def _use_export_root_with_traps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     root = _use_export_root(monkeypatch, tmp_path)
     root.mkdir(parents=True)
     (root / "link.txt").symlink_to(tmp_path / "outside.txt")
+    (tmp_path / "outside_dir").mkdir()
+    (root / "linkdir").symlink_to(tmp_path / "outside_dir")
     (root / "occupied.txt").mkdir()
+    (root / "inner_dir").mkdir()
+    (root / "inner_link").symlink_to(root / "inner_dir")
+    (root / "regular.txt").write_text("a file, not a directory")
 
 
 def _export_filename_error(tool_name: str, filename: str) -> FakeToolError:
@@ -668,19 +373,6 @@ def test_an_export_filename_raises_the_code_for_its_failure(
     assert _export_filename_error(tool_name, filename).code == code
 
 
-@pytest.mark.parametrize("tool_name", _EXPORT_FILENAME_TOOLS)
-def test_help_lists_exactly_the_codes_an_export_filename_can_raise(tool_name: str) -> None:
-    parameters = {parameter["name"]: parameter for parameter in _help(tool_name)["parameters"]}
-    assert parameters["filename"]["error_codes"] == [
-        "invalid_params",
-        "path_escape",
-        "export_failed",
-    ]
-    assert set(parameters["filename"]["error_codes"]) == {
-        code for _, code in _EXPORT_FILENAME_CODES
-    }
-
-
 _EXPORT_REQUIRED = {
     "rex_export_disasm": ["address", "filename"],
     "rex_export_symbols": ["start", "end", "filename"],
@@ -696,7 +388,6 @@ def test_help_describes_an_export_filename_as_required_without_a_default(tool_na
         "type": "string",
         "required": True,
         "description": "Plain file name inside the export root; overwritten if it exists.",
-        "error_codes": ["invalid_params", "path_escape", "export_failed"],
     }
 
 
@@ -711,29 +402,6 @@ def test_an_export_registers_its_filename_as_required(tool_name: str) -> None:
 def test_an_export_cannot_be_called_without_a_filename(tool_name: str) -> None:
     _, tool = get_tool(tool_name)
     assert inspect.signature(tool).parameters["filename"].default is inspect.Parameter.empty
-
-
-_INVALID_PARAMS_LISTINGS = {
-    *((tool, "filename") for tool in _EXPORT_FILENAME_TOOLS),
-    ("rex_type_library_export", "library_name"),
-    ("rex_type_library_export", "names"),
-    ("rex_type_library_export", "kind"),
-    ("rex_uidf_set_many", "function"),
-    ("rex_uidf_set_many", "items"),
-    ("rex_constant_find", "value"),
-    ("rex_constant_find", "include_non_operand_hits"),
-    ("rex_data_find", "pattern"),
-    ("rex_find_functions_by_pattern", "pattern"),
-    ("rx_data_find", "pattern"),
-    ("rx_multi_find", "patterns"),
-}
-
-
-def test_help_lists_invalid_params_only_where_a_parameter_raises_it() -> None:
-    listing_invalid_params = {
-        key for key, codes in _PARAMETER_ERROR_CODES.items() if "invalid_params" in codes
-    }
-    assert listing_invalid_params == _INVALID_PARAMS_LISTINGS
 
 
 def _type_library_export_error(
@@ -765,15 +433,11 @@ def _type_library_export_error(
         ("kind", "bogus"),
     ],
 )
-def test_a_bad_type_library_export_names_or_kind_raises_invalid_params_and_help_lists_it(
+def test_a_bad_type_library_export_names_or_kind_raises_invalid_params(
     parameter_name: str, bad_value: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     error = _type_library_export_error(monkeypatch, tmp_path, **{parameter_name: bad_value})
     assert error.code == "invalid_params"
-    parameters = {
-        parameter["name"]: parameter for parameter in _help("rex_type_library_export")["parameters"]
-    }
-    assert parameters[parameter_name]["error_codes"] == ["invalid_params"]
 
 
 def _uidf_batch_view() -> FakeBinaryView:
@@ -797,7 +461,7 @@ def _uidf_batch_codes(view: FakeBinaryView, address: int, items: list[object]) -
     return {row["error"]["code"] for row in result["results"] if not row["ok"]}
 
 
-def test_help_lists_exactly_the_codes_a_uidf_set_many_item_can_raise() -> None:
+def test_a_uidf_set_many_item_reports_each_failure_code() -> None:
     view = _uidf_batch_view()
     codes = _uidf_batch_codes(
         view,
@@ -817,9 +481,6 @@ def test_help_lists_exactly_the_codes_a_uidf_set_many_item_can_raise() -> None:
     with pytest.raises(FakeToolError) as error:
         uidf_set_many(_call(view), 0x1100, [])
     codes.add(error.value.code)
-    parameters = {
-        parameter["name"]: parameter for parameter in _help("rex_uidf_set_many")["parameters"]
-    }
     assert codes == {
         "invalid_params",
         "no_mlil",
@@ -828,34 +489,18 @@ def test_help_lists_exactly_the_codes_a_uidf_set_many_item_can_raise() -> None:
         "definition_not_found",
         "set_failed",
     }
-    assert parameters["items"]["error_codes"] == [
-        "invalid_params",
-        "no_mlil",
-        "no_variable",
-        "ambiguous_definition",
-        "definition_not_found",
-        "set_failed",
-    ]
 
 
 @pytest.mark.parametrize(
     ("library_name", "code"), [("", "invalid_params"), ("x" * 5000, "library_name_too_large")]
 )
-def test_a_bad_type_library_name_raises_a_code_help_lists(
+def test_a_bad_type_library_name_raises_its_code(
     library_name: str, code: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     assert _type_library_export_error(monkeypatch, tmp_path, library_name=library_name).code == code
-    parameters = {
-        parameter["name"]: parameter for parameter in _help("rex_type_library_export")["parameters"]
-    }
-    assert code in parameters["library_name"]["error_codes"]
-    assert parameters["library_name"]["error_codes"] == [
-        "invalid_params",
-        "library_name_too_large",
-    ]
 
 
-def test_help_lists_the_codes_a_uidf_set_many_function_can_raise() -> None:
+def test_a_uidf_set_many_function_raises_its_code() -> None:
     _, uidf_set_many = get_tool("rex_uidf_set_many")
     items = [{"variable": "rax_1", "value": "1"}]
     codes = set()
@@ -867,7 +512,3 @@ def test_help_lists_the_codes_a_uidf_set_many_function_can_raise() -> None:
             uidf_set_many(FakeParsingToolCall(view), address, items)
         codes.add(error.value.code)
     assert codes == {"invalid_params", "analysis_pending"}
-    parameters = {
-        parameter["name"]: parameter for parameter in _help("rex_uidf_set_many")["parameters"]
-    }
-    assert parameters["function"]["error_codes"] == ["analysis_pending", "invalid_params"]

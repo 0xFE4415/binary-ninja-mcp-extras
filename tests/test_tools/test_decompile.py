@@ -12,8 +12,10 @@ from helpers import (
     _disasm_view,
     _view_with_functions,
     get_tool,
+    plain_gap_message,
 )
 from helpers_view import (
+    FakeArchitecture,
     FakeBasicBlock,
     FakeBinaryView,
     FakeDisassemblyLine,
@@ -144,7 +146,7 @@ def test_disasm_at_rejects_addresses_outside_functions() -> None:
         with pytest.raises(FakeToolError) as exc:
             disasm(_call(view), address)
         assert exc.value.code == "invalid_params"
-        assert exc.value.message == f"no analyzed function contains {address:#x}"
+        assert exc.value.message == plain_gap_message("analyzed function", address)
 
 
 def test_disasm_at_explains_a_miss_one_byte_past_a_function_end() -> None:
@@ -629,7 +631,7 @@ def test_decompile_many_rejects_the_whole_call_on_any_bad_entry() -> None:
         with pytest.raises(FakeToolError) as exc:
             decompile(FakeParsingToolCall(view), batch)
         assert exc.value.code == "invalid_params"
-        assert exc.value.message == "no analyzed function contains 0x1800"
+        assert exc.value.message == plain_gap_message("analyzed function", 0x1800)
     # An unparsable expression rejects the call the same way.
     with pytest.raises(FakeToolError) as exc:
         decompile(FakeParsingToolCall(view), ["0x1100", "garbage"])
@@ -804,6 +806,33 @@ def test_quick_main_resolves_a_main_symbol_off_the_entry() -> None:
     assert result["main"] == "0x401234"
     assert result["function"]["name"] == "main"
     assert result["note"] is None
+
+
+def test_quick_main_breaks_a_start_tie_between_main_symbols_by_architecture_name() -> None:
+    view = FakeBinaryView(
+        entry_point=0x1000,
+        functions=[
+            FakeFunction("_start", 0x1000, 0x1100),
+            FakeFunction(
+                "main",
+                0x2000,
+                0x2100,
+                hlil=RenderableText("int main_x86() {\n    return 1;\n}"),
+                arch=FakeArchitecture("x86_64"),
+            ),
+            FakeFunction(
+                "main",
+                0x2000,
+                0x2100,
+                hlil=RenderableText("int main_arm() {\n    return 2;\n}"),
+                arch=FakeArchitecture("aarch64"),
+            ),
+        ],
+    )
+    _, quick = get_tool("rex_quick_main")
+    result = quick(FakeParsingToolCall(view))
+    assert result["method"] == "symbol"
+    assert result["lines"] == ["int main_arm() {", "    return 2;", "}"]
 
 
 def test_quick_main_resolves_a_underscore_main_symbol() -> None:
@@ -1013,7 +1042,10 @@ def test_quick_main_errors_when_no_function_contains_the_entry_point() -> None:
     with pytest.raises(FakeToolError) as exc:
         quick(FakeParsingToolCall(view))
     assert exc.value.code == "no_function"
-    assert exc.value.message == "no analyzed function contains the entry point 0x1000"
+    assert exc.value.message == (
+        "no analyzed function contains the entry point 0x1000; "
+        "define one with rex_function_define(start=0x1000) if it is code"
+    )
 
 
 def test_disasm_many_renders_one_window_per_address() -> None:
@@ -1113,7 +1145,7 @@ def test_disasm_many_reports_errors_per_address() -> None:
             "address": "0x9999",
             "error": {
                 "code": "invalid_params",
-                "message": "no analyzed function contains 0x9999",
+                "message": plain_gap_message("analyzed function", 0x9999),
             },
         },
         {
@@ -1156,7 +1188,8 @@ def test_disasm_many_reports_pending_analysis() -> None:
                 "code": "analysis_pending",
                 "message": (
                     "function at 0x4000 exists but has not been analyzed yet; wait for analysis "
-                    "(rex_function_define with wait=true) or run bn_analysis_update"
+                    "(rex_analysis_wait, or rex_function_define with wait=true) "
+                    "or run bn_analysis_update"
                 ),
             },
         }

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, override
 
-from helpers_uidf import FakeVariable
+from helpers_uidf import FakeVariable, FakeVariableSourceType
 
 _DEST_WRITES = ("MLIL_SET_VAR", "MLIL_SET_VAR_SSA", "MLIL_FORCE_VER")
 _SPLIT_WRITES = ("MLIL_SET_VAR_SPLIT", "MLIL_SET_VAR_SPLIT_SSA")
@@ -159,3 +159,18 @@ class FakeHLIL:
 
     def __init__(self, blocks: list[list[FakeInstruction]]) -> None:
         self.basic_blocks = blocks
+
+
+def _stack_variable(name: str, offset: int, type_string: str = "int32_t") -> FakeVariable:
+    return FakeVariable(
+        name,
+        source_type=FakeVariableSourceType.StackVariableSourceType,
+        storage=offset,
+        type_string=type_string,
+    )
+
+
+def _flag_variable(storage: int) -> FakeVariable:
+    return FakeVariable(
+        "f", source_type=FakeVariableSourceType.FlagVariableSourceType, storage=storage
+    )

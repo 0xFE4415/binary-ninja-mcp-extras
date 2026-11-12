@@ -56,10 +56,20 @@ def _validate_range(name: str, value: int, minimum: int, maximum: int | None = N
     return value
 
 
+def _nul_message(parameter: str) -> str:
+    return f"{parameter} must not contain NUL bytes"
+
+
+def _reject_nul(parameter: str, value: str) -> None:
+    if "\x00" in value:
+        raise mcp.ToolError("invalid_params", _nul_message(parameter))
+
+
 def _validate_text(name: str, value: str, maximum: int, too_large_code: str) -> str:
-    """Reject an empty or over-cap string argument instead of silently normalizing it."""
+    """Reject an empty, NUL-bearing, or over-cap string argument instead of normalizing it."""
     if not value:
         raise mcp.ToolError("invalid_params", f"{name} must not be empty")
+    _reject_nul(name, value)
     if len(value) > maximum:
         raise mcp.ToolError(too_large_code, f"{name} exceeds {maximum} characters")
     return value
@@ -131,7 +141,7 @@ def _paginate[Item](items: Iterable[Item], offset: int, limit: int) -> tuple[lis
     return page, skipped + len(page) + int(truncated), truncated
 
 
-def _containment_miss_hint(bv: BinaryView, address: int) -> str:
+def _containment_miss_hint(bv: BinaryView, address: int, advise_define: bool) -> str:
     if not bv.is_valid_offset(address):
         return "the address is not mapped by any segment"
     # Overlapping functions can hide the owner of address - 1, so check every one containing it.
@@ -143,31 +153,44 @@ def _containment_miss_hint(bv: BinaryView, address: int) -> str:
         ),
         None,
     )
+    define_call = f"rex_function_define(start={address:#x})"
     if previous is None:
-        return ""
-    return (
+        diagnosis = "the address is mapped but no function covers it"
+        if not advise_define:
+            return diagnosis
+        return f"{diagnosis}; define one with {define_call} if it is code"
+    diagnosis = (
         f"the address is immediately past the end of {_truncate(previous.name)} at "
         f"{previous.start:#x} (highest address {previous.highest_address:#x}); when the last "
         "instruction ends the block (for example int3, ret, or jmp) the next bytes belong to "
-        f"no function, so define one with rex_function_define(start={address:#x}) if "
-        "execution continues"
+        "no function"
     )
+    if not advise_define:
+        return diagnosis
+    return f"{diagnosis}, so define one with {define_call} if execution continues"
 
 
-def _raise_containment_miss(bv: BinaryView, address: int, code: str, described: str) -> NoReturn:
+def _containment_miss(
+    bv: BinaryView, address: int, described: str, advise_define: bool = True
+) -> tuple[bool, str]:
     # A defined but unanalyzed function is invisible to containment lookups.
-    pending = bv.get_function_at(address)
-    if pending is not None:
-        raise mcp.ToolError(
-            "analysis_pending",
+    if bv.get_function_at(address) is not None:
+        wait_advice = "rex_analysis_wait, or rex_function_define with wait=true"
+        if not advise_define:
+            wait_advice = "rex_analysis_wait"
+        return True, (
             f"function at {address:#x} exists but has not been analyzed yet; wait for "
-            "analysis (rex_function_define with wait=true) or run bn_analysis_update",
+            f"analysis ({wait_advice}) or run bn_analysis_update"
         )
     message = f"no {described} contains {address:#x}"
-    hint = _containment_miss_hint(bv, address)
-    if hint:
-        message = f"{message}; {hint}"
-    raise mcp.ToolError(code, message)
+    return False, f"{message}; {_containment_miss_hint(bv, address, advise_define)}"
+
+
+def _raise_containment_miss(
+    bv: BinaryView, address: int, code: str, described: str, advise_define: bool = True
+) -> NoReturn:
+    pending, message = _containment_miss(bv, address, described, advise_define)
+    raise mcp.ToolError("analysis_pending" if pending else code, message)
 
 
 class _FunctionEntry(TypedDict):
@@ -219,12 +242,12 @@ def _resolve_containing(bv: BinaryView, containing: list[Function]) -> _Resoluti
 
 
 def _require_containing_function(
-    bv: BinaryView, address: int, code: str, described: str
+    bv: BinaryView, address: int, code: str, described: str, advise_define: bool = True
 ) -> _Resolution:
     # Scan tools answer no_function for a miss, argument validators invalid_params.
     containing = bv.get_functions_containing(address)
     if not containing:
-        _raise_containment_miss(bv, address, code, described)
+        _raise_containment_miss(bv, address, code, described, advise_define)
     return _resolve_containing(bv, containing)
 
 
@@ -278,7 +301,7 @@ def _unknown_variable_error(function: Function, name: str) -> mcp.ToolError:
     )
     return mcp.ToolError(
         "no_variable",
-        f"no MLIL variable named '{_truncate(name)}' in {_truncate(function.name)}; "
+        f"no MLIL variable named '{_show_nul(_truncate(name))}' in {_truncate(function.name)}; "
         f"variables: {shown}{more}; use bn_variable_list for the full list",
     )
 
@@ -293,6 +316,7 @@ def _parse_address_entry(call: mcp.ToolCall, index: int, entry: object, noun: st
         raise mcp.ToolError(
             "invalid_params", f"{noun}[{index}] must be a string address expression"
         )
+    _reject_nul(f"{noun}[{index}]", entry)
     try:
         return call.parse_address(entry)
     except Exception as error:
@@ -357,8 +381,8 @@ def _iter_pattern_matches(
             position += _READ_CHUNK
 
 
-def _require_function(bv: BinaryView, address: int) -> _Resolution:
-    return _require_containing_function(bv, address, "no_function", "function")
+def _require_function(bv: BinaryView, address: int, advise_define: bool = True) -> _Resolution:
+    return _require_containing_function(bv, address, "no_function", "function", advise_define)
 
 
 class _ItemError(TypedDict):
@@ -403,8 +427,7 @@ def _validate_export_path(filename: str) -> None:
         )
     if "\\" in filename:
         raise mcp.ToolError("invalid_params", "filename must not contain backslashes")
-    if "\x00" in filename:
-        raise mcp.ToolError("invalid_params", "filename must not contain NUL bytes")
+    _reject_nul("filename", filename)
     parts = filename.split("/")
     if ".." in parts:
         raise mcp.ToolError("invalid_params", "filename must not contain '..' path components")
@@ -419,6 +442,23 @@ def _validate_export_path(filename: str) -> None:
                 "invalid_params",
                 f"filename component exceeds {_MAX_EXPORT_COMPONENT_BYTES} bytes",
             )
+
+
+def _reject_unusable_export_target(filename: str) -> None:
+    resolved_root = _EXPORT_ROOT.resolve()
+    resolved = (_EXPORT_ROOT / filename).resolve()
+    if not resolved.is_relative_to(resolved_root):
+        return
+    if resolved.is_dir():
+        raise mcp.ToolError(
+            "invalid_params", "filename names an existing directory; choose a file name"
+        )
+    if resolved.parent != resolved_root and not resolved.parent.is_dir():
+        raise mcp.ToolError(
+            "invalid_params",
+            "the parent of filename is not an existing directory; "
+            "use a plain file name in the export root",
+        )
 
 
 def _resolve_export_path(filename: str) -> Path:

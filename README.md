@@ -183,8 +183,9 @@ the live benchmark protocol.
 
 The `live` session checks a running Binary Ninja through its MCP server. Start Binary Ninja
 with the plugin and the native half loaded, then run `uvx nox -s live`. It opens
-`tests/live/fixture.elf`, runs `tests/live/playbook.json` against `http://127.0.0.1:24642/mcp`,
-and closes its view again. Pass `-- --url URL` to use another server. CI does not run it.
+`tests/live/fixture.o` (a compiled object, never linked), runs `tests/live/playbook.json`
+against `http://127.0.0.1:24642/mcp`, and closes its view again. Pass `-- --url URL` to use
+another server. CI does not run it.
 
 CI (`.github/workflows/check.yml`) runs four jobs: `check` (markdownlint-cli2 plus
 the format, ruff, size, ty, and test sessions), `native`, and one mutation job per

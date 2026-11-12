@@ -12,7 +12,10 @@ from binaryninja.enums import SymbolType, TypeClass
 
 from binja_plugin.tools import (
     _MAX_EXPORT_FILE_BYTES,
+    _reject_nul,
+    _reject_unusable_export_target,
     _resolve_export_path,
+    _show_nul,
     _truncate,
     _validate_export_path,
     _validate_text,
@@ -200,11 +203,12 @@ def rex_type_library_export(
     _validate_text("library_name", library_name, _MAX_TYPE_NAME_CHARS, "library_name_too_large")
     _validate_type_names(names)
     _validate_export_path(filename)
+    _reject_unusable_export_target(filename)
     # Widened to str so the body check stays reachable by direct calls; match the Literal.
     requested: str = kind
     if requested not in ("types", "objects"):
         raise mcp.ToolError(
-            "invalid_params", f"kind must be 'types' or 'objects', not '{requested}'"
+            "invalid_params", f"kind must be 'types' or 'objects', not '{_show_nul(requested)}'"
         )
     arch = bv.arch
     if arch is None:
@@ -260,7 +264,8 @@ def rex_type_library_export(
             resolved.unlink()
         raise mcp.ToolError(
             "export_failed",
-            f"type library file exceeds the {_MAX_EXPORT_FILE_BYTES} byte export cap",
+            f"type library file exceeds the {_MAX_EXPORT_FILE_BYTES} byte export cap; "
+            "export fewer names",
         )
     return {
         "path": str(resolved),
@@ -285,11 +290,14 @@ def rex_type_library_import(
     :param names: 1 to 128 type names to import from the library.
     """
     bv = call.binary_view
+    _reject_nul("path", path)
     _validate_type_names(names)
     library = TypeLibrary.load_from_file(path)
     if library is None:
         raise mcp.ToolError(
-            "library_not_found", f"could not load a type library from '{_truncate(path)}'"
+            "library_not_found",
+            f"could not load a type library from '{_truncate(path)}'; "
+            "pass the path of a .bntl file, such as one rex_type_library_export wrote",
         )
     bv.add_type_library(library)
     imported: list[_ImportedType] = []

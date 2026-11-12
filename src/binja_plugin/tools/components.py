@@ -87,7 +87,11 @@ def _resolve_component(view: BinaryView, path: str) -> Component:
         return view.root_component
     component = view.get_component_by_path(path)
     if component is None:
-        raise mcp.ToolError("component_not_found", f"no component at path '{_truncate(path)}'")
+        raise mcp.ToolError(
+            "component_not_found",
+            f"no component at path '{_truncate(path)}'; "
+            "rex_component_create makes one, rex_component_get lists the existing ones",
+        )
     return component
 
 

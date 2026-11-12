@@ -10,7 +10,9 @@ from binaryninja.binaryview import BinaryView
 from binaryninja.function import Function
 
 from binja_plugin.tools import (
+    _containment_miss,
     _is_json_object,
+    _nul_message,
     _resolve_containing,
     _ResolvedFunction,
     _truncate,
@@ -90,11 +92,22 @@ def _annotate_function_error(address: int, message: str) -> _AnnotationRow:
     return {"addr": hex(address), "ok": False, "error": message}
 
 
+def _addr_value_error(addr_value: object) -> str | None:
+    if not isinstance(addr_value, (int, str)) or isinstance(addr_value, bool):
+        # bool is an int subclass: a JSON true/false address is a caller bug.
+        return "addr must be an integer or a string address expression"
+    if isinstance(addr_value, str) and "\x00" in addr_value:
+        return _nul_message("addr")
+    return None
+
+
 def _required_text_error(field: str, value: object, max_chars: int) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str) or not value:
         return f"{field} must be a non-empty string"
+    if "\x00" in value:
+        return _nul_message(field)
     if len(value) > max_chars:
         return f"{field} exceeds {max_chars} characters"
     return None
@@ -105,6 +118,8 @@ def _optional_text_error(field: str, value: object, max_chars: int) -> str | Non
         return None
     if not isinstance(value, str):
         return f"{field} must be a string"
+    if "\x00" in value:
+        return _nul_message(field)
     if len(value) > max_chars:
         return f"{field} exceeds {max_chars} characters"
     return None
@@ -159,14 +174,9 @@ def _annotate_resolve(
     if "addr" not in item:
         return _annotate_item_error(item, "addr is required"), None
     addr_value = item["addr"]
-    if not isinstance(addr_value, (int, str)) or isinstance(addr_value, bool):
-        # bool is an int subclass: a JSON true/false address is a caller bug.
-        return (
-            _annotate_addr_error(
-                addr_value, "addr must be an integer or a string address expression"
-            ),
-            None,
-        )
+    addr_error = _addr_value_error(addr_value)
+    if addr_error is not None:
+        return _annotate_addr_error(addr_value, addr_error), None
     unknown = sorted(str(key) for key in item if key not in _ANNOTATE_FIELDS)
     if unknown:
         return _annotate_addr_error(addr_value, f"unknown field(s): {', '.join(unknown)}"), None
@@ -176,10 +186,8 @@ def _annotate_resolve(
         return _annotate_addr_error(addr_value, f"bad address expression: {error}"), None
     containing = bv.get_functions_containing(address)
     if not containing:
-        return (
-            _annotate_function_error(address, f"no analyzed function contains {address:#x}"),
-            None,
-        )
+        _, message = _containment_miss(bv, address, "analyzed function")
+        return _annotate_function_error(address, message), None
     fields = _annotate_fields(item, address)
     if not isinstance(fields, _AnnotationFields):
         return fields, None

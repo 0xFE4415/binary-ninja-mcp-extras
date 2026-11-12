@@ -109,6 +109,16 @@ __asm__(".text\n"
         "    ret\n"
         ".size zero_xor_only, .-zero_xor_only\n");
 
+__asm__(".text\n"
+        ".globl zero_xor_registers\n"
+        ".type zero_xor_registers,@function\n"
+        "zero_xor_registers:\n"
+        "    xor %ebp, %ebp\n"
+        "    xor %r8d, %r8d\n"
+        "    xor %ecx, %ecx\n"
+        "    ret\n"
+        ".size zero_xor_registers, .-zero_xor_registers\n");
+
 /* Register parameters and stack-passed parameters that MLIL never defines. */
 PLANT int many_arguments(int a, int b, int c, int d, int e, int f, int g, int h)
 {
@@ -134,8 +144,10 @@ __asm__(".text\n"
 
 int many_definitions(int first, int second, int third);
 
-/* overlap_high jumps into the middle of overlap_low, so one block is in both. */
+/* overlap_high jumps into the middle of overlap_low, so one block is in both.
+   Declaring overlap_high first makes the core list it first. */
 __asm__(".text\n"
+        ".globl overlap_high\n"
         ".globl overlap_low\n"
         ".type overlap_low,@function\n"
         "overlap_low:\n"
@@ -147,7 +159,6 @@ __asm__(".text\n"
         "    movl $0x5a5a1234, %eax\n"
         "    ret\n"
         ".size overlap_low, .-overlap_low\n"
-        ".globl overlap_high\n"
         ".type overlap_high,@function\n"
         "overlap_high:\n"
         "    cmpl $1, sink32(%rip)\n"

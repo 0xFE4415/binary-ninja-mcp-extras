@@ -6,6 +6,7 @@ from helpers import (
     _call,
     _view_with_functions,
     get_tool,
+    plain_gap_message,
 )
 from helpers_view import (
     FakeArchitecture,
@@ -707,7 +708,7 @@ def test_search_tools_report_empty_results_on_an_empty_view() -> None:
         containing(_call(view), 0x1000)
     assert exc.value.code == "no_function"
     # Scan-style tools answer "no function", argument-validating tools "analyzed function".
-    assert exc.value.message == "no function contains 0x1000"
+    assert exc.value.message == plain_gap_message("function", 0x1000)
 
 
 def _find_functions_view() -> FakeBinaryView:

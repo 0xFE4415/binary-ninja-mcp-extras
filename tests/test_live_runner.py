@@ -4,8 +4,8 @@ import signal
 import subprocess
 import sys
 import threading
-from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import Callable, Generator, Iterator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import FrameType
@@ -23,6 +23,10 @@ ToolHandler = Callable[[dict[str, Any]], str | None]
 def structured(data: dict[str, Any], is_error: bool = False) -> str:
     result = {"structuredContent": data, "isError": is_error, "content": []}
     return json.dumps({"jsonrpc": "2.0", "id": 1, "result": result})
+
+
+def opened_reply(start: Any) -> str:
+    return structured({"binary": {"handle": "h1", "start": start}})
 
 
 def drop_connection(arguments: dict[str, Any]) -> None:
@@ -86,7 +90,7 @@ class StubServer(ThreadingHTTPServer):
 @pytest.fixture
 def stub() -> Iterator[StubServer]:
     server = StubServer()
-    server.tools["bn_binary_open"] = lambda arguments: structured({"binary": {"handle": "h1"}})
+    server.tools["bn_binary_open"] = lambda arguments: opened_reply("0x400000")
     server.tools["rex_analysis_wait"] = lambda arguments: structured({"completed": True})
     server.tools["rex_eval_python"] = lambda arguments: structured(
         {"error": None, "result": "'1.0'"}
@@ -103,16 +107,24 @@ def stub() -> Iterator[StubServer]:
     thread.join()
 
 
-@pytest.fixture(autouse=True)
-def restored_signals() -> Iterator[None]:
+@contextmanager
+def signals_restored() -> Generator[None]:
     handlers = {number: signal.getsignal(number) for number in runner.UNWIND_SIGNALS}
     mask = signal.pthread_sigmask(signal.SIG_BLOCK, [])
-    yield
-    for number in runner.UNWIND_SIGNALS:
-        signal.signal(number, signal.SIG_IGN)
-    signal.pthread_sigmask(signal.SIG_SETMASK, mask)
-    for number, handler in handlers.items():
-        signal.signal(number, handler)
+    try:
+        yield
+    finally:
+        for number in runner.UNWIND_SIGNALS:
+            signal.signal(number, signal.SIG_IGN)
+        signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        for number, handler in handlers.items():
+            signal.signal(number, handler)
+
+
+@pytest.fixture(autouse=True)
+def restored_signals() -> Iterator[None]:
+    with signals_restored():
+        yield
 
 
 @pytest.fixture
@@ -123,16 +135,19 @@ def fixture_file(tmp_path: Path) -> Path:
 
 
 def write_playbook(
-    tmp_path: Path, fixture_file: Path, steps: list[dict[str, Any]], version: str = "1.0"
+    tmp_path: Path,
+    fixture_file: Path,
+    steps: list[dict[str, Any]],
+    version: str = "1.0",
+    base: str | None = "0x400000",
 ) -> Path:
-    playbook = {
-        "binary_ninja_version": version,
-        "fixture": {
-            "path": str(fixture_file),
-            "sha256": hashlib.sha256(fixture_file.read_bytes()).hexdigest(),
-        },
-        "steps": steps,
+    fixture = {
+        "path": str(fixture_file),
+        "sha256": hashlib.sha256(fixture_file.read_bytes()).hexdigest(),
     }
+    if base is not None:
+        fixture["base"] = base
+    playbook = {"binary_ninja_version": version, "fixture": fixture, "steps": steps}
     path = tmp_path / "playbook.json"
     path.write_text(json.dumps(playbook))
     return path
@@ -531,6 +546,120 @@ def test_run_does_not_close_when_the_open_fails(
     assert "rex_binary_close" not in stub.call_names()
 
 
+def test_run_proceeds_when_the_view_starts_at_the_fixture_base(
+    stub: StubServer, tmp_path: Path, fixture_file: Path
+):
+    stub.tools["bn_binary_open"] = lambda arguments: opened_reply("0x400000")
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    assert runner.run(playbook_path, stub.url) == 0
+    assert stub.call_names() == [
+        "bn_binary_open",
+        "rex_analysis_wait",
+        "rex_eval_python",
+        "probe",
+        "rex_binary_close",
+    ]
+
+
+MISMATCHED_STARTS = [
+    pytest.param("0x10000", id="below-the-base"),
+    pytest.param("0x500000", id="above-the-base"),
+]
+
+
+@pytest.mark.parametrize("start", MISMATCHED_STARTS)
+def test_run_refuses_a_view_that_starts_elsewhere_and_closes_it(
+    stub: StubServer, tmp_path: Path, fixture_file: Path, start: str
+):
+    stub.tools["bn_binary_open"] = lambda arguments: opened_reply(start)
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    with pytest.raises(
+        runner.HarnessError, match=rf"^fixture loaded at {start}, expected 0x400000$"
+    ):
+        runner.run(playbook_path, stub.url)
+    assert stub.calls == [
+        ("bn_binary_open", {"path": str(fixture_file.resolve())}),
+        ("rex_binary_close", {"binary": "h1"}),
+    ]
+
+
+@pytest.mark.parametrize("start", MISMATCHED_STARTS)
+def test_main_exits_two_and_reports_a_base_mismatch(
+    stub: StubServer,
+    tmp_path: Path,
+    fixture_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    start: str,
+):
+    stub.tools["bn_binary_open"] = lambda arguments: opened_reply(start)
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    monkeypatch.setattr(
+        sys, "argv", ["run_playbook.py", "--url", stub.url, "--playbook", str(playbook_path)]
+    )
+    assert runner.main() == 2
+    captured = capsys.readouterr()
+    assert f"ERROR: fixture loaded at {start}, expected 0x400000" in captured.err
+    assert "passed" not in captured.out
+    assert stub.call_names() == ["bn_binary_open", "rex_binary_close"]
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        pytest.param(None, id="null"),
+        pytest.param(4194304, id="number"),
+        pytest.param("not hex", id="not-hex"),
+    ],
+)
+def test_run_refuses_an_unreadable_view_start_and_closes_it(
+    stub: StubServer, tmp_path: Path, fixture_file: Path, start: Any
+):
+    stub.tools["bn_binary_open"] = lambda arguments: opened_reply(start)
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    with pytest.raises(runner.HarnessError, match="the view start is not a hex address"):
+        runner.run(playbook_path, stub.url)
+    assert stub.call_names() == ["bn_binary_open", "rex_binary_close"]
+
+
+def test_run_refuses_a_missing_view_start_and_closes_it(
+    stub: StubServer, tmp_path: Path, fixture_file: Path
+):
+    stub.tools["bn_binary_open"] = lambda arguments: structured({"binary": {"handle": "h1"}})
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
+    with pytest.raises(runner.HarnessError, match="the view start is not a hex address: None"):
+        runner.run(playbook_path, stub.url)
+    assert stub.call_names() == ["bn_binary_open", "rex_binary_close"]
+
+
+@pytest.mark.parametrize(
+    ("base", "shown"),
+    [
+        pytest.param(None, "None", id="missing"),
+        pytest.param("not hex", "'not hex'", id="not-hex"),
+        pytest.param("", "''", id="empty"),
+    ],
+)
+def test_main_exits_two_on_a_bad_playbook_base_without_opening_a_view(
+    stub: StubServer,
+    tmp_path: Path,
+    fixture_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    base: str | None,
+    shown: str,
+):
+    playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)], base=base)
+    monkeypatch.setattr(
+        sys, "argv", ["run_playbook.py", "--url", stub.url, "--playbook", str(playbook_path)]
+    )
+    assert runner.main() == 2
+    captured = capsys.readouterr()
+    assert f"ERROR: the playbook fixture base is not a hex address: {shown}" in captured.err
+    assert captured.out == ""
+    assert stub.calls == []
+
+
 def test_run_closes_the_view_when_analysis_never_finishes(
     stub: StubServer, tmp_path: Path, fixture_file: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -614,7 +743,7 @@ def test_termination_during_the_open_stops_before_any_step_and_closes_the_view(
     def slow_open(arguments: dict[str, Any]) -> str:
         open_started.set()
         release_open.wait(TOOL_REPLY_TIMEOUT_SECONDS)
-        return structured({"binary": {"handle": "h1"}})
+        return opened_reply("0x400000")
 
     stub.tools["bn_binary_open"] = slow_open
     playbook_path = write_playbook(tmp_path, fixture_file, [probe_step("good", 1)])
@@ -723,6 +852,27 @@ def signal_state() -> tuple[dict[signal.Signals, Any], set[int]]:
     return handlers, signal.pthread_sigmask(signal.SIG_BLOCK, [])
 
 
+def test_restored_signals_applies_to_every_test(request: pytest.FixtureRequest):
+    assert "restored_signals" in request.fixturenames
+
+
+@pytest.mark.parametrize("raises", [False, True], ids=["returns", "raises"])
+def test_signals_restored_puts_back_every_unwind_handler_and_the_mask(raises: bool):
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGUSR2])
+    install_sentinel_state(signal.SIGUSR1)
+    before = signal_state()
+    with pytest.raises(RuntimeError) if raises else nullcontext():
+        with signals_restored():
+            for number in runner.UNWIND_SIGNALS:
+                signal.signal(number, signal.SIG_IGN)
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGUSR1])
+            signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGUSR2])
+            assert signal_state() != before
+            if raises:
+                raise RuntimeError("test body failed")
+    assert signal_state() == before
+
+
 LEAK_SCENARIOS = [
     pytest.param(1, False, nullcontext(), id="pass"),
     pytest.param(2, False, nullcontext(), id="step-failure"),
@@ -784,7 +934,7 @@ def test_termination_pending_from_the_open_still_closes_with_the_signals_blocked
     close_fixture = runner.close_fixture
     blocked_during_close: list[set[signal.Signals]] = []
 
-    def open_then_signal(client: runner.McpClient, fixture: Path) -> str:
+    def open_then_signal(client: runner.McpClient, fixture: Path) -> runner.OpenedFixture:
         binary = open_fixture(client, fixture)
         signal.raise_signal(termination_signal)
         return binary

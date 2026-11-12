@@ -14,9 +14,9 @@ from typing import Any
 
 import pytest
 
-# The UIDF and view fakes live in leaf modules: they hold only self-contained fakes so
-# this module's top-level import of them cannot cycle.
-from helpers_uidf import FakeRegisterValueType, FakeVariableSourceType
+# These fake modules never import helpers, so importing them here cannot cycle.
+from helpers_dataflow import FakeInstruction, FakeMLILInstructions
+from helpers_uidf import FakeRegisterValueType, FakeVariable, FakeVariableSourceType
 from helpers_view import (
     TYPE_LIBRARIES_ON_DISK,
     FakeAnalysisSkipReason,
@@ -33,6 +33,15 @@ from helpers_view import (
 )
 
 NO_ALTERNATIVES = types.MappingProxyType({"also_containing": [], "same_name": []})
+
+
+def plain_gap_message(described: str, address: int) -> str:
+    return (
+        f"no {described} contains {address:#x}; the address is mapped but no function covers "
+        f"it; define one with rex_function_define(start={address:#x}) if it is code"
+    )
+
+
 DIRECTORY_NAME_MESSAGE = "filename must end in a file name, not '.' or a trailing '/'"
 
 
@@ -481,3 +490,19 @@ def _use_export_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     root = tmp_path / "exports"
     monkeypatch.setattr(tools, "_EXPORT_ROOT", root)
     return root
+
+
+def _uses_view(
+    instructions: list[FakeInstruction],
+    definitions: dict[FakeVariable, list[FakeInstruction]],
+    uses: dict[FakeVariable, list[FakeInstruction]] | None = None,
+) -> FakeBinaryView:
+    mlil = FakeMLILInstructions(instructions, uses=uses, definitions=definitions)
+    return FakeBinaryView(functions=[FakeFunction("check", 0x1000, 0x1100, mlil=mlil)])
+
+
+def _run_uses(view: FakeBinaryView, **arguments: Any) -> dict[str, Any]:
+    _, uses = get_tool("rex_mlil_uses")
+    arguments.setdefault("function", 0x1000)
+    arguments.setdefault("address", 0x1020)
+    return uses(_call(view), **arguments)
