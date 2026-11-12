@@ -66,7 +66,7 @@ def test_help_index_pins_every_use_when_line() -> None:
         ),
         "dataflow": "Decide what a branch compares: constraints, HLIL statements, MLIL uses.",
         "uidf": (
-            "Pin values the decompiler cannot know so obfuscated arithmetic and byte checks fold."
+            "MLIL only: pin a value at a definition or parameter entry; the fold shows in HLIL."
         ),
         "types": "Recover structs from access patterns, import or export type libraries.",
         "annotations": "Record conclusions: batch renames, comments, and types.",

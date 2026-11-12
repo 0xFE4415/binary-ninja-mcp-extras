@@ -23,7 +23,7 @@ _CATEGORY_USE_WHEN: dict[str, str] = {
     "data": "Read mapped bytes, relocations, or list references to an address.",
     "functions": "Define missing functions (code after int3, indirect targets), map call paths.",
     "dataflow": "Decide what a branch compares: constraints, HLIL statements, MLIL uses.",
-    "uidf": "Pin values the decompiler cannot know so obfuscated arithmetic and byte checks fold.",
+    "uidf": "MLIL only: pin a value at a definition or parameter entry; the fold shows in HLIL.",
     "types": "Recover structs from access patterns, import or export type libraries.",
     "annotations": "Record conclusions: batch renames, comments, and types.",
     "components": "Group functions into named components.",
