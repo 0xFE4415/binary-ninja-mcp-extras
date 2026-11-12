@@ -42,7 +42,7 @@ def test_function_define_and_undefine() -> None:
     with pytest.raises(FakeToolError) as exc:
         undefine(_call(view), 0x9999)
     assert exc.value.code == "no_function"
-    assert exc.value.message == plain_gap_message("function", 0x9999)
+    assert exc.value.message == "no function contains 0x9999"
 
 
 def test_function_define_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -300,7 +300,6 @@ def test_function_containing_explains_a_containment_miss() -> None:
         exc.value.message
         == "no function contains 0x20000; the address is not mapped by any segment"
     )
-    # A plain gap between functions says it is mapped and names the define action.
     with pytest.raises(FakeToolError) as exc:
         containing(_call(view), 0x1800)
     assert exc.value.message == plain_gap_message("function", 0x1800)
@@ -545,3 +544,19 @@ def test_call_paths_rejects_out_of_range_bounds() -> None:
     assert at_cap_paths["reachable"] is True
     at_cap_depth = paths(_call(view), 0x1100, 0x1100, max_depth=tools._MAX_CALL_PATH_DEPTH)
     assert at_cap_depth["reachable"] is True
+
+
+def test_function_undefine_misses_give_no_define_advice() -> None:
+    view = FakeBinaryView(
+        functions=[FakeFunction("main", 0x1000, 0x1100)],
+        pending_functions=[FakeFunction("sub_4000", 0x4000, 0x4010)],
+    )
+    _, undefine = get_tool("rex_function_undefine")
+    for address in (0x1100, 0x1800, 0x20000):
+        with pytest.raises(FakeToolError) as exc:
+            undefine(_call(view), address)
+        assert exc.value.code == "no_function"
+        assert exc.value.message == f"no function contains {address:#x}"
+    with pytest.raises(FakeToolError) as exc:
+        undefine(_call(view), 0x4000)
+    assert exc.value.code == "analysis_pending"

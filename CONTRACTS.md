@@ -372,17 +372,20 @@ present only on some rows.
   `library_name_too_large`. Over-cap component paths, type-name list entries, and export
   filenames return `invalid_params` instead.
 - An error a caller can act on names the next step in its message: `analysis_pending` names
-  `rex_analysis_wait`, `no_function` names `rex_function_define`, `ambiguous_definition`
-  names `def_address`.
+  `rex_analysis_wait`, `no_function` names `rex_function_define` (except for
+  `rex_function_undefine`, which has nothing to define), `ambiguous_definition` names
+  `def_address`, and `not_found` from `rex_eval_result` names the `stdout_key` and
+  `result_key` fields of `rex_eval_python`.
 - A string the core reads as a C string would be cut at a NUL (U+0000), so one containing a
   NUL returns `invalid_params` with the message `<parameter> must not contain NUL bytes`.
   This covers key-value keys and values, report titles and markdown, tag types and data,
   annotation names, comments, prototypes and addresses, component, structure, and
-  type-library names and paths, type names, `rex_uidf_set` and `rex_uidf_set_many` values and
-  `def_address`, export filenames, and every entry of an address-expression list (named like
-  `functions[1]`). A batch tool reports it in the row of the bad item. Scalar address
-  parameters are parsed by the built-in server before the plugin runs, so this rule cannot
-  cover them. Patterns, regular expressions, variable names, and eval code are not passed
+  type-library names and paths, type names, the `value` of `rex_uidf_set` and of each
+  `rex_uidf_set_many` item, the `def_address` string of each `rex_uidf_set_many` item, export
+  filenames, and every entry of an address-expression list (named like `functions[1]`). A
+  batch tool reports it in the row of the bad item. Scalar address parameters, including the
+  `def_address` of `rex_uidf_set`, are parsed by the built-in server before the plugin runs,
+  so this rule cannot cover them. Patterns, regular expressions, variable names, and eval code are not passed
   to the core as C strings and are unchanged.
 - The `filename` of `rex_export_disasm`, `rex_export_symbols`, and `rex_type_library_export`
   is a required parameter with no default, and the advertised schema lists it under
@@ -414,7 +417,9 @@ present only on some rows.
   `pattern` that is not a string returns `invalid_params`. A `section` name containing a NUL
   returns `section_not_found`, like any unknown name. The `section_not_found` and
   `invalid_pattern` messages show an echoed NUL as U+FFFD, because the core cuts a message
-  at its first NUL; other tools' messages are not rewritten.
+  at its first NUL. The `no_variable`, `unknown_tool`, `unknown_category`, and eval
+  `not_found` messages, and the `kind` and `format` `invalid_params` messages, do the same;
+  other tools' messages are not rewritten.
 - `rex_constant_find` `value` is an integer (0 to 18446744073709551615) or a string: `0x` or
   `0X`, then 1-16 hex digits in either case. A client that reads JSON numbers as doubles
   rounds the integer maximum to 18446744073709552000, so it should send the hex string for

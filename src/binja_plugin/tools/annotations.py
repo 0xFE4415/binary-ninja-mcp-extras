@@ -10,7 +10,7 @@ from binaryninja.binaryview import BinaryView
 from binaryninja.function import Function
 
 from binja_plugin.tools import (
-    _containment_miss_message,
+    _containment_miss,
     _is_json_object,
     _nul_message,
     _resolve_containing,
@@ -186,7 +186,7 @@ def _annotate_resolve(
         return _annotate_addr_error(addr_value, f"bad address expression: {error}"), None
     containing = bv.get_functions_containing(address)
     if not containing:
-        message = _containment_miss_message(bv, address, "analyzed function")
+        _, message = _containment_miss(bv, address, "analyzed function")
         return _annotate_function_error(address, message), None
     fields = _annotate_fields(item, address)
     if not isinstance(fields, _AnnotationFields):

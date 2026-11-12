@@ -843,6 +843,20 @@ def test_type_library_export_reports_write_failure(
     assert exc.value.message == "could not write export file: disk full"
 
 
+def test_type_library_export_reports_a_permission_failure_as_export_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    broken = FakeTypeLibrary(write_error=PermissionError(13, "Permission denied"))
+    monkeypatch.setattr(FakeTypeLibrary, "new", staticmethod(lambda arch, name: broken))
+    view = FakeBinaryView(arch=FakeArchitecture("x86_64"), types={"open": FakeType("open")})
+    _, export = get_tool("rex_type_library_export")
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(view), "recovered", ["open"], filename="denied.bntl")
+    assert exc.value.code == "export_failed"
+    assert exc.value.message == "could not write export file: [Errno 13] Permission denied"
+
+
 def test_type_library_export_enforces_the_byte_cap(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

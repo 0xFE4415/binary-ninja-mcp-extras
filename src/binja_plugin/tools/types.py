@@ -15,6 +15,7 @@ from binja_plugin.tools import (
     _reject_nul,
     _reject_unusable_export_target,
     _resolve_export_path,
+    _show_nul,
     _truncate,
     _validate_export_path,
     _validate_text,
@@ -207,7 +208,7 @@ def rex_type_library_export(
     requested: str = kind
     if requested not in ("types", "objects"):
         raise mcp.ToolError(
-            "invalid_params", f"kind must be 'types' or 'objects', not '{requested}'"
+            "invalid_params", f"kind must be 'types' or 'objects', not '{_show_nul(requested)}'"
         )
     arch = bv.arch
     if arch is None:

@@ -17,7 +17,7 @@ from typing import Annotated, NamedTuple, TypedDict
 import binaryninja
 from binaryninja import mcp
 
-from binja_plugin.tools import _truncate, _truncate_with_flag, _validate_range
+from binja_plugin.tools import _show_nul, _truncate, _truncate_with_flag, _validate_range
 
 _MAX_EVAL_STDOUT_CHARS = 65536
 _MAX_EVAL_RESULT_CHARS = 16384
@@ -255,7 +255,11 @@ def rex_eval_result(
     limit = _validate_range("limit", limit, 1, _MAX_EVAL_RESULT_PAGE_CHARS)
     text = _EVAL_SPILLS.get(key)
     if text is None:
-        raise mcp.ToolError("not_found", f"no spilled eval output under '{_truncate(key)}'")
+        raise mcp.ToolError(
+            "not_found",
+            f"no spilled eval output under '{_show_nul(_truncate(key))}'; "
+            "keys come from the stdout_key and result_key fields of rex_eval_python",
+        )
     page = text[offset : offset + limit]
     more = offset + len(page) < len(text)
     return {

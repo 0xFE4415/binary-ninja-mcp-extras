@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from helpers import (
     FakeParsingToolCall,
+    FakeTool,
     FakeToolError,
     _call,
     _disasm_view,
@@ -24,6 +25,7 @@ from helpers_view import (
 
 from binja_plugin import tools
 from binja_plugin.tools import state
+from binja_plugin.tools.help import _CATEGORY_USE_WHEN, _UNCATEGORIZED
 
 NUL_MESSAGE = "{} must not contain NUL bytes"
 
@@ -254,3 +256,59 @@ def test_a_section_name_with_nul_stays_section_not_found() -> None:
     view = FakeBinaryView(sections={".text": (0x1000, 0x1004)})
     error = _rejection("rex_string_search", view, section=".text\x00z")
     assert error.code == "section_not_found"
+
+
+REPLACEMENT = "\N{REPLACEMENT CHARACTER}"
+
+
+def test_rex_help_shows_a_nul_in_an_unknown_name_so_the_list_tail_survives() -> None:
+    _, help_tool = get_tool("rex_help")
+    registered = ", ".join(sorted(tool.name for tool in FakeTool.list()))
+    with pytest.raises(FakeToolError) as tool_error:
+        help_tool(_call(FakeBinaryView()), tool_name="rex_x\x00y")
+    assert tool_error.value.code == "unknown_tool"
+    assert tool_error.value.message == (
+        f"no tool named 'rex_x{REPLACEMENT}y'; registered tools: {registered}"
+    )
+    with pytest.raises(FakeToolError) as category_error:
+        help_tool(_call(FakeBinaryView()), category="x\x00y")
+    assert category_error.value.code == "unknown_category"
+    expected_categories = ", ".join([*_CATEGORY_USE_WHEN, _UNCATEGORIZED])
+    assert category_error.value.message == (
+        f"no category named 'x{REPLACEMENT}y'; categories: {expected_categories}"
+    )
+
+
+def test_rex_eval_result_shows_a_nul_in_the_key_so_the_hint_survives() -> None:
+    message = _rejection("rex_eval_result", FakeBinaryView(), "a\x00b").message
+    assert message == (
+        f"no spilled eval output under 'a{REPLACEMENT}b'; "
+        "keys come from the stdout_key and result_key fields of rex_eval_python"
+    )
+
+
+def test_a_variable_name_with_nul_keeps_the_variable_list_in_the_message() -> None:
+    message = _rejection("rex_uidf_set", _uidf_view(), 0x1100, "no\x00pe", "1").message
+    assert message == (
+        f"no MLIL variable named 'no{REPLACEMENT}pe' in main; variables: rax_1; "
+        "use bn_variable_list for the full list"
+    )
+
+
+def test_a_kind_or_format_with_nul_is_shown_with_the_replacement_character(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(tools, "_EXPORT_ROOT", tmp_path / "exports")
+    library_error = _rejection(
+        "rex_type_library_export",
+        FakeBinaryView(types={"open": FakeType("open")}),
+        "lib",
+        ["open"],
+        "out.bntl",
+        kind="ty\x00pes",
+    )
+    assert library_error.message == (f"kind must be 'types' or 'objects', not 'ty{REPLACEMENT}pes'")
+    symbols_error = _rejection(
+        "rex_export_symbols", FakeBinaryView(), 0, 0x10, "out.csv", format="cs\x00v"
+    )
+    assert symbols_error.message == f"format must be 'csv' or 'json', not 'cs{REPLACEMENT}v'"

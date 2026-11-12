@@ -18,6 +18,7 @@ from binja_plugin.tools import (
     _require_analyzed_function,
     _resolve_export_path,
     _ResolvedFunction,
+    _show_nul,
     _validate_disasm_window,
     _validate_export_path,
     _validate_range,
@@ -142,7 +143,9 @@ def rex_export_symbols(
     # Widened to str so the body check stays reachable by direct calls; match the Literal.
     requested: str = format
     if requested not in ("csv", "json"):
-        raise mcp.ToolError("invalid_params", f"format must be 'csv' or 'json', not '{requested}'")
+        raise mcp.ToolError(
+            "invalid_params", f"format must be 'csv' or 'json', not '{_show_nul(requested)}'"
+        )
     symbols = bv.get_symbols(start, end - start)
     # Core symbol order is unsorted; sort before slicing so the file holds a true window.
     ordered = sorted(symbols, key=lambda symbol: symbol.address)

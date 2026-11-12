@@ -61,7 +61,6 @@ def _nul_message(parameter: str) -> str:
 
 
 def _reject_nul(parameter: str, value: str) -> None:
-    # The core reads a string argument as a C string, so a NUL would silently cut it short.
     if "\x00" in value:
         raise mcp.ToolError("invalid_params", _nul_message(parameter))
 
@@ -168,21 +167,27 @@ def _containment_miss_hint(bv: BinaryView, address: int) -> str:
     )
 
 
-def _containment_miss_message(bv: BinaryView, address: int, described: str) -> str:
+def _containment_miss(
+    bv: BinaryView, address: int, described: str, advise_define: bool = True
+) -> tuple[bool, str]:
     # A defined but unanalyzed function is invisible to containment lookups.
     if bv.get_function_at(address) is not None:
-        return (
+        return True, (
             f"function at {address:#x} exists but has not been analyzed yet; wait for "
             "analysis (rex_analysis_wait, or rex_function_define with wait=true) "
             "or run bn_analysis_update"
         )
-    return f"no {described} contains {address:#x}; {_containment_miss_hint(bv, address)}"
+    message = f"no {described} contains {address:#x}"
+    if advise_define:
+        message = f"{message}; {_containment_miss_hint(bv, address)}"
+    return False, message
 
 
-def _raise_containment_miss(bv: BinaryView, address: int, code: str, described: str) -> NoReturn:
-    if bv.get_function_at(address) is not None:
-        code = "analysis_pending"
-    raise mcp.ToolError(code, _containment_miss_message(bv, address, described))
+def _raise_containment_miss(
+    bv: BinaryView, address: int, code: str, described: str, advise_define: bool = True
+) -> NoReturn:
+    pending, message = _containment_miss(bv, address, described, advise_define)
+    raise mcp.ToolError("analysis_pending" if pending else code, message)
 
 
 class _FunctionEntry(TypedDict):
@@ -234,12 +239,12 @@ def _resolve_containing(bv: BinaryView, containing: list[Function]) -> _Resoluti
 
 
 def _require_containing_function(
-    bv: BinaryView, address: int, code: str, described: str
+    bv: BinaryView, address: int, code: str, described: str, advise_define: bool = True
 ) -> _Resolution:
     # Scan tools answer no_function for a miss, argument validators invalid_params.
     containing = bv.get_functions_containing(address)
     if not containing:
-        _raise_containment_miss(bv, address, code, described)
+        _raise_containment_miss(bv, address, code, described, advise_define)
     return _resolve_containing(bv, containing)
 
 
@@ -293,7 +298,7 @@ def _unknown_variable_error(function: Function, name: str) -> mcp.ToolError:
     )
     return mcp.ToolError(
         "no_variable",
-        f"no MLIL variable named '{_truncate(name)}' in {_truncate(function.name)}; "
+        f"no MLIL variable named '{_show_nul(_truncate(name))}' in {_truncate(function.name)}; "
         f"variables: {shown}{more}; use bn_variable_list for the full list",
     )
 
@@ -373,8 +378,8 @@ def _iter_pattern_matches(
             position += _READ_CHUNK
 
 
-def _require_function(bv: BinaryView, address: int) -> _Resolution:
-    return _require_containing_function(bv, address, "no_function", "function")
+def _require_function(bv: BinaryView, address: int, advise_define: bool = True) -> _Resolution:
+    return _require_containing_function(bv, address, "no_function", "function", advise_define)
 
 
 class _ItemError(TypedDict):
@@ -437,17 +442,14 @@ def _validate_export_path(filename: str) -> None:
 
 
 def _reject_unusable_export_target(filename: str) -> None:
-    """Reject, before any data is computed, a target no write could ever succeed on."""
     resolved_root = _EXPORT_ROOT.resolve()
     resolved = (_EXPORT_ROOT / filename).resolve()
     if not resolved.is_relative_to(resolved_root):
-        # _resolve_export_path raises path_escape for it later.
         return
     if resolved.is_dir():
         raise mcp.ToolError(
             "invalid_params", "filename names an existing directory; choose a file name"
         )
-    # The root itself is created on demand, so only a deeper parent must already exist.
     if resolved.parent != resolved_root and not resolved.parent.is_dir():
         raise mcp.ToolError(
             "invalid_params",

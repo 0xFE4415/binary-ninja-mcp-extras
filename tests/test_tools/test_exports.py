@@ -250,8 +250,6 @@ def test_export_disasm_reports_export_failed_when_the_write_fails(
     def refuse_to_open(*arguments: object, **keywords: object) -> object:
         raise PermissionError(13, "Permission denied")
 
-    # A genuine write failure (permissions, full disk) is not a usable-target problem: the
-    # handler must turn the OSError into export_failed, not leak it.
     monkeypatch.setattr(tools, "open", refuse_to_open, raising=False)
     view = _disasm_view()
     _, export = get_tool("rex_export_disasm")
@@ -283,9 +281,6 @@ def test_export_disasm_rejects_a_nested_filename_whose_parent_is_missing(
     root = _use_export_root(monkeypatch, tmp_path)
     view = _disasm_view()
     _, export = get_tool("rex_export_disasm")
-    # Lexical validation allows a nested relative name, but only the fixed root itself is
-    # ever created on demand, so a missing parent is rejected instead of silently growing
-    # a tree under the root. The rejection comes before any filesystem work.
     with pytest.raises(FakeToolError) as exc:
         export(_call(view), 0x1104, filename="sub/out.txt")
     assert exc.value.code == "invalid_params"
@@ -324,9 +319,6 @@ def test_every_export_rejects_an_unusable_target_before_computing_any_data(
 ) -> None:
     root = _use_export_root(monkeypatch, tmp_path)
     (root / "occupied.txt").mkdir(parents=True)
-    # Each view would fail the data step with a different error if the target were not
-    # checked first: no function at the address, a core that must not be asked for symbols,
-    # and a view with no architecture to create a type library for.
     _, export_disasm = get_tool("rex_export_disasm")
     _, export_symbols = get_tool("rex_export_symbols")
     _, export_library = get_tool("rex_type_library_export")
@@ -641,3 +633,35 @@ def test_export_symbols_rejects_invalid_ranges_limits_and_format() -> None:
         _call(view), 0x1000, 0x4000, limit=tools._MAX_EXPORT_SYMBOLS, filename="cap.csv"
     )
     assert at_cap["rows"] == 3
+
+
+def _refuse_to_open(*arguments: object, **keywords: object) -> object:
+    raise PermissionError(13, "Permission denied")
+
+
+def test_export_symbols_reports_export_failed_when_the_write_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(tools, "open", _refuse_to_open, raising=False)
+    _, export = get_tool("rex_export_symbols")
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(_symbol_view()), 0x1000, 0x4000, filename="denied.csv")
+    assert exc.value.code == "export_failed"
+    assert exc.value.message == "could not write export file: [Errno 13] Permission denied"
+
+
+def test_a_symlink_to_a_directory_inside_the_root_is_a_directory_name_or_a_parent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    (root / "inner_dir").mkdir(parents=True)
+    (root / "inner_link").symlink_to(root / "inner_dir")
+    _, export = get_tool("rex_export_disasm")
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(_disasm_view()), 0x1104, filename="inner_link")
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == "filename names an existing directory; choose a file name"
+    result = export(_call(_disasm_view()), 0x1104, filename="inner_link/out.txt")
+    assert result["path"] == str((root / "inner_dir" / "out.txt").resolve())
+    assert (root / "inner_dir" / "out.txt").exists()

@@ -327,6 +327,7 @@ _EXPORT_FILENAME_CODES = [
     ("link.txt", "path_escape"),
     ("linkdir", "path_escape"),
     ("linkdir/out.txt", "path_escape"),
+    ("inner_link", "invalid_params"),
     ("occupied.txt", "invalid_params"),
     ("missing/out.txt", "invalid_params"),
     ("regular.txt/out.txt", "invalid_params"),
@@ -343,6 +344,8 @@ def _use_export_root_with_traps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     (tmp_path / "outside_dir").mkdir()
     (root / "linkdir").symlink_to(tmp_path / "outside_dir")
     (root / "occupied.txt").mkdir()
+    (root / "inner_dir").mkdir()
+    (root / "inner_link").symlink_to(root / "inner_dir")
     (root / "regular.txt").write_text("a file, not a directory")
 
 

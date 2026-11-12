@@ -518,7 +518,9 @@ def rex_quick_main(
     functions = bv.get_functions_containing(entry_point)
     if not functions:
         raise mcp.ToolError(
-            "no_function", f"no analyzed function contains the entry point {entry_point:#x}"
+            "no_function",
+            f"no analyzed function contains the entry point {entry_point:#x}; "
+            f"define one with rex_function_define(start={entry_point:#x}) if it is code",
         )
     entry = _resolve_containing(bv, functions)
     main, method, unresolved_note = _resolve_main(bv, call, entry)

@@ -7,6 +7,8 @@ from typing import TypedDict
 
 from binaryninja import mcp
 
+from binja_plugin.tools import _show_nul
+
 _TOOL_PREFIX = "rex_"
 _NATIVE_TOOL_NAMES = frozenset({"rx_data_find", "rx_multi_find"})
 _NATIVE_TOOL_CATEGORY = "scanning"
@@ -94,7 +96,7 @@ def _category_view(registered: dict[str, mcp.Tool], category: str) -> _CategoryV
     if category not in _CATEGORY_USE_WHEN and category != _UNCATEGORIZED:
         raise mcp.ToolError(
             "unknown_category",
-            f"no category named '{category}'; categories: "
+            f"no category named '{_show_nul(category)}'; categories: "
             f"{', '.join([*_CATEGORY_USE_WHEN, _UNCATEGORIZED])}",
         )
     return {
@@ -122,7 +124,8 @@ def _tool_view(registered: dict[str, mcp.Tool], tool_name: str) -> _ToolView:
     if tool is None:
         raise mcp.ToolError(
             "unknown_tool",
-            f"no tool named '{tool_name}'; registered tools: {', '.join(sorted(registered))}",
+            f"no tool named '{_show_nul(tool_name)}'; "
+            f"registered tools: {', '.join(sorted(registered))}",
         )
     schema = tool.input_schema
     required = schema.get("required", [])

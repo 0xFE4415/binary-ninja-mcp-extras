@@ -1042,7 +1042,10 @@ def test_quick_main_errors_when_no_function_contains_the_entry_point() -> None:
     with pytest.raises(FakeToolError) as exc:
         quick(FakeParsingToolCall(view))
     assert exc.value.code == "no_function"
-    assert exc.value.message == "no analyzed function contains the entry point 0x1000"
+    assert exc.value.message == (
+        "no analyzed function contains the entry point 0x1000; "
+        "define one with rex_function_define(start=0x1000) if it is code"
+    )
 
 
 def test_disasm_many_renders_one_window_per_address() -> None:
