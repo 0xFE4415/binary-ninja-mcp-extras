@@ -237,7 +237,7 @@ def rex_data_find(
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> _DataFindResult:
-    """Find all occurrences of a hex byte pattern in mapped memory.
+    """Return the addresses of every hex byte pattern match in mapped memory.
 
     :param pattern: Hex byte pattern, e.g. "48 8b ?? 05"; each byte is 2 ASCII hex digits or "??".
     :param section: Only search within this section.

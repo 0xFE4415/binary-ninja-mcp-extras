@@ -847,9 +847,7 @@ class FakeBinaryView:
         A committed transaction also leaves one undo entry: the installed API documents
         ``BinaryView.undoable_transaction`` as creating "an Undo state containing those
         actions" (binaryview.py:5114-5117), so rex_undo reversing a committed batch is
-        modelable here. Operations the API does not document as undoable (tag, metadata,
-        type-library writes) push nothing, matching the provenance note on the undo tools
-        in binja_plugin/tools/state.py.
+        modelable here. Metadata and type-library writes push nothing and are not wrapped.
         """
         self.transactions.append("open")
         try:

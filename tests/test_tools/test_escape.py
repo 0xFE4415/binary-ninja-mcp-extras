@@ -32,6 +32,7 @@ def test_memory_write_validates_and_writes() -> None:
     result = write(_call(view), 0x1000, "90 90")
     assert result == {"address": "0x1000", "bytes_written": 2}
     assert view.written == [(0x1000, b"\x90\x90")]
+    assert view.transactions == ["open", "commit"]
     # Whitespace of any kind separates bytes before validation; whitespace-only input
     # collapses to the empty pattern and is rejected as empty, not passed to fromhex.
     assert write(_call(view), 0x1000, "90\t90\n") == {"address": "0x1000", "bytes_written": 2}
@@ -40,6 +41,22 @@ def test_memory_write_validates_and_writes() -> None:
         with pytest.raises(FakeToolError) as exc:
             write(_call(view), 0x1000, bad)
         assert exc.value.code == "invalid_hex"
+
+
+def test_memory_write_reverts_its_transaction_when_the_core_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = FakeBinaryView()
+
+    def refuse(address: int, data: bytes) -> int:
+        raise RuntimeError("core refused")
+
+    monkeypatch.setattr(view, "write", refuse)
+    _, write = get_tool("rex_memory_write")
+    with pytest.raises(RuntimeError, match="core refused"):
+        write(_call(view), 0x1000, "90")
+    assert view.transactions == ["open", "revert"]
+    assert view.file.undo_entries == []
 
 
 def test_eval_python_executes_code() -> None:
@@ -66,7 +83,9 @@ def test_eval_python_docstring_lists_the_exec_namespace() -> None:
     probe = evaluate(_call(_view_with_functions()), "result = sorted(globals())")
     assert probe["result"] == repr(["__builtins__", "binaryninja", "bn", "bv", "call"])
     first_line = inspect.cleandoc(escape.rex_eval_python.__doc__ or "").splitlines()[0]
-    assert first_line == "Run Binary Ninja Python; globals: bv, bn, binaryninja, call."
+    assert first_line == (
+        "Run Binary Ninja Python; globals: bv, bn, binaryninja, call. Writes; undo skips metadata."
+    )
 
 
 def test_eval_python_truncates_stdout_and_result() -> None:

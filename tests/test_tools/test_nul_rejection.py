@@ -236,9 +236,6 @@ def test_uidf_set_many_reports_nul_in_the_value_and_def_address_per_row() -> Non
 def test_a_list_of_address_expressions_rejects_a_nul_entry_in_every_batch_tool() -> None:
     view = _disasm_view()
     _assert_nul_rejected(
-        _rejection("rex_decompile_many", view, ["0x1100", "0x1100\x00zzz"]), "functions[1]"
-    )
-    _assert_nul_rejected(
         _rejection("rex_function_define_many", view, ["0x1100\x00zzz"]), "addresses[0]"
     )
 

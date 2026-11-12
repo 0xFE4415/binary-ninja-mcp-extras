@@ -186,7 +186,7 @@ def _error_location(error: BaseException, code: str) -> _ErrorLocation | None:
 
 @mcp.tool(destructive=True)
 def rex_eval_python(call: mcp.ToolCall, code: str) -> _EvalPythonResult:
-    """Run Binary Ninja Python; globals: bv, bn, binaryninja, call.
+    """Run Binary Ninja Python; globals: bv, bn, binaryninja, call. Writes; undo skips metadata.
 
     :param code: Python source; assign to ``result`` to return a value.
     """
@@ -273,7 +273,7 @@ def rex_eval_result(
 
 @mcp.tool(destructive=True)
 def rex_memory_write(call: mcp.ToolCall, addr: mcp.Address, hex_data: str) -> _MemoryWriteResult:
-    """Overwrite bytes in the binary view with a hex byte string.
+    """Overwrite bytes in the binary view with a hex byte string. Writes; undoable.
 
     :param addr: Address to write to.
     :param hex_data: Hex byte string to write, e.g. "90 90" or "9090".
@@ -285,5 +285,6 @@ def rex_memory_write(call: mcp.ToolCall, addr: mcp.Address, hex_data: str) -> _M
         data = bytes.fromhex(compact)
     except ValueError:
         raise mcp.ToolError("invalid_hex", "hex_data must contain hex byte pairs") from None
-    written = call.binary_view.write(addr, data)
+    with call.binary_view.undoable_transaction():
+        written = call.binary_view.write(addr, data)
     return {"address": hex(addr), "bytes_written": written}

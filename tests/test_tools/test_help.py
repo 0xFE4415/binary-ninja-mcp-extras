@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from binaryninja import mcp
 from helpers import (
     REGISTERED_TOOLS,
     FakeParsingToolCall,
@@ -118,10 +119,7 @@ def test_help_category_lists_its_tools_with_their_purposes() -> None:
 def test_help_lists_itself_in_the_help_category() -> None:
     assert {
         "name": "rex_help",
-        "description": (
-            "Describe the plugin's rex_ tools, and the native rx_ tools when loaded, "
-            "from the registry."
-        ),
+        "description": ("Describe the rex_ tools, and rx_ tools if present, from the registry."),
     } in _help(category="help")["tools"]
 
 
@@ -512,3 +510,8 @@ def test_a_uidf_set_many_function_raises_its_code() -> None:
             uidf_set_many(FakeParsingToolCall(view), address, items)
         codes.add(error.value.code)
     assert codes == {"invalid_params", "analysis_pending"}
+
+
+def test_help_registers_with_global_scope_so_it_needs_no_binary() -> None:
+    options, _ = get_tool("rex_help")
+    assert options["scope"] == mcp.McpToolScope.GlobalScope

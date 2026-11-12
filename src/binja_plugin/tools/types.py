@@ -110,7 +110,7 @@ def _validate_type_names(names: list[str]) -> list[str]:
 
 @mcp.tool(destructive=True)
 def rex_struct_from_access(call: mcp.ToolCall, name: str) -> _StructFromAccessResult:
-    """Infer a struct from the offset accesses analysis has recorded; analyze the derefs first.
+    """Infer a struct from recorded offset accesses; analyze the derefs first. Writes; not undoable.
 
     :param name: Name for the new structure.
     """
@@ -284,7 +284,7 @@ def rex_type_library_export(
 def rex_type_library_import(
     call: mcp.ToolCall, path: str, names: list[str]
 ) -> _TypeLibraryImportResult:
-    """Import types from a .bntl into the current binary view.
+    """Import types from a .bntl into the current binary view. Writes; not undoable.
 
     :param path: Filesystem path of the .bntl file to load.
     :param names: 1 to 128 type names to import from the library.

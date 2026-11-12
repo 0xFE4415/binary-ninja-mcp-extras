@@ -81,7 +81,7 @@ def rex_export_disasm(
     after: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DISASM_CONTEXT)] = 8,
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_EXPORT_DISASM_LINES)] = 200,
 ) -> _ExportDisasmResult:
-    """Export one analyzed function's disassembly window to a file.
+    """Write one function's disassembly window to a file; returns the path and line count.
 
     :param address: Address expression inside the target function.
     :param filename: Plain file name inside the export root; overwritten if it exists.

@@ -113,7 +113,7 @@ def rex_component_add_functions(
     path: str,
     functions: list[str],
 ) -> _ComponentAddResult:
-    """Put functions into a component.
+    """Put functions into a component. Writes; undoable.
 
     :param path: Absolute component path; '/' selects the root component.
     :param functions: 1 to 128 address expressions of the functions to add.
@@ -122,7 +122,8 @@ def rex_component_add_functions(
     _validate_component_path("path", path)
     resolved = _resolve_address_batch(call, bv, functions, _MAX_COMPONENT_ADD_FUNCTIONS)
     component = _resolve_component(bv, path)
-    results = [_add_to_component(component, resolution) for resolution in resolved]
+    with bv.undoable_transaction():
+        results = [_add_to_component(component, resolution) for resolution in resolved]
     added_count = sum(1 for result in results if result["added"])
     return {
         "path": path,
@@ -141,7 +142,7 @@ def rex_component_create(
     name: str,
     parent_path: str = "",
 ) -> _ComponentCreateResult:
-    """Create a component, optionally nested under an existing one.
+    """Create a component, optionally nested under an existing one. Writes; undoable.
 
     :param name: Name of the new component; must not be empty or contain '/'.
     :param parent_path: Absolute parent path; empty or '/' creates a top-level component.

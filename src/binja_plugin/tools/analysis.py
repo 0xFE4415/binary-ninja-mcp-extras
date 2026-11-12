@@ -104,7 +104,7 @@ def rex_analysis_wait(
 
 @mcp.tool(destructive=True)
 def rex_binary_close(call: mcp.ToolCall) -> _BinaryCloseResult:
-    """Discard this view's unsaved changes and close it."""
+    """Discard this view's unsaved changes and close it; returns closed=true."""
     file_metadata = call.binary_view.file
     # The UI adapter refuses to discard on this flag; clearing it equals choosing "Discard".
     was_modified = file_metadata.modified
