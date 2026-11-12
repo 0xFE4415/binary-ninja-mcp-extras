@@ -340,14 +340,14 @@ def with_binary(assertion: dict[str, Any], binary: str) -> dict[str, Any]:
 
 
 def verify_fixture(playbook: dict[str, Any]) -> Path:
-    fixture = (HERE / playbook["fixture"]["path"]).resolve()
+    fixture = (HERE / Path(playbook["fixture"]["path"])).resolve()
     actual = hashlib.sha256(fixture.read_bytes()).hexdigest()
     if actual != playbook["fixture"]["sha256"]:
         raise HarnessError(
             f"{fixture} sha256 {actual} != pinned {playbook['fixture']['sha256']}; "
             "rebuild with build.sh and re-pin, or restore the committed binary"
         )
-    return Path(fixture)
+    return fixture
 
 
 def open_fixture(client: McpClient, fixture: Path) -> str:
