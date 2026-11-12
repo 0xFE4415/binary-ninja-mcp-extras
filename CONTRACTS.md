@@ -184,7 +184,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   names, and no descriptions.
   `category` returns `category`, `use_when`, and `tools` with each tool's `name` and
   `description`; an unknown name raises `unknown_category`. `tool_name` returns that
-  tool's parameters; an unknown name raises `unknown_tool`. Passing both raises
+  tool's parameters, each with `name`, `type`, `required`, `description`, and any schema
+  bounds (`default`, `enum`, `minimum`, `maximum`, `items`, and the like); an unknown name
+  raises `unknown_tool`. It does not list error codes: this file documents them, and a
+  tool names its code and a next step in the error message. Passing both raises
   `invalid_params`. Every `rex_*` tool appears in exactly one category: the module that
   defines it, or `other` for a registered tool no category module defines. The index lists
   `other` only when it has tools; `category=other` is always valid. `rex_help` reads the
@@ -374,13 +377,12 @@ present only on some rows.
   which names a directory, not a file), or a component over 255 bytes.
   `path_escape` is raised only after resolution, when a symlink inside the export root
   points outside it, and `export_failed` when the root or file cannot be written.
-  `rex_help` lists these three codes for the parameter.
-- `rex_help` lists `invalid_params` for `rex_type_library_export` `library_name` (empty), `names`
+- `rex_type_library_export` raises `invalid_params` for an empty `library_name`, for `names`
   (not a list, not 1-128 entries, an empty or over-long entry, or a non-string entry), and
-  `kind`. For `rex_uidf_set_many` it lists `invalid_params` on `function` (no analyzed function
-  contains the address), and on `items` every code an item can fail with in its `results` row
-  or that rejects the list: `invalid_params`, `no_mlil`, `no_variable`,
-  `ambiguous_definition`, `definition_not_found`, and `set_failed`.
+  for `kind`. `rex_uidf_set_many` raises `invalid_params` when no analyzed function contains
+  `function` or the item list is invalid. Each item can fail in its `results` row with
+  `invalid_params`, `no_mlil`, `no_variable`, `ambiguous_definition`,
+  `definition_not_found`, or `set_failed`.
 - A regular expression that does not compile returns `invalid_regex`; the message is
   `Invalid regular expression parameter '<name>': <reason>` and names the bad parameter:
   `pattern` (`rex_string_search` and `rex_string_refs` with `regex=true`), `regex`

@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import re
-from pathlib import Path
 from typing import Any
 
 import pytest
 from helpers import FakeTool, FakeToolError, _call, get_tool
 from helpers_view import FakeBinaryView
-
-from binja_plugin.tools.help import _PARAMETER_ERROR_CODES
 
 _MAX_PATTERN_CHARS = 8192
 
@@ -188,7 +184,6 @@ def test_help_describes_rx_data_find_parameters_with_list_typed_and_bounded_sche
         "type": "string",
         "required": True,
         "description": _PATTERN_DESCRIPTION,
-        "error_codes": ["invalid_params", "pattern_too_large", "invalid_pattern"],
         "maxLength": _MAX_PATTERN_CHARS,
     }
     assert parameters["section"] == {
@@ -196,13 +191,11 @@ def test_help_describes_rx_data_find_parameters_with_list_typed_and_bounded_sche
         "type": ["string", "null"],
         "required": False,
         "description": "Only search within this section.",
-        "error_codes": ["section_not_found"],
         "default": None,
     }
     assert parameters["limit"]["default"] == 50
     assert parameters["limit"]["minimum"] == 0
     assert parameters["limit"]["maximum"] == 500
-    assert parameters["limit"]["error_codes"] == []
     assert parameters["offset"]["required"] is False
 
 
@@ -216,13 +209,6 @@ def test_help_describes_rx_multi_find_pattern_list_and_its_caps(
     assert patterns["items"] == {"type": "string", "maxLength": _MAX_PATTERN_CHARS}
     assert patterns["minItems"] == 1
     assert patterns["maxItems"] == 64
-    assert patterns["error_codes"] == [
-        "invalid_params",
-        "too_many_patterns",
-        "pattern_too_large",
-        "invalid_pattern",
-    ]
-    assert _parameters("rx_multi_find")["section"]["error_codes"] == ["section_not_found"]
 
 
 def test_help_tolerates_a_native_parameter_without_description_or_type(
@@ -246,7 +232,6 @@ def test_help_tolerates_a_native_parameter_without_description_or_type(
         "type": None,
         "required": False,
         "description": "",
-        "error_codes": [],
     }
     assert parameters["count"]["description"] == ""
     assert parameters["count"]["type"] == "integer"
@@ -258,42 +243,3 @@ def test_help_tolerates_a_native_tool_without_parameters(monkeypatch: pytest.Mon
     )
     detail = _help("rx_multi_find")
     assert detail == {"name": "rx_multi_find", "description": "Takes nothing.", "parameters": []}
-
-
-def test_every_native_error_code_entry_names_a_parameter_of_a_native_tool() -> None:
-    native_keys = {key for key in _PARAMETER_ERROR_CODES if key[0].startswith("rx_")}
-    schema_keys = {
-        (tool.name, parameter_name)
-        for tool in (RX_DATA_FIND, RX_MULTI_FIND)
-        for parameter_name in tool.input_schema["properties"]
-    }
-    assert native_keys <= schema_keys
-
-
-_NATIVE_TOOLS_SOURCE = Path(__file__).resolve().parents[2] / "native" / "src" / "tools"
-_LINE_COMMENT = re.compile(r"//[^\n]*")
-_TEST_MODULE = re.compile(r"#\[cfg\(test\)\]\s*mod tests\b")
-_LITERAL_ERROR_CODE = re.compile(r'McpToolError::new\(\s*"([a-z_]+)"')
-
-
-# Sees only literal codes in McpToolError::new/invalid_params calls above `mod tests`; a code
-# passed through a variable is invisible. Skipped where native/ is not copied (mutants).
-def test_the_native_error_codes_listed_are_the_literal_ones_the_rust_source_raises() -> None:
-    if not _NATIVE_TOOLS_SOURCE.is_dir():
-        pytest.skip("the native sources are not part of this tree")
-    sources = sorted(_NATIVE_TOOLS_SOURCE.rglob("*.rs"))
-    assert {path.name for path in sources} >= {"mod.rs", "data_find.rs", "multi_find.rs"}
-    raised: set[str] = set()
-    for path in sources:
-        text = _TEST_MODULE.split(path.read_text(encoding="utf-8"))[0]
-        code = _LINE_COMMENT.sub("", text)
-        raised.update(_LITERAL_ERROR_CODE.findall(code))
-        if "McpToolError::invalid_params(" in code:
-            raised.add("invalid_params")
-    listed = {
-        code
-        for (tool_name, _), codes in _PARAMETER_ERROR_CODES.items()
-        if tool_name.startswith("rx_")
-        for code in codes
-    }
-    assert raised == listed
