@@ -106,9 +106,8 @@ def _require_key(key: str) -> None:
 
 def _top_entry_actions(entries: list[Any]) -> tuple[list[str], bool]:
     """The core's summary of each action in the newest entry, capped, and whether it was cut."""
-    if not entries:
-        return [], False
-    summaries = [action.summary_text for action in entries[-1].actions]
+    newest = entries[-1].actions if entries else []
+    summaries = [action.summary_text for action in newest]
     shown = [_truncate(summary) for summary in summaries[:_MAX_UNDO_ACTIONS]]
     return shown, len(summaries) > _MAX_UNDO_ACTIONS
 

@@ -282,8 +282,8 @@ def _apply_plan(target: Function, plan: _UIDFSetPlan) -> _UidfRow:
 
 def _clear_both_placements(target: Function, variable: Variable, address: int) -> None:
     # The core keys a value on its after flag and never reports it, so clear both.
-    target.clear_user_var_value(variable, address, after=True)
-    target.clear_user_var_value(variable, address, after=False)
+    for after in (True, False):
+        target.clear_user_var_value(variable, address, after=after)
 
 
 def _clear_every_value(bv: BinaryView, target: Function) -> int:

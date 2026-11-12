@@ -62,36 +62,34 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
   new-function analysis, `analysis.mode`, or a suspended pipeline), and does not advise
   waiting. Otherwise analysis is pending and the message advises
   `bn_analysis_update_and_wait` or a bounded `rex_analysis_wait`.
-- Every tool that resolves an address expression to a function (an address can lie in several,
-  e.g. a cold or outlined block and its parent)
-  (`rex_function_constraints`, `rex_hlil_statements`, `rex_mlil_uses`,
-  `rex_parameter_variables`, `rex_uidf_set`, `rex_uidf_set_many`, `rex_uidf_clear`,
-  `rex_uidf_list`, `rex_disasm_at`, `rex_disasm_many`, `rex_decompile_many`,
-  `rex_export_disasm`, `rex_call_paths`, `rex_function_undefine`,
-  `rex_component_add_functions`, and `rex_annotate_many`) picks the containing function with
-  the lowest start address, the architecture name breaking a tie between equal starts, never
-  the core's undocumented order. `rex_find_functions_by_pattern` credits each hit to the same
-  pick, so overlapping code counts once. The result is a resolved function entry, `{start, name, also_containing, same_name}`:
-  `also_containing` lists the other functions that contain the address and `same_name` the
-  other functions with the chosen name, each as `{start, name}` by ascending start, at most 64
-  per list. `rex_function_containing` lists every containing function in the same order, so
-  its first entry is the pick. A function name in an address expression is ambiguous too (the
-  core resolves it to one address silently); `same_name` shows that.
-- `rex_constant_find`, `rex_find_functions_by_pattern`, and `rex_hlil_grep` accept
-  `limit`/`offset` and return `truncated`. All three stop scanning at the first result past
-  the page, so `truncated` means exactly "another matching function exists beyond it".
-  `rex_constant_find` and `rex_find_functions_by_pattern` also return `total`, the count of
-  matching functions seen before the scan stopped: exact once `truncated` is false, so an
-  empty page whose `total` is at or below `offset` is an out-of-range page, not an empty
-  result set. While `truncated` is true, each returned function's `addresses`
-  (`rex_constant_find`) and `match_count` plus `addresses` (`rex_find_functions_by_pattern`)
-  are lower bounds, because the scan stopped before reaching every hit of functions in the
-  page (for example a cold block placed after its function). Both key a function by start
-  address and architecture, so two rows can share a `start` for different architectures. Per
-  function they cap the echoed `addresses`: `rex_constant_find` at 6 distinct (each listed
-  once, at its first occurrence) and `rex_find_functions_by_pattern` at 5;
-  `addresses_truncated` is true only when a further distinct address exists. `rex_constant_find` lists functions, and picks each function's example
-  addresses, in the core's hit order.
+- Every tool that resolves an address expression to a function (an address can lie in several, e.g.
+  a cold or outlined block and its parent) (`rex_function_constraints`, `rex_hlil_statements`,
+  `rex_mlil_uses`, `rex_parameter_variables`, `rex_uidf_set`, `rex_uidf_set_many`, `rex_uidf_clear`,
+  `rex_uidf_list`, `rex_disasm_at`, `rex_disasm_many`, `rex_decompile_many`, `rex_export_disasm`,
+  `rex_call_paths`, `rex_function_undefine`, `rex_component_add_functions`, and `rex_annotate_many`)
+  picks the containing function with the lowest start address, the architecture name breaking a tie
+  between equal starts, never the core's undocumented order. `rex_find_functions_by_pattern` credits
+  each hit to the same pick, so overlapping code counts once. The result is a resolved function
+  entry, `{start, name, also_containing, same_name}`: `also_containing` lists the other functions
+  that contain the address and `same_name` the other functions with the chosen name, each as
+  `{start, name}` by ascending start, at most 64 per list. `rex_function_containing` lists every
+  containing function in the same order, so its first entry is the pick. A function name in an
+  address expression is ambiguous too (the core resolves it to one address silently); `same_name`
+  shows that.
+- `rex_constant_find`, `rex_find_functions_by_pattern`, and `rex_hlil_grep` accept `limit`/`offset`
+  and return `truncated`. All three stop scanning at the first result past the page, so `truncated`
+  means exactly "another matching function exists beyond it". `rex_constant_find` and
+  `rex_find_functions_by_pattern` also return `total`, the count of matching functions seen before
+  the scan stopped: exact once `truncated` is false, so an empty page whose `total` is at or below
+  `offset` is an out-of-range page, not an empty result set. While `truncated` is true, each
+  returned function's `addresses` (`rex_constant_find`) and `match_count` plus `addresses`
+  (`rex_find_functions_by_pattern`) are lower bounds, because the scan stopped before reaching every
+  hit of functions in the page (for example a cold block placed after its function). Both key a
+  function by start address and architecture, so two rows can share a `start` for different
+  architectures. Per function they cap the echoed `addresses`: `rex_constant_find` at 6 distinct
+  (each listed once, at its first occurrence) and `rex_find_functions_by_pattern` at 5;
+  `addresses_truncated` is true only when a further distinct address exists. `rex_constant_find`
+  lists functions, and picks each function's example addresses, in the core's hit order.
 - `rex_hlil_grep` returns no `total`. It returns `scan_incomplete`, set when the
   `max_functions` render budget ran out before the whole view was scanned: matches past the
   page may exist even though `truncated` is false. `skipped_no_hlil` is always an integer: the
@@ -113,30 +111,29 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
   `rex_string_refs` returns at most 64 refs per string; `children_truncated` means
   `rex_component_get` returns at most 256 children. Other `truncated` flags describe
   tool-specific omissions; for `rex_eval_result`, more text remains to page.
-- `rex_eval_python` always returns `stdout`. It is the only tool that reports a whole-call
-  exception in-band: it sets `error` and nulls `result` instead of raising a tool error;
-  captured output remains in `stdout`. The code runs with `bv`, `call`, `binaryninja`, and
-  `bn` in scope. On success, an assigned `result` is returned as Python `repr()`.
-  `error` always leads with the exception type, `Type: message` (bare `Type` when the message
-  is empty). `Type` is the qualified name as `traceback.format_exception_only` writes it:
-  `module.qualname`, with `builtins` and `__main__` omitted: `KeyError: 'x'`,
-  `json.decoder.JSONDecodeError: ...`, `binaryninja.mcp.ToolError: ...`. A class defined in the submitted code reads as its
-  bare qualname (`Custom: x`, `make.<locals>.Inner: n`). A `SystemExit` reads `SystemExit: exit status <repr
-  of code>`. A `ToolError` reads `<type>: <code>: <message>` (just the code when the message
-  is empty; the plain message when it has no usable string code). Rendering does not raise an
-  `Exception`: a message that cannot render reads `<message unavailable>`, a type name that
-  cannot reads `<unknown exception type>`, and a chain link that cannot be read ends the
-  chain. Every `BaseException` the code raises (including `SystemExit`, `KeyboardInterrupt`,
-  `GeneratorExit`) is reported in-band; one raised while rendering still propagates.
-  Chained exceptions follow the outermost, each link rendered like it and chosen as Python
-  chooses: `; caused by <error>` for the explicit cause, else `; while handling <error>` for
-  the implicit context unless suppressed (`raise X from Y` or `from None`). The chain stops
-  at a repeat, or after 8 links with a final `; ...` when more follow. The whole text is
-  capped like other echoes (`error_truncated`), never cutting the type.
-  `error_location` is `{line, text}` for the innermost line of the submitted code on the
-  traceback (text stripped, capped at 200 characters), or null on success, for syntax errors
-  (whose message already names the line), and when the traceback cannot be read. The code is
-  compiled as `<rex_eval_python>`.
+- `rex_eval_python` always returns `stdout`. It is the only tool that reports a whole-call exception
+  in-band: it sets `error` and nulls `result` instead of raising a tool error; captured output
+  remains in `stdout`. The code runs with `bv`, `call`, `binaryninja`, and `bn` in scope. On
+  success, an assigned `result` is returned as Python `repr()`. `error` always leads with the
+  exception type, `Type: message` (bare `Type` when the message is empty). `Type` is the qualified
+  name as `traceback.format_exception_only` writes it: `module.qualname`, with `builtins` and
+  `__main__` omitted: `KeyError: 'x'`, `json.decoder.JSONDecodeError: ...`,
+  `binaryninja.mcp.ToolError: ...`. A class defined in the submitted code reads as its bare qualname
+  (`Custom: x`, `make.<locals>.Inner: n`). A `SystemExit` reads `SystemExit: exit status <repr of
+  code>`. A `ToolError` reads `<type>: <code>: <message>` (just the code when the message is empty;
+  the plain message when it has no usable string code). Rendering does not raise an `Exception`: a
+  message that cannot render reads `<message unavailable>`, a type name that cannot reads `<unknown
+  exception type>`, and a chain link that cannot be read ends the chain. Every `BaseException` the
+  code raises (including `SystemExit`, `KeyboardInterrupt`, `GeneratorExit`) is reported in-band;
+  one raised while rendering still propagates. Chained exceptions follow the outermost, each link
+  rendered like it and chosen as Python chooses: `; caused by <error>` for the explicit cause, else
+  `; while handling <error>` for the implicit context unless suppressed (`raise X from Y` or `from
+  None`). The chain stops at a repeat, or after 8 links with a final `; ...` when more follow. The
+  whole text is capped like other echoes (`error_truncated`), never cutting the type.
+  `error_location` is `{line, text}` for the innermost line of the submitted code on the traceback
+  (text stripped, capped at 200 characters), or null on success, for syntax errors (whose message
+  already names the line), and when the traceback cannot be read. The code is compiled as
+  `<rex_eval_python>`.
 - Non-null `stdout_key`/`result_key` values let `rex_eval_result` page spilled text; a null
   key means no spill was needed or the text was dropped. The server keeps up to 8 spills (a
   call spilling both fields uses two slots), evicting the oldest first. Each spill is limited
@@ -186,8 +183,8 @@ field below that a tool fills from an address is one. Fields marked `?` are pres
 some rows.
 
 - `analysis_complete` (`rex_annotate_many`, `rex_memory_write`, `rex_undo`, `rex_redo`,
-  `rex_uidf_set`, `rex_uidf_set_many`, `rex_uidf_clear`): the tool reanalyzes after a change and waits up to
-  10 s for every function the change left stale. False means the deadline passed; wait
+  `rex_uidf_set`, `rex_uidf_set_many`, `rex_uidf_clear`): the tool reanalyzes after a change and
+  waits up to 10 s for every function the change left stale. False means the deadline passed; wait
   with `rex_analysis_wait` before reading IL. True when nothing changed.
 - `rex_analysis_wait`: `completed`, `elapsed_ms`, `progress` (`{state, count, total}`),
   `function_count`, `in_flight` (`{start, name, analysis_time_ms}`, at most 10), and
@@ -302,15 +299,15 @@ some rows.
   (truncated), `exported`, `failed` (`{requested, reason}`), `applied`,
   `failed_count`, `total`. `rex_type_library_import`: `library` (null when none loaded),
   `imported` of `{requested, resolved}`, `failed`, `applied`, `failed_count`, `total`.
-- `rex_uidf_clear`: `function`, `variable` (null when clearing the whole function),
-  `cleared`, `analysis_complete`, and, when a variable is named, `definition_sites`. A
-  failure at any site rolls back the sites already cleared in that call. `rex_uidf_list`: `function` (resolved entry, null
-  when listing the whole view), `total`, `truncated`, and `values` of `{function, variable,
-  definition_site, architecture, state, value}`, where each value's `function` is a plain
-  function entry. `rex_uidf_set`: `function`, `variable`, `definition_site`, `value`
-  (`{state, rendered}`), `analysis_complete`, `lines`, `truncated`. `rex_uidf_set_many`:
-  `function`, `applied`, `failed`, `total`, `results` of `{index, variable, ok,
-  definition_site?, value?, error?}`, `analysis_complete`, `lines`, `truncated`.
+- `rex_uidf_clear`: `function`, `variable` (null when clearing the whole function), `cleared`,
+  `analysis_complete`, and, when a variable is named, `definition_sites`. A failure at any site
+  rolls back the sites already cleared in that call. `rex_uidf_list`: `function` (resolved entry,
+  null when listing the whole view), `total`, `truncated`, and `values` of `{function, variable,
+  definition_site, architecture, state, value}`, where each value's `function` is a plain function
+  entry. `rex_uidf_set`: `function`, `variable`, `definition_site`, `value` (`{state, rendered}`),
+  `analysis_complete`, `lines`, `truncated`. `rex_uidf_set_many`: `function`, `applied`, `failed`,
+  `total`, `results` of `{index, variable, ok, definition_site?, value?, error?}`,
+  `analysis_complete`, `lines`, `truncated`.
 - `rex_xrefs_to`: `total`, `truncated`, `code_refs` of `{function_start, function_name, arch,
   address, kind}` (`kind` is `call` or `code`; the first three are null outside a function),
   and `data_refs` of `{source}`.
