@@ -14,6 +14,7 @@ from helpers import (
     get_tool,
 )
 from helpers_view import (
+    FakeArchitecture,
     FakeBasicBlock,
     FakeBinaryView,
     FakeDisassemblyLine,
@@ -804,6 +805,33 @@ def test_quick_main_resolves_a_main_symbol_off_the_entry() -> None:
     assert result["main"] == "0x401234"
     assert result["function"]["name"] == "main"
     assert result["note"] is None
+
+
+def test_quick_main_breaks_a_start_tie_between_main_symbols_by_architecture_name() -> None:
+    view = FakeBinaryView(
+        entry_point=0x1000,
+        functions=[
+            FakeFunction("_start", 0x1000, 0x1100),
+            FakeFunction(
+                "main",
+                0x2000,
+                0x2100,
+                hlil=RenderableText("int main_x86() {\n    return 1;\n}"),
+                arch=FakeArchitecture("x86_64"),
+            ),
+            FakeFunction(
+                "main",
+                0x2000,
+                0x2100,
+                hlil=RenderableText("int main_arm() {\n    return 2;\n}"),
+                arch=FakeArchitecture("aarch64"),
+            ),
+        ],
+    )
+    _, quick = get_tool("rex_quick_main")
+    result = quick(FakeParsingToolCall(view))
+    assert result["method"] == "symbol"
+    assert result["lines"] == ["int main_arm() {", "    return 2;", "}"]
 
 
 def test_quick_main_resolves_a_underscore_main_symbol() -> None:

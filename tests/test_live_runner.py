@@ -4,8 +4,8 @@ import signal
 import subprocess
 import sys
 import threading
-from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import Callable, Generator, Iterator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import FrameType
@@ -103,16 +103,24 @@ def stub() -> Iterator[StubServer]:
     thread.join()
 
 
-@pytest.fixture(autouse=True)
-def restored_signals() -> Iterator[None]:
+@contextmanager
+def signals_restored() -> Generator[None]:
     handlers = {number: signal.getsignal(number) for number in runner.UNWIND_SIGNALS}
     mask = signal.pthread_sigmask(signal.SIG_BLOCK, [])
-    yield
-    for number in runner.UNWIND_SIGNALS:
-        signal.signal(number, signal.SIG_IGN)
-    signal.pthread_sigmask(signal.SIG_SETMASK, mask)
-    for number, handler in handlers.items():
-        signal.signal(number, handler)
+    try:
+        yield
+    finally:
+        for number in runner.UNWIND_SIGNALS:
+            signal.signal(number, signal.SIG_IGN)
+        signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        for number, handler in handlers.items():
+            signal.signal(number, handler)
+
+
+@pytest.fixture(autouse=True)
+def restored_signals() -> Iterator[None]:
+    with signals_restored():
+        yield
 
 
 @pytest.fixture
@@ -721,6 +729,27 @@ def install_sentinel_state(blocked: signal.Signals) -> None:
 def signal_state() -> tuple[dict[signal.Signals, Any], set[int]]:
     handlers = {number: signal.getsignal(number) for number in runner.UNWIND_SIGNALS}
     return handlers, signal.pthread_sigmask(signal.SIG_BLOCK, [])
+
+
+def test_restored_signals_applies_to_every_test(request: pytest.FixtureRequest):
+    assert "restored_signals" in request.fixturenames
+
+
+@pytest.mark.parametrize("raises", [False, True], ids=["returns", "raises"])
+def test_signals_restored_puts_back_every_unwind_handler_and_the_mask(raises: bool):
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGUSR2])
+    install_sentinel_state(signal.SIGUSR1)
+    before = signal_state()
+    with pytest.raises(RuntimeError) if raises else nullcontext():
+        with signals_restored():
+            for number in runner.UNWIND_SIGNALS:
+                signal.signal(number, signal.SIG_IGN)
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGUSR1])
+            signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGUSR2])
+            assert signal_state() != before
+            if raises:
+                raise RuntimeError("test body failed")
+    assert signal_state() == before
 
 
 LEAK_SCENARIOS = [
