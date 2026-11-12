@@ -56,10 +56,21 @@ def _validate_range(name: str, value: int, minimum: int, maximum: int | None = N
     return value
 
 
+def _nul_message(parameter: str) -> str:
+    return f"{parameter} must not contain NUL bytes"
+
+
+def _reject_nul(parameter: str, value: str) -> None:
+    # The core reads a string argument as a C string, so a NUL would silently cut it short.
+    if "\x00" in value:
+        raise mcp.ToolError("invalid_params", _nul_message(parameter))
+
+
 def _validate_text(name: str, value: str, maximum: int, too_large_code: str) -> str:
-    """Reject an empty or over-cap string argument instead of silently normalizing it."""
+    """Reject an empty, NUL-bearing, or over-cap string argument instead of normalizing it."""
     if not value:
         raise mcp.ToolError("invalid_params", f"{name} must not be empty")
+    _reject_nul(name, value)
     if len(value) > maximum:
         raise mcp.ToolError(too_large_code, f"{name} exceeds {maximum} characters")
     return value
@@ -293,6 +304,7 @@ def _parse_address_entry(call: mcp.ToolCall, index: int, entry: object, noun: st
         raise mcp.ToolError(
             "invalid_params", f"{noun}[{index}] must be a string address expression"
         )
+    _reject_nul(f"{noun}[{index}]", entry)
     try:
         return call.parse_address(entry)
     except Exception as error:
@@ -403,8 +415,7 @@ def _validate_export_path(filename: str) -> None:
         )
     if "\\" in filename:
         raise mcp.ToolError("invalid_params", "filename must not contain backslashes")
-    if "\x00" in filename:
-        raise mcp.ToolError("invalid_params", "filename must not contain NUL bytes")
+    _reject_nul("filename", filename)
     parts = filename.split("/")
     if ".." in parts:
         raise mcp.ToolError("invalid_params", "filename must not contain '..' path components")

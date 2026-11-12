@@ -12,6 +12,7 @@ from binaryninja.enums import SymbolType, TypeClass
 
 from binja_plugin.tools import (
     _MAX_EXPORT_FILE_BYTES,
+    _reject_nul,
     _resolve_export_path,
     _truncate,
     _validate_export_path,
@@ -285,6 +286,7 @@ def rex_type_library_import(
     :param names: 1 to 128 type names to import from the library.
     """
     bv = call.binary_view
+    _reject_nul("path", path)
     _validate_type_names(names)
     library = TypeLibrary.load_from_file(path)
     if library is None:

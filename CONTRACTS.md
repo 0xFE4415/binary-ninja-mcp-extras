@@ -370,6 +370,16 @@ present only on some rows.
   `key_too_large`, `value_too_large`, `data_too_large`, `name_too_large`, or
   `library_name_too_large`. Over-cap component paths, type-name list entries, and export
   filenames return `invalid_params` instead.
+- A string the core reads as a C string would be cut at a NUL (U+0000), so one containing a
+  NUL returns `invalid_params` with the message `<parameter> must not contain NUL bytes`.
+  This covers key-value keys and values, report titles and markdown, tag types and data,
+  annotation names, comments, prototypes and addresses, component, structure, and
+  type-library names and paths, type names, `rex_uidf_set` and `rex_uidf_set_many` values and
+  `def_address`, export filenames, and every entry of an address-expression list (named like
+  `functions[1]`). A batch tool reports it in the row of the bad item. Scalar address
+  parameters are parsed by the built-in server before the plugin runs, so this rule cannot
+  cover them. Patterns, regular expressions, variable names, and eval code are not passed
+  to the core as C strings and are unchanged.
 - The `filename` of `rex_export_disasm`, `rex_export_symbols`, and `rex_type_library_export`
   is a required parameter with no default, and the advertised schema lists it under
   `required`. It raises `invalid_params` for an empty name, an absolute path, a backslash, a

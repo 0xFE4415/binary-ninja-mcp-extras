@@ -9,6 +9,7 @@ from binaryninja import mcp
 
 from binja_plugin.tools import (
     _MAX_LIMIT,
+    _reject_nul,
     _truncate,
     _truncate_with_flag,
     _validate_range,
@@ -93,6 +94,7 @@ class _TagSetResult(TypedDict):
 def _require_key(key: str) -> None:
     if not key:
         raise mcp.ToolError("invalid_key", "key must not be empty")
+    _reject_nul("key", key)
 
 
 def _run_undo_stack_step(verb: str, step: Callable[[], None], failed_code: str) -> None:
@@ -139,6 +141,7 @@ def rex_kv_set(call: mcp.ToolCall, key: str, value: str) -> _KvSetResult:
     if len(key) > _MAX_KV_KEY_CHARS:
         # The key becomes part of the persistent metadata path with no core-side length bound.
         raise mcp.ToolError("key_too_large", f"key exceeds {_MAX_KV_KEY_CHARS} characters")
+    _reject_nul("value", value)
     if len(value) > _MAX_KV_VALUE_CHARS:
         raise mcp.ToolError("value_too_large", f"value exceeds {_MAX_KV_VALUE_CHARS} characters")
     call.binary_view.store_metadata(_METADATA_PREFIX + key, value)
@@ -221,6 +224,8 @@ def rex_tag_set(
     :param create_missing: Create tag_type when it does not exist yet.
     """
     bv = call.binary_view
+    _reject_nul("tag_type", tag_type)
+    _reject_nul("data", data)
     if len(data) > _MAX_TAG_DATA_CHARS:
         raise mcp.ToolError("data_too_large", f"tag data exceeds {_MAX_TAG_DATA_CHARS} characters")
     if tag_type not in bv.tag_types:
