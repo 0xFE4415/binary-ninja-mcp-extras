@@ -91,11 +91,11 @@ def rex_call_paths(
     max_depth: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_CALL_PATH_DEPTH)] = 8,
     max_paths: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_CALL_PATHS)] = 5,
 ) -> _CallPathsResult:
-    """Bounded BFS for call paths; direction picks which call edges the walk follows to the target.
+    """Bounded BFS for call paths; direction defaults to callers, so "A reaches B?" needs callees.
 
     :param from_addr: Address inside the starting function.
     :param to_addr: Address inside the target function.
-    :param direction: "callers" walks the edges reaching the target, "callees" the edges leaving.
+    :param direction: Default "callers": to_addr reaches from_addr; "callees": the reverse.
     :param max_depth: Maximum edges walked from the starting function.
     :param max_paths: Maximum paths returned.
     """
@@ -125,15 +125,15 @@ def rex_call_paths(
             continue
         explored += 1
         edges = function.callers if direction == "callers" else function.callees
-        for neighbor in sorted(edges, key=lambda item: item.start):
-            if neighbor.start == target.start:
+        # The core lists one edge per call site; keep one edge per function.
+        neighbors = {edge.start: edge for edge in edges}
+        for start in sorted(neighbors):
+            neighbor = neighbors[start]
+            if start == target.start:
                 paths.append([_function_entry(item) for item in [*path, neighbor]])
-                if len(paths) >= max_paths:
-                    # Call sites can list the target several times; stop appending at max_paths.
-                    hit_path_cap = True
-                    break
-            elif neighbor.start not in visited:
-                visited.add(neighbor.start)
+                hit_path_cap = len(paths) >= max_paths
+            elif start not in visited:
+                visited.add(start)
                 queue.append((neighbor, [*path, neighbor]))
     # hit_path_cap is the only truncation signal: paths never exceed max_paths.
     return {

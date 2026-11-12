@@ -6,6 +6,7 @@ A leaf module by design: helpers imports it, so it must not import helpers back.
 from __future__ import annotations
 
 import enum
+import itertools
 from typing import override
 
 
@@ -54,24 +55,39 @@ class FakeVariableType:
         return self._rendered
 
 
-class FakeVariable:
-    """Mirrors binaryninja.variable.Variable: name, source_type, storage and type.
+_UNIQUE_VARIABLE_INDEXES = itertools.count(1_000_000)
 
-    The defaults describe a 64-bit integer in register index 98, which is rax on x86_64.
-    """
+
+class FakeVariable:
+    """A Variable stand-in that compares and hashes by (source_type, index, storage)."""
 
     def __init__(
         self,
         name: str,
         *,
         source_type: FakeVariableSourceType = FakeVariableSourceType.RegisterVariableSourceType,
+        index: int | None = None,
         storage: int = 98,
         type_string: str = "int64_t",
     ) -> None:
         self.name = name
         self.source_type = source_type
+        self.index = next(_UNIQUE_VARIABLE_INDEXES) if index is None else index
         self.storage = storage
         self.type = FakeVariableType(type_string)
+
+    def _identity(self) -> tuple[FakeVariableSourceType, int, int]:
+        return self.source_type, self.index, self.storage
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, FakeVariable):
+            return NotImplemented
+        return self._identity() == other._identity()
+
+    @override
+    def __hash__(self) -> int:
+        return hash(self._identity())
 
 
 class FakeMLILDefinition:

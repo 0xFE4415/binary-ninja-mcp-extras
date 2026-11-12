@@ -42,6 +42,7 @@ class FakeInstruction:
     high: Any = None
     low: Any = None
     output: Any = ()
+    size: int = 8
 
     def __init__(
         self,
@@ -87,8 +88,8 @@ class FakeInstruction:
         return name
 
 
-def const(value: int) -> FakeInstruction:
-    return FakeInstruction("MLIL_CONST", constant=value)
+def const(value: int, size: int = 8) -> FakeInstruction:
+    return FakeInstruction("MLIL_CONST", constant=value, size=size)
 
 
 def var(variable: FakeVariable) -> FakeInstruction:
@@ -103,8 +104,12 @@ def add(left: FakeInstruction, right: FakeInstruction) -> FakeInstruction:
     return FakeInstruction("MLIL_ADD", left=left, right=right)
 
 
-def sign_extend(src: FakeInstruction) -> FakeInstruction:
-    return FakeInstruction("MLIL_SX", src=src)
+def sign_extend(src: FakeInstruction, size: int = 8) -> FakeInstruction:
+    return FakeInstruction("MLIL_SX", src=src, size=size)
+
+
+def zero_extend(src: FakeInstruction, size: int = 8) -> FakeInstruction:
+    return FakeInstruction("MLIL_ZX", src=src, size=size)
 
 
 def compare(operation: str, left: FakeInstruction, right: FakeInstruction) -> FakeInstruction:

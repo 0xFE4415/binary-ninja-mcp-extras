@@ -22,6 +22,7 @@ from binja_plugin.tools import _truncate, _truncate_with_flag, _validate_range
 _MAX_EVAL_STDOUT_CHARS = 65536
 _MAX_EVAL_RESULT_CHARS = 16384
 _MAX_EVAL_LOCATION_CHARS = 200
+_MAX_EVAL_CHAINED_ERRORS = 8
 _EVAL_FILENAME = "<rex_eval_python>"
 
 # Clipped eval echoes spill to process memory (a few recent ones) for rex_eval_result.
@@ -85,33 +86,102 @@ def _spill_echo(text: str, cap: int, kind: str) -> _Echo:
     return _Echo(echo, True, key, len(text))
 
 
+def _plain_text(value: object) -> str:
+    return str.__str__(value if isinstance(value, str) else str(value))
+
+
 def _exception_kind(error: BaseException) -> str:
     cls = type(error)
-    if cls.__module__ in ("builtins", "__main__"):
-        return cls.__qualname__
-    return f"{cls.__module__}.{cls.__qualname__}"
+    module = _plain_text(cls.__module__)
+    qualname = _plain_text(cls.__qualname__)
+    if module in ("builtins", "__main__"):
+        return qualname
+    return f"{module}.{qualname}"
 
 
-def _describe_error(error: BaseException) -> str:
-    kind = _exception_kind(error)
+def _tool_error_detail(error: mcp.ToolError) -> str:
+    message = _plain_text(error)
+    code = getattr(error, "code", None)
+    code_text = _plain_text(code) if isinstance(code, str) else ""
+    if not code_text:
+        return message
+    return f"{code_text}: {message}" if message else code_text
+
+
+def _exception_detail(error: BaseException) -> str:
+    if isinstance(error, SystemExit):
+        return f"exit status {error.code!r}"
+    if isinstance(error, mcp.ToolError):
+        return _tool_error_detail(error)
+    return _plain_text(error)
+
+
+def _describe_one_error(error: BaseException) -> str:
     try:
-        detail = f"exit status {error.code!r}" if isinstance(error, SystemExit) else str(error)
+        kind = _exception_kind(error)
+    except Exception:
+        kind = "<unknown exception type>"
+    try:
+        detail = _exception_detail(error)
     except Exception:
         detail = "<message unavailable>"
     return f"{kind}: {detail}" if detail else kind
 
 
+def _linked_error(error: BaseException) -> tuple[str, BaseException] | None:
+    try:
+        cause = getattr(error, "__cause__")
+        if cause is not None:
+            return ("caused by", cause) if isinstance(cause, BaseException) else None
+        context = getattr(error, "__context__")
+        if context is not None and not error.__suppress_context__:
+            return ("while handling", context) if isinstance(context, BaseException) else None
+    except Exception:
+        return None
+    return None
+
+
+def _unseen_link(error: BaseException, seen: set[int]) -> tuple[str, BaseException] | None:
+    link = _linked_error(error)
+    if link is None or id(link[1]) in seen:
+        return None
+    return link
+
+
+def _describe_error(error: BaseException) -> str:
+    description = _describe_one_error(error)
+    seen = {id(error)}
+    current = error
+    for _ in range(_MAX_EVAL_CHAINED_ERRORS):
+        link = _unseen_link(current, seen)
+        if link is None:
+            return description
+        relation, current = link
+        seen.add(id(current))
+        description += f"; {relation} {_describe_one_error(current)}"
+    if _unseen_link(current, seen) is not None:
+        description += "; ..."
+    return description
+
+
 def _error_location(error: BaseException, code: str) -> _ErrorLocation | None:
     """The innermost line of the caller's own code on the error's traceback, or None."""
-    lines = [
-        lineno
-        for frame, lineno in traceback.walk_tb(error.__traceback__)
-        if frame.f_code.co_filename == _EVAL_FILENAME
-    ]
-    if not lines:
+    try:
+        lines = [
+            lineno
+            for frame, lineno in traceback.walk_tb(error.__traceback__)
+            if frame.f_code.co_filename == _EVAL_FILENAME
+        ]
+        if not lines:
+            return None
+        source_lines = re.split(r"\r\n|\r|\n", code)
+        # Code the caller compiles under the same filename can report any line, or none.
+        if not 1 <= lines[-1] <= len(source_lines):
+            return None
+        text = source_lines[lines[-1] - 1].strip()
+        return {"line": lines[-1], "text": _truncate(text, _MAX_EVAL_LOCATION_CHARS)}
+    except Exception:
         return None
-    text = re.split(r"\r\n|\r|\n", code)[lines[-1] - 1].strip()
-    return {"line": lines[-1], "text": _truncate(text, _MAX_EVAL_LOCATION_CHARS)}
 
 
 @mcp.tool(destructive=True)

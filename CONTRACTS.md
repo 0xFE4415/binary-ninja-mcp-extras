@@ -44,6 +44,13 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   variables as `name (storage)`, with the register name, `stack +0x8` or `stack -0x8`, the
   flag text, or the composite source and raw value as the storage, so same-named variables
   read apart.
+- `no_variable` for a name the function does not have (`rex_parameter_variables` and the
+  uidf setters and clearers) lists the function's variable names. Names match exactly. A
+  name the function has but the MLIL never defines fails with advice only when every
+  variable of that name is a declared parameter: a register parameter points to
+  `rex_parameter_variables` and the variable that copies it, and a stack parameter to the
+  register that loads it. Any other variable, such as a saved register or a stack local,
+  gets none.
 - `no_mlil` (`rex_function_constraints`, `rex_mlil_uses`, `rex_parameter_variables`, and the
   uidf setters and clearers that resolve a variable name) and `no_hlil`
   (`rex_hlil_statements`) distinguish a skipped function from a pending one. When the core
@@ -53,7 +60,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   waiting. Otherwise analysis is pending and the message advises
   `bn_analysis_update_and_wait` or a bounded `rex_analysis_wait`.
   `rex_quick_main` applies the same rule to its `note` when the entry function has no HLIL
-  and no `main` symbol exists: the note is `the entry`, a space, and that message.
+  and no `main` symbol exists: the note is `the entry`, a space, and that message. It does
+  the same when the `main` it found has no HLIL, whatever the method: `the main`, a space,
+  and that message.
 - An address can lie in several functions: a cold or outlined block belongs to its parent and
   to a function of its own. Every tool that resolves an address expression to a function
   (`rex_function_constraints`, `rex_hlil_statements`, `rex_mlil_uses`,
@@ -63,11 +72,13 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `rex_component_add_functions`, `rex_annotate_many`, and `rex_quick_main`) picks one: the
   containing function with the lowest start address, the architecture name breaking a tie
   between equal starts. The core lists containing functions in no documented order, so the
-  pick never follows it. The chosen function comes back as a resolved function entry,
-  `{start, name, also_containing, same_name}`: `also_containing` lists the other functions
-  that contain the address and `same_name` the other functions with the chosen name, each
-  as `{start, name}` by ascending start and at most 64 per list. `rex_function_containing`
-  lists every containing function in the same order, so its first entry is the pick.
+  pick never follows it. `rex_find_functions_by_pattern` credits each hit to the same pick,
+  so overlapping code counts once, for the lowest-start function. The chosen function comes
+  back as a resolved function entry, `{start, name, also_containing, same_name}`:
+  `also_containing` lists the other functions that contain the address and `same_name` the
+  other functions with the chosen name, each as `{start, name}` by ascending start and at
+  most 64 per list. `rex_function_containing` lists every containing function in the same
+  order, so its first entry is the pick.
   Passing a function name in an address expression is ambiguous too: the core resolves it
   to one address before the plugin sees it and does not say that other functions share the
   name. `same_name` is where that shows, whether the caller passed a name or an address.
@@ -95,6 +106,9 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   function); `addresses_truncated` only reports the cap on what was seen.
   `rex_constant_find` lists functions, and picks each function's
   example addresses, in the core's hit order, which is not address order.
+  `rex_constant_find` and `rex_find_functions_by_pattern` key a function by start address
+  and architecture, so two rows can share a `start` for different architectures, and the
+  rows then usually differ in `name`.
   `rex_hlil_grep` returns no `total`; it additionally returns `scan_incomplete`, set when
   the `max_functions` render budget ran out before the whole view was scanned: nothing
   was proven about matches past the page, so more may exist even though `truncated` is
@@ -140,12 +154,23 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   `KeyError: 'x'` but `json.decoder.JSONDecodeError: ...` and `binaryninja.mcp.ToolError:
   ...`. A class defined in the submitted code has no `__name__` in the exec globals, so its
   module is `builtins` and it reads as its bare qualname (`Custom: x`,
-  `make.<locals>.Inner: n`). A `SystemExit` reads `SystemExit: exit status <repr of code>`. It
-  is capped like other echoes (`error_truncated`), so the type is never the part cut.
+  `make.<locals>.Inner: n`). A `SystemExit` reads `SystemExit: exit status <repr of code>`. A
+  `ToolError` reads `<type>: <code>: <message>` (just the code when the message is empty; the
+  plain message when it has no usable string code). Rendering does not raise an `Exception`: a
+  message that cannot render reads `<message unavailable>`, a type name that cannot reads
+  `<unknown exception type>`, and a chain link that cannot be read ends the chain. A
+  `BaseException` that is not an `Exception` (such as `KeyboardInterrupt`) raised while
+  rendering still propagates.
+  Chained exceptions follow the outermost one. Each link is chosen as Python chooses it:
+  `; caused by <error>` for the explicit cause, else `; while handling <error>` for the
+  implicit context unless it is suppressed (`raise X from Y` or `from None`). Each link
+  reads like the outermost error. The chain stops at a repeat, or after 8 links with a
+  final `; ...` when more follow. The whole text is
+  capped like other echoes (`error_truncated`), so the type is never the part cut.
   `error_location` is `{line, text}` for the innermost line of the submitted code on the
-  traceback (text stripped, capped at 200 characters), or null on success and for
-  syntax errors, whose message already names the line. The code is compiled as
-  `<rex_eval_python>`.
+  traceback (text stripped, capped at 200 characters), or null on success, for syntax
+  errors (whose message already names the line), and when the traceback cannot be read. The
+  code is compiled as `<rex_eval_python>`.
 - Non-null `stdout_key`/`result_key` values let `rex_eval_result` page spilled text. The
   server keeps up to 8 spills (a call spilling both fields uses two slots), evicting the
   oldest first. Each spill is limited to 4,194,304 characters; larger text is dropped,
@@ -162,7 +187,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   tool's parameters; an unknown name raises `unknown_tool`. Passing both raises
   `invalid_params`. Every `rex_*` tool appears in exactly one category: the module that
   defines it, or `other` for a registered tool no category module defines. The index lists
-  `other` only when it has tools; `category=other` is always valid.
+  `other` only when it has tools; `category=other` is always valid. `rex_help` reads the
+  live tool registry, so `rx_data_find` and `rx_multi_find` appear, under `scanning`, only
+  while the native plugin is loaded (other `rx_` tools are never listed). Otherwise they
+  are absent, and `tool_name` for one raises `unknown_tool`.
 - `rex_data_read` returns `bytes_read` and `complete` (whether all requested bytes were
   read). An unmapped start returns zero bytes. A short read gives the byte count, not
   the locations of unreadable gaps.
@@ -242,11 +270,20 @@ present only on some rows.
   match_count, addresses, addresses_truncated}`.
 - `rex_function_constraints`: `function`, `total`, `truncated`, and `constraints` of
   `{address, operator, constant, char, subject, subject_text}`. `operator` is `==` or
-  `!=`, `constant` is hex, and `char` is the printable ASCII character or null. `subject`
-  is `{kind: "load", base, offset}` (`base` is null for an absolute address; both are null,
-  and `text` is added, when the address is not a base variable plus a constant),
-  `{kind: "variable", variable, definition?}` with `definition` `{address, load}` when the
-  variable's only definition is a load, or `{kind: "expression", text}`.
+  `!=`. `constant` and a `load` `offset` render the value the expression computes: a zero
+  or sign extension of a constant is applied at its outer width first, then the value is
+  shown at that width. `constant` is unsigned hex (-1 is `0xffffffff` in four bytes and
+  `0xffffffffffffffff` in eight; `sx.q` of a four-byte -1 is `0xffffffffffffffff`, `zx.q`
+  of `0xffffffff` is `0xffffffff`). `char` is the printable ASCII character of that value,
+  else null. A constant the core gives no size (width 0, such as `true`) keeps its value as
+  stated. `subject` is `{kind: "load", base, offset}`. `base` is null for an absolute
+  address, whose `offset` is unsigned hex at its width like every address. For a base
+  variable plus a displacement, `offset` is the displacement as signed two's complement at
+  its width: a four-byte `0xfffffff8` prints `-0x8`, but `zx.q` of it prints `0xfffffff8`.
+  Both are null, and `text` is added, when the address is not a base variable plus a
+  constant. Other subjects are `{kind: "variable", variable, definition?}` with `definition`
+  `{address, load}` when the variable's only definition is a load, or
+  `{kind: "expression", text}`.
 - `rex_function_containing`: `functions` (at most 64, ascending start) and `truncated`.
   `rex_function_define`: `start`, `name`, `analyzed`, `waited_ms`.
   `rex_function_define_many`: `defined` of `{start, name, analyzed}`, `failed` (addresses
@@ -264,15 +301,23 @@ present only on some rows.
 - `rex_memory_write`: `address`, `bytes_written`.
 - `rex_mlil_uses`: `function`, `definition_site` (the queried address), and `variables`,
   one per defined variable: `variable`, `storage`, `type`, `definitions` (a flat list of
-  the addresses of every definition the core records for it), `total`, `truncated`, and
-  `uses` of `{address, operation, text}`.
+  the addresses of every definition the core records for it, ascending), `total`,
+  `truncated`, and `uses` of `{address, operation, text}`.
 - `rex_parameter_variables`: `function`, `parameter`, `storage` (one entry per matching
   variable in the function's variable order, shaped like `rex_mlil_uses`' `storage`),
-  `definitions` (a flat list of addresses over all matching variables), and `carriers` of
-  `{variable, address, text}`.
+  `definitions` (a flat list of addresses over all matching variables, ascending), and
+  `carriers` of `{variable, address, text}`.
 - `rex_quick_main`: `entry_point`, `method` (`symbol`, `entry-arg`, or `entry-fallback`),
   `main` (null when unresolved), `note` and `hint` (each null when it has nothing to add),
-  `function` (main, else the entry function), `lines`, `truncated`.
+  `function` (main, else the entry function), `lines`, `truncated`. When `main` does
+  nothing but tail-call a constant address, passing on only variables and constants, `main`
+  stays as found and `note` names the real body (`main is a tail-call stub; its real body is
+  NAME at ADDRESS`). A tail call that computes an argument is real work, not a stub. The note
+  follows up to eight stubs. It is null for a loop, a longer chain, a target that is not the
+  start of a function, or a chain that ends in an import thunk (a symbol of type
+  `ImportedFunctionSymbol`, or a function whose only statement tail-calls an import), which
+  has no body of its own. A target whose analysis is pending or skipped has no HLIL to
+  inspect, so it is named as the body (a pending one may later turn out to be a stub).
 - `rex_redo`: `redone`, `undo_left`, `redo_left`. `rex_undo`: `undone`, `undo_left`,
   `redo_left`.
 - `rex_relocation_at`: `address`, `count`, and `relocations` of `{address, size, type,
@@ -325,19 +370,38 @@ present only on some rows.
 - The `filename` of `rex_export_disasm`, `rex_export_symbols`, and `rex_type_library_export`
   is a required parameter with no default, and the advertised schema lists it under
   `required`. It raises `invalid_params` for an empty name, an absolute path, a backslash, a
-  NUL byte, a `..` component, or a component over 255 bytes. `path_escape` is raised only after
-  resolution, when a symlink inside the export root points outside it, and
-  `export_failed` when the root or file cannot be written. `rex_help` lists these three
-  codes for the parameter.
+  NUL byte, a `..` component, a last path component that is `.` or empty (a trailing `/`,
+  which names a directory, not a file), or a component over 255 bytes.
+  `path_escape` is raised only after resolution, when a symlink inside the export root
+  points outside it, and `export_failed` when the root or file cannot be written.
+  `rex_help` lists these three codes for the parameter.
+- `rex_help` lists `invalid_params` for `rex_type_library_export` `library_name` (empty), `names`
+  (not a list, not 1-128 entries, an empty or over-long entry, or a non-string entry), and
+  `kind`. For `rex_uidf_set_many` it lists `invalid_params` on `function` (no analyzed function
+  contains the address), and on `items` every code an item can fail with in its `results` row
+  or that rejects the list: `invalid_params`, `no_mlil`, `no_variable`,
+  `ambiguous_definition`, `definition_not_found`, and `set_failed`.
 - A regular expression that does not compile returns `invalid_regex`; the message is
   `Invalid regular expression parameter '<name>': <reason>` and names the bad parameter:
   `pattern` (`rex_string_search` and `rex_string_refs` with `regex=true`), `regex`
   (`rex_hlil_grep`), or `function_filter` (`rex_hlil_grep`, `rex_constant_find`).
   `rex_hlil_grep` checks `regex` before `function_filter`.
-- Hex byte patterns (`rex_data_find`, `rex_find_functions_by_pattern`, `rx_multi_find`)
-  are whitespace-separated bytes written as exactly two ASCII hex digits, or `??` for any
-  byte; whitespace inside a byte is ignored. Any other token (`+f`, `-1`, `0x`, `f_`,
-  non-ASCII digits, `?5`) returns `invalid_pattern` naming the token.
+- Hex byte patterns (`rex_data_find`, `rx_data_find`, `rex_find_functions_by_pattern`,
+  `rx_multi_find`) are separator-delimited bytes written as exactly two ASCII hex digits,
+  or `??` for any byte; separators inside a byte are ignored. A separator is any character
+  Python's `str.isspace()` accepts: U+0009-U+000D, U+001C-U+001F, U+0020, U+0085, U+00A0,
+  U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000. Any other token (`+f`,
+  `-1`, `0x`, `f_`, non-ASCII digits, `?5`) returns `invalid_pattern` naming the token. A
+  `pattern` that is not a string returns `invalid_params`. A `section` name containing a NUL
+  returns `section_not_found`, like any unknown name. The `section_not_found` and
+  `invalid_pattern` messages show an echoed NUL as U+FFFD, because the core cuts a message
+  at its first NUL; other tools' messages are not rewritten.
+- `rex_constant_find` `value` is an integer (0 to 18446744073709551615) or a string: `0x` or
+  `0X`, then 1-16 hex digits in either case. A client that reads JSON numbers as doubles
+  rounds the integer maximum to 18446744073709552000, so it should send the hex string for
+  values above 2^53. A value that is not an integer or string (a boolean, float, null, list,
+  or object), any other string, a sign, whitespace, an empty digit list, or more than 16
+  digits returns `invalid_params` naming the violation; strings are never coerced.
 - `rx_multi_find` accepts 1-64 patterns: an empty list returns `invalid_params`, a longer
   one `too_many_patterns`. Each entry is capped at 8,192 characters like `rex_data_find`'s
   `pattern`, and an over-cap entry returns `pattern_too_large` naming its index.
@@ -363,15 +427,26 @@ Usage strategies that do not fit a tool's one-line description.
   an instruction line, one whose tokens include an instruction token. The core also reports
   function header lines and the `{ Continuation of function ... }`, `{ Falls through into
   ... }`, and `{Case ...}` annotation lines; those never count, so `value` 0 no longer
-  matches every function. The core still matches any zero-valued token on an instruction
-  line, so `value` 0 can hit an instruction with no zero operand that carries an annotation
-  such as `{0x3}`; check the disassembly. A value that is rare or absent makes the core scan
-  the whole view before the search ends. Use it to enumerate every function touching a
-  magic value; when the value lives in data rather than code, use `rex_data_find` or
-  `rx_multi_find` instead.
-- `rex_call_paths` with `direction=callers` from a sink answers "who can reach this"
-  without hand-walking xrefs; `direction=callees` from a source answers "what can this
-  reach". Both directions are bounded by `max_depth` and `max_paths`.
+  matches every function. The core also matches `value` 0 on an instruction with no zero
+  operand, for example `xor eax, eax  {0x0}` (a register's known value in an annotation) or
+  a line that carries a string annotation. For `value` 0 the tool keeps a hit only when a
+  token that belongs to an operand and carries a number or address (integer, possible
+  address, code-relative address, floating point, character constant, enumeration member,
+  code or data symbol, import, or external symbol) is 0. A line whose tokens carry no
+  operand index at all is kept, since it cannot be judged. The optional boolean
+  `include_non_operand_hits` (default false) returns the dropped hits too; it is only
+  allowed with `value` 0 and otherwise returns `invalid_params`. Dropped hits take no slot
+  in `total`, paging, the address cap, or `truncated`. Other values are not filtered. The
+  tool lists a hit under the function the core attributes the line to, not by the
+  lowest-start rule, so in overlapping code one address can appear under several functions.
+  A value that is rare or absent makes the core scan the whole view before the search ends.
+  Use it to enumerate every function touching a magic value; when the value lives in data
+  rather than code, use `rex_data_find` or `rx_multi_find` instead.
+- `rex_call_paths` defaults to `direction=callers`: from a sink it answers "who can reach
+  this" without hand-walking xrefs. "Does main reach X?" needs `direction=callees` from
+  main, which answers "what can this reach". Both directions are bounded by `max_depth` and
+  `max_paths`. A function called from several sites is one edge, so a path is never listed
+  twice.
 - `rex_struct_from_access` only sees offset accesses analysis has already recorded, so
   run it after the dereferencing code is analyzed; it registers the inferred struct
   under an auto type id.

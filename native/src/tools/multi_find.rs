@@ -20,14 +20,18 @@ use crate::scan::{Pagination, RunningScan};
 // No `binary` field — same server-reserved argument rule as `DataFindArgs`.
 #[derive(Deserialize, JsonSchema)]
 pub struct MultiFindArgs {
+    /// Hex byte patterns, e.g. ["48 8b ?? 05"]; each byte is 2 ASCII hex digits or "??".
     #[schemars(length(min = 1, max = MAX_MULTI_PATTERNS))]
     #[schemars(inner(length(max = MAX_PATTERN_CHARS)))]
     pub patterns: Vec<String>,
+    /// Only search within this section.
     #[serde(default)]
     pub section: Option<String>,
+    /// Maximum matches to return per pattern.
     #[serde(default = "default_limit")]
     #[schemars(range(min = 0, max = MAX_LIMIT))]
     pub limit: u32,
+    /// Matches to skip per pattern before collecting results.
     #[serde(default)]
     #[schemars(range(min = 0))]
     pub offset: u64,

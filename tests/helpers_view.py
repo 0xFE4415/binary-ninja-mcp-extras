@@ -61,6 +61,7 @@ class FakeTag:
 class RenderableText:
     def __init__(self, text: str) -> None:
         self._text = text
+        self.basic_blocks: list[list[object]] = []
 
     @override
     def __str__(self) -> str:
@@ -76,17 +77,37 @@ class FakeInstructionTextTokenType(enum.IntEnum):
     RegisterToken = 3
     IntegerToken = 4
     PossibleAddressToken = 5
+    FloatingPointToken = 8
+    StringToken = 17
     AnnotationToken = 9
+    CodeRelativeAddressToken = 10
+    CharacterConstantToken = 18
+    EnumerationMemberToken = 35
     CodeSymbolToken = 64
+    DataSymbolToken = 65
+    ImportToken = 67
+    ExternalSymbolToken = 70
+    StackVariableToken = 71
     AddressSeparatorToken = 72
 
 
-class FakeLineToken:
-    """Mirrors an InstructionTextToken: its type and the text it renders."""
+NO_OPERAND = 0xFFFFFFFF
 
-    def __init__(self, type: FakeInstructionTextTokenType, text: str = "") -> None:
+
+class FakeLineToken:
+    """Mirrors an InstructionTextToken: its type, text, value, and operand index."""
+
+    def __init__(
+        self,
+        type: FakeInstructionTextTokenType,
+        text: str = "",
+        value: int = 0,
+        operand: int = NO_OPERAND,
+    ) -> None:
         self.type = type
         self.text = text
+        self.value = value
+        self.operand = operand
 
 
 class FakeLineContents:
@@ -101,11 +122,11 @@ _TOKEN_TYPE = FakeInstructionTextTokenType
 # The token shapes find_all_constant was observed to yield on a live x86_64 ELF.
 INSTRUCTION_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
-    FakeLineToken(_TOKEN_TYPE.InstructionToken, "cmp"),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "cmp", 0, 0),
     FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
-    FakeLineToken(_TOKEN_TYPE.RegisterToken, "eax"),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "eax", 0, 0),
     FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", "),
-    FakeLineToken(_TOKEN_TYPE.IntegerToken, "0x0"),
+    FakeLineToken(_TOKEN_TYPE.IntegerToken, "0x0", 0, 1),
 )
 FUNCTION_HEADER_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
@@ -128,11 +149,57 @@ FALLS_THROUGH_LINE = (
 CASE_LINE = (FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{Case 0x0}"),)
 ANNOTATED_INSTRUCTION_LINE = (
     FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
-    FakeLineToken(_TOKEN_TYPE.InstructionToken, "mul"),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "mul", 0, 0),
     FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
-    FakeLineToken(_TOKEN_TYPE.RegisterToken, "rdx"),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "rdx", 0, 0),
     FakeLineToken(_TOKEN_TYPE.TextToken, "  "),
     FakeLineToken(_TOKEN_TYPE.AnnotationToken, "{0x3}"),
+)
+# Observed live on x86_64: an instruction token such as `cmp` carries operand 0.
+# `xor eax, eax  {0x0}`: the only zero is the annotation; the register tokens carry value 0 too.
+XOR_REGISTER_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "xor", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "eax", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", ", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "eax", 0, 1),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "  {"),
+    FakeLineToken(_TOKEN_TYPE.IntegerToken, "0x0"),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "}"),
+)
+# `push 0x0  {var_8}`: a zero immediate typed as a possible address.
+PUSH_ZERO_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "push", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "    "),
+    FakeLineToken(_TOKEN_TYPE.PossibleAddressToken, "0x0", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, " {"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "var_8"),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "}"),
+)
+# `sar rsi, 0x1  {0x0}`: the immediate is 1; the zero is a register value in the annotation.
+SHIFT_BY_ONE_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "sar", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "rsi", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", ", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.PossibleAddressToken, "0x1", 1, 1),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "  {"),
+    FakeLineToken(_TOKEN_TYPE.IntegerToken, "0x0"),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "}"),
+)
+# `lea rdi, [rel data_404501]  {"coreutils"}`: no integer at all.
+STRING_ANNOTATION_LINE = (
+    FakeLineToken(_TOKEN_TYPE.AddressSeparatorToken),
+    FakeLineToken(_TOKEN_TYPE.InstructionToken, "lea", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.TextToken, "     "),
+    FakeLineToken(_TOKEN_TYPE.RegisterToken, "rdi", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.OperandSeparatorToken, ", ", 0, 0),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "  {"),
+    FakeLineToken(_TOKEN_TYPE.TextToken, '"coreutils"'),
+    FakeLineToken(_TOKEN_TYPE.AnnotationToken, "}"),
 )
 
 FakeConstantReference = (
@@ -332,12 +399,15 @@ class FakeFunction:
         callers: list[FakeFunction] | None = None,
         callees: list[FakeFunction] | None = None,
         vars: list[FakeVariable] | None = None,
+        parameter_vars: list[FakeVariable] | None = None,
         mlil: FakeMediumLevelIL | FakeMLILInstructions | None = None,
         arch: FakeArchitecture | None = None,
         extra_ranges: tuple[tuple[int, int], ...] = (),
         analysis_skipped: bool = False,
         analysis_skip_reason: FakeAnalysisSkipReason = FakeAnalysisSkipReason.NoSkipReason,
+        symbol_type: str = "FunctionSymbol",
     ) -> None:
+        self.symbol = FakeSymbol(start, symbol_type, name)
         self.arch = arch if arch is not None else FakeArchitecture("x86_64")
         self.analysis_skipped = analysis_skipped
         self.analysis_skip_reason = analysis_skip_reason
@@ -357,6 +427,7 @@ class FakeFunction:
         self.type: FakeType | None = None
         self.user_type_error: Exception | None = None
         self.vars = vars if vars is not None else []
+        self.parameter_vars = parameter_vars if parameter_vars is not None else []
         self.mlil = mlil
         # UIDF state: informed values keyed (variable, def-site address), the calls the
         # tools made, and per-operation error injection.
@@ -723,6 +794,10 @@ class FakeBinaryView:
             for relocation in self._relocations
             if relocation.info.address <= addr < relocation.info.address + relocation.info.size
         ]
+
+    def get_functions_at(self, address: int) -> list[FakeFunction]:
+        """Mirror BinaryView.get_functions_at: functions starting at the address, pending too."""
+        return [f for f in [*self.functions, *self._pending_functions] if f.start == address]
 
     def get_function_at(self, address: int) -> FakeFunction | None:
         """Mirror BinaryView.get_function_at: exact start match, pending functions included."""

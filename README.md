@@ -38,6 +38,7 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 
 1. `rex_help` for discovery: the tool categories, each with a "use when" line. Open one
    with `rex_help(category=...)`, or one tool's parameters with `rex_help(tool_name=...)`.
+   It also lists the `rx_*` scanners, under `scanning`, once the native half is loaded.
 2. `rex_quick_main` for fast contact: entry point, `main`, and `main`'s HLIL in one
    call.
 3. Search. `rex_string_search` for strings, `rex_data_find` or `rx_multi_find` for
@@ -79,7 +80,7 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_quick_main` | Show the entry point, `main`, and the HLIL of `main`. |
 | `rex_analysis_wait` | Wait for analysis, with a time limit. |
 | `rex_uidf_list` | List user variable values for one function or the whole view. |
-| `rex_call_paths` | Find call paths between two functions, within set bounds. |
+| `rex_call_paths` | Find call paths; `from_addr` reaching `to_addr` needs `direction=callees`. |
 | `rex_function_containing` | List every function that contains an address. |
 | `rex_component_get` | Show a component's functions and child components. |
 | `rex_string_read_at` | Read the detected string at an address. |
@@ -131,6 +132,9 @@ Three searches stop early, so one call stays fast on a large database.
 - `rex_constant_find` searches disassembly with the core's constant search and stops once
   the page is full. It returns up to 6 distinct addresses per function, in the core's hit
   order. While `truncated` is set, each function's addresses are a lower bound.
+  `value` is an integer or a `0x` hex string; send the string for values above 2^53, which
+  JavaScript clients cannot hold as numbers. For `value` 0 it drops hits with no zero
+  operand, such as `xor eax, eax`; set `include_non_operand_hits` to keep them.
 - `rex_hlil_grep` renders at most `max_functions` functions per call. Page with
   `next_offset` while `truncated` or `scan_incomplete` is set. `skipped_no_hlil` counts
   functions with no HLIL.
@@ -145,9 +149,10 @@ Three searches stop early, so one call stays fast on a large database.
   and it handles calls one at a time. Use substring mode (`regex=false`) for untrusted
   input where the tool has it, and keep `rex_hlil_grep` patterns simple.
 - `rx_data_find` beats `rex_data_find` by about 7.5x on a whole-view scan and ties it
-  (0.99x) on one section. `rx_multi_find` won at every scope, up to 12.6x on the full view.
-  Both register whenever the native half is installed, so pick per scan. The numbers come
-  from [native/BENCH.md](native/BENCH.md).
+  (0.99x) on `.text`; on `.rodata` it was about 30x faster in one diagnostic run.
+  `rx_multi_find` won at every scope, up to 12.6x on the full view. Both register
+  whenever the native half is installed, so pick per scan. The numbers come from
+  [native/BENCH.md](native/BENCH.md).
 
 ## Development and testing
 

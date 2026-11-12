@@ -65,11 +65,22 @@ fn resolve_bounds(
     view: &BinaryView,
     section: Option<&str>,
 ) -> Result<Option<(u64, u64)>, McpToolError> {
+    resolve_section_bounds(section, |name| {
+        view.section_by_name(name)
+            .map(|section| (section.start(), section.end()))
+    })
+}
+
+fn resolve_section_bounds(
+    section: Option<&str>,
+    lookup: impl FnOnce(&str) -> Option<(u64, u64)>,
+) -> Result<Option<(u64, u64)>, McpToolError> {
     section
         .map(|name| {
-            view.section_by_name(name)
-                .map(|section| (section.start(), section.end()))
-                .ok_or_else(|| section_not_found_error(name))
+            if name.contains('\0') {
+                return Err(section_not_found_error(name));
+            }
+            lookup(name).ok_or_else(|| section_not_found_error(name))
         })
         .transpose()
 }
@@ -102,6 +113,7 @@ mod tests {
     use super::multi_find::MultiFindArgs;
     use super::*;
     use crate::multi::MAX_MULTI_PATTERNS;
+    use binaryninja::mcp::tool::TypedMcpTool;
 
     #[test]
     fn pagination_rejects_over_limit() {
@@ -146,8 +158,47 @@ mod tests {
     }
 
     #[test]
+    fn every_argument_property_has_a_description() {
+        let schemas = [
+            ("rx_data_find", schemars::schema_for!(DataFindArgs)),
+            ("rx_multi_find", schemars::schema_for!(MultiFindArgs)),
+        ];
+        for (tool, schema) in schemas {
+            let schema = serde_json::to_value(schema).unwrap();
+            let properties = schema["properties"].as_object().unwrap();
+            assert_eq!(properties.len(), 4, "{tool} property count");
+            for (name, property) in properties {
+                let description = property["description"].as_str().unwrap_or_default();
+                assert!(!description.is_empty(), "{tool}.{name} has no description");
+            }
+        }
+    }
+
+    #[test]
+    fn multi_find_pagination_descriptions_say_per_pattern() {
+        let schema = serde_json::to_value(schemars::schema_for!(MultiFindArgs)).unwrap();
+        let properties = &schema["properties"];
+        assert_eq!(
+            properties["limit"]["description"],
+            "Maximum matches to return per pattern."
+        );
+        assert_eq!(
+            properties["offset"]["description"],
+            "Matches to skip per pattern before collecting results."
+        );
+    }
+
+    #[test]
+    fn data_find_description_matches_the_benchmark_not_a_blanket_claim() {
+        let description = data_find::RxDataFind.info().description;
+        assert!(!description.contains("instead of slower"));
+        assert!(description.contains("7.5x faster than `rex_data_find` on a whole-view scan"));
+        assert!(description.contains("no faster on `.text`"));
+    }
+
+    #[test]
     fn pattern_size_and_parse_errors() {
-        let long = "48 ".repeat(2731); // 8193 chars after trim
+        let long = "48 ".repeat(2731); // 8193 chars
         let error = parse_checked_pattern(&long).unwrap_err();
         assert_eq!(error.code, "pattern_too_large");
         assert_eq!(error.message, "pattern exceeds 8192 characters");
@@ -175,6 +226,46 @@ mod tests {
                 "no section named '{}... [88 chars truncated]'",
                 "a".repeat(512)
             )
+        );
+    }
+
+    fn panicking_lookup(_name: &str) -> Option<(u64, u64)> {
+        panic!("the core lookup must not be reached");
+    }
+
+    #[test]
+    fn section_with_nul_is_not_found_without_reaching_the_core() {
+        let error = resolve_section_bounds(Some("a\0b"), panicking_lookup).unwrap_err();
+        assert_eq!(error.code, "section_not_found");
+        assert_eq!(error.message, "no section named 'a\0b'");
+
+        let long_name = format!("\0{}", "a".repeat(600));
+        let error = resolve_section_bounds(Some(&long_name), panicking_lookup).unwrap_err();
+        assert_eq!(error.code, "section_not_found");
+        assert_eq!(
+            error.message,
+            format!(
+                "no section named '\0{}... [89 chars truncated]'",
+                "a".repeat(511)
+            )
+        );
+    }
+
+    #[test]
+    fn section_without_nul_goes_through_the_core_lookup() {
+        let bounds = resolve_section_bounds(Some(".text"), |name| {
+            assert_eq!(name, ".text");
+            Some((0x1000, 0x2000))
+        });
+        assert_eq!(bounds.unwrap(), Some((0x1000, 0x2000)));
+
+        let error = resolve_section_bounds(Some(".nope"), |_| None).unwrap_err();
+        assert_eq!(error.code, "section_not_found");
+        assert_eq!(error.message, "no section named '.nope'");
+
+        assert_eq!(
+            resolve_section_bounds(None, panicking_lookup).unwrap(),
+            None
         );
     }
 
