@@ -20,7 +20,8 @@ from binja_plugin import tools
 from binja_plugin.tools import functions
 
 
-def test_function_define_and_undefine() -> None:
+def test_function_define_and_undefine(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("time.sleep", _DefineWaitClock().sleep)
     view = FakeBinaryView()
     _, define = get_tool("rex_function_define")
     assert define(_call(view), 0x4000) == {
@@ -56,9 +57,12 @@ def test_function_define_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     assert exc.value.code == "define_failed"
 
 
-def test_function_define_wait_reports_unanalyzed_functions() -> None:
+def test_function_define_wait_reports_unanalyzed_functions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A view whose created functions never get blocks: the wait returns them as pending
     # instead of hanging, and wait=false skips the wait entirely.
+    monkeypatch.setattr("time.sleep", _DefineWaitClock().sleep)
     stalled = FakeBinaryView(create_user_function_analyzes=False)
     _, define = get_tool("rex_function_define")
     result = define(_call(stalled), 0x4000, timeout_ms=0)
@@ -88,6 +92,7 @@ class _DefineWaitClock:
     def sleep(self, seconds: float) -> None:
         slept_ms = round(seconds * 1000)
         self.sleeps.append(slept_ms)
+        assert len(self.sleeps) <= 8, "wait loop ignored the deadline"
         self.now_ms += slept_ms
         if self.landing is not None:
             self.landing.basic_blocks = [FakeBasicBlock([(self.landing.start, "push rbp")])]
@@ -203,7 +208,8 @@ def test_function_define_wait_takes_no_slice_at_the_deadline(
     }
 
 
-def test_function_define_many_defines_and_waits() -> None:
+def test_function_define_many_defines_and_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("time.sleep", _DefineWaitClock().sleep)
     view = FakeBinaryView()
     _, define_many = get_tool("rex_function_define_many")
     result = define_many(FakeParsingToolCall(view), ["0x4000", "0x4100"])
@@ -238,6 +244,7 @@ def test_function_define_many_is_all_or_nothing_on_parse_errors() -> None:
 
 
 def test_function_define_many_reports_pending_and_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("time.sleep", _DefineWaitClock().sleep)
     stalled = FakeBinaryView(create_user_function_analyzes=False)
     _, define_many = get_tool("rex_function_define_many")
     result = define_many(FakeParsingToolCall(stalled), ["0x4000", "0x4100"], timeout_ms=0)
