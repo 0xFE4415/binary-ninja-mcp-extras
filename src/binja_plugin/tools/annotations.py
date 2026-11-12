@@ -12,8 +12,10 @@ from binaryninja.types import Symbol
 
 from binja_plugin.tools import (
     _containment_miss,
+    _functions_needing_update,
     _is_json_object,
     _nul_message,
+    _refresh_analysis,
     _resolve_containing,
     _resolved_entry,
     _ResolvedFunction,
@@ -58,6 +60,7 @@ class _AnnotateManyResult(TypedDict):
     failed_count: int
     total: int
     results: list[_AnnotationRow]
+    analysis_complete: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,8 +255,10 @@ def rex_annotate_many(
         )
     resolved = [_annotate_resolve(call, bv, item) for item in items]
     staged = [outcome for outcome in resolved if isinstance(outcome, _AnnotationPlan)]
+    analysis_complete = True
     if staged:
         _annotate_apply_plans(bv, staged)
+        analysis_complete = _refresh_analysis(bv, _functions_needing_update(bv))
     results: list[_AnnotationRow] = []
     for outcome in resolved:
         if isinstance(outcome, _AnnotationPlan):
@@ -268,4 +273,5 @@ def rex_annotate_many(
         "failed_count": len(results) - applied,
         "total": len(results),
         "results": results,
+        "analysis_complete": analysis_complete,
     }

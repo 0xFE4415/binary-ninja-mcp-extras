@@ -10,6 +10,7 @@ tests patch ``_READ_CHUNK``/``_EXPORT_ROOT`` as module globals of ``binja_plugin
 """
 
 import re
+import time
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterable, Iterator
 from itertools import islice
@@ -18,7 +19,7 @@ from typing import Literal, NamedTuple, NoReturn, TypedDict, TypeIs
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
-from binaryninja.enums import AnalysisSkipReason
+from binaryninja.enums import AnalysisSkipReason, AnalysisState
 from binaryninja.function import Function
 
 _READ_CHUNK = 4 * 1024 * 1024
@@ -32,6 +33,8 @@ _MAX_NAME_CANDIDATES = 40
 _MAX_DISASM_CONTEXT = 4096
 
 _MAX_RESOLUTION_ALTERNATIVES = 64
+_ANALYSIS_SLICE_MS = 100
+_MAX_ANALYSIS_WAIT_MS = 10000
 
 # Export sweeps write to one fixed directory and echo only a summary.
 _EXPORT_ROOT = Path.home() / ".binaryninja" / "exports"
@@ -233,6 +236,28 @@ def _resolved_entry(
         ],
         "same_name": [_function_entry(other) for other in same_name[:_MAX_RESOLUTION_ALTERNATIVES]],
     }
+
+
+def _functions_needing_update(bv: BinaryView) -> list[Function]:
+    return [function for function in bv.functions if function.needs_update]
+
+
+def _analysis_settled(bv: BinaryView, functions: list[Function]) -> bool:
+    # The view can still read idle right after update_analysis; a stale function knows better.
+    if bv.analysis_progress.state != AnalysisState.IdleState:
+        return False
+    return not any(function.needs_update for function in functions)
+
+
+def _refresh_analysis(bv: BinaryView, functions: list[Function]) -> bool:
+    """Start reanalysis and wait, bounded, for ``functions``; False when the deadline passes."""
+    bv.update_analysis()
+    deadline = time.monotonic() + _MAX_ANALYSIS_WAIT_MS / 1000
+    settled = _analysis_settled(bv, functions)
+    while not settled and time.monotonic() < deadline:
+        time.sleep(_ANALYSIS_SLICE_MS / 1000)
+        settled = _analysis_settled(bv, functions)
+    return settled
 
 
 def _resolve_containing(bv: BinaryView, containing: list[Function]) -> _Resolution:

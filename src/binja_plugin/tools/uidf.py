@@ -9,14 +9,13 @@ definition; the core defines it at the function start, so that is its only site.
 
 from __future__ import annotations
 
-import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Literal, NamedTuple, NotRequired, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
-from binaryninja.enums import AnalysisState, RegisterValueType
+from binaryninja.enums import RegisterValueType
 from binaryninja.function import Function
 from binaryninja.variable import Variable
 
@@ -29,6 +28,7 @@ from binja_plugin.tools import (
     _ItemError,
     _missing_il_error,
     _paginate,
+    _refresh_analysis,
     _reject_nul,
     _render_hlil_lines,
     _require_analyzed_function,
@@ -42,8 +42,6 @@ if TYPE_CHECKING:
     from binaryninja.variable import PossibleValueSet
 
 # rex_uidf_set polls for reanalysis before rendering HLIL; the deadline bounds the hold.
-_UIDF_ANALYSIS_SLICE_MS = 100
-_MAX_UIDF_ANALYSIS_WAIT_MS = 10000
 _MAX_UIDF_BATCH = 128
 
 _UIDF_ITEMS_SCHEMA: dict[str, object] = {
@@ -301,21 +299,6 @@ def _clear_every_value(bv: BinaryView, target: Function) -> int:
     return cleared
 
 
-def _analysis_settled(bv: BinaryView, target: Function) -> bool:
-    # The view can still read idle right after update_analysis; the function knows it is stale.
-    return bv.analysis_progress.state == AnalysisState.IdleState and not target.needs_update
-
-
-def _wait_analysis_settled(bv: BinaryView, target: Function) -> bool:
-    """Wait, bounded, until the view is idle and the target is reanalyzed; False at the deadline."""
-    deadline = time.monotonic() + _MAX_UIDF_ANALYSIS_WAIT_MS / 1000
-    settled = _analysis_settled(bv, target)
-    while not settled and time.monotonic() < deadline:
-        time.sleep(_UIDF_ANALYSIS_SLICE_MS / 1000)
-        settled = _analysis_settled(bv, target)
-    return settled
-
-
 def _require_value_state(state: str) -> RegisterValueType:
     value_state = _VALUE_STATES.get(state)
     if value_state is None:
@@ -436,8 +419,7 @@ def rex_uidf_set(
         raise mcp.ToolError(
             "set_failed", f"could not inform '{_truncate(variable)}': {error}"
         ) from None
-    bv.update_analysis()
-    analysis_complete = _wait_analysis_settled(bv, target)
+    analysis_complete = _refresh_analysis(bv, [target])
     lines, truncated = _render_hlil_lines(target.hlil, max_lines)
     return {
         "function": resolution.entry,
@@ -482,8 +464,7 @@ def rex_uidf_set_many(
     applied = sum(1 for row in results if row["ok"])
     analysis_complete = True
     if applied:
-        bv.update_analysis()
-        analysis_complete = _wait_analysis_settled(bv, target)
+        analysis_complete = _refresh_analysis(bv, [target])
     lines, truncated = _render_hlil_lines(target.hlil, max_lines)
     failed = len(results) - applied
     return {

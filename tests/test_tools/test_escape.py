@@ -30,12 +30,20 @@ def test_memory_write_validates_and_writes() -> None:
     view = FakeBinaryView()
     _, write = get_tool("rex_memory_write")
     result = write(_call(view), 0x1000, "90 90")
-    assert result == {"address": "0x1000", "bytes_written": 2}
+    assert result == {
+        "address": "0x1000",
+        "bytes_written": 2,
+        "analysis_complete": True,
+    }
     assert view.written == [(0x1000, b"\x90\x90")]
     assert view.transactions == ["open", "commit"]
     # Whitespace of any kind separates bytes before validation; whitespace-only input
     # collapses to the empty pattern and is rejected as empty, not passed to fromhex.
-    assert write(_call(view), 0x1000, "90\t90\n") == {"address": "0x1000", "bytes_written": 2}
+    assert write(_call(view), 0x1000, "90\t90\n") == {
+        "address": "0x1000",
+        "bytes_written": 2,
+        "analysis_complete": True,
+    }
     assert view.written[-1] == (0x1000, b"\x90\x90")
     for bad in ("", " ", "9", "zz", "9z"):
         with pytest.raises(FakeToolError) as exc:

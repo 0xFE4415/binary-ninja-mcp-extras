@@ -78,6 +78,7 @@ def test_annotate_many_applies_name_comment_and_prototype_in_one_transaction() -
                 "function": {"start": "0x2000", "name": "helper", **NO_ALTERNATIVES},
             },
         ],
+        "analysis_complete": True,
     }
     assert main.name == "read_config"
     # The comment is an addressed comment at the exact address given, not the
@@ -118,6 +119,7 @@ def test_annotate_many_reports_a_missing_function_per_item() -> None:
                 "function": {"start": "0x1100", "name": "renamed", **NO_ALTERNATIVES},
             },
         ],
+        "analysis_complete": True,
     }
     # The batch still applies and commits; only the dead item failed.
     assert main.name == "renamed"
@@ -148,6 +150,7 @@ def test_annotate_many_skips_the_transaction_when_every_item_fails() -> None:
                 "error": "each item must be a JSON object",
             },
         ],
+        "analysis_complete": True,
     }
     # Nothing to apply, so no undo step is created at all.
     assert view.transactions == []
@@ -231,6 +234,7 @@ def test_annotate_many_rejects_the_removed_type_alias_as_an_unknown_field() -> N
         "failed_count": 1,
         "total": 1,
         "results": [{"addr": "0x1100", "ok": False, "error": "unknown field(s): type"}],
+        "analysis_complete": True,
     }
     # The rejected item staged nothing: no type applied, no undo step created.
     assert main.user_type is None
@@ -252,6 +256,7 @@ def test_annotate_many_rejects_an_unparsable_prototype_before_applying_anything(
         "failed_count": 1,
         "total": 1,
         "results": [{"addr": "0x1100", "ok": False, "error": "bad type: expected ';'"}],
+        "analysis_complete": True,
     }
     # An item is atomic: a failing type must not leave the rename half-applied.
     assert main.name == "main"
@@ -463,6 +468,7 @@ def test_annotate_batch_leaves_one_undo_entry_that_rex_undo_reverses() -> None:
         "actions_truncated": False,
         "undo_left": 0,
         "redo_left": 1,
+        "analysis_complete": True,
     }
     assert view.file.undo_entries == []
     assert view.file.redo_entries == [undo_entry("rex_annotate_many batch")]

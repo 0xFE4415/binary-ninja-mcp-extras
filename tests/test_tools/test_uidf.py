@@ -162,12 +162,7 @@ def test_uidf_set_many_applies_valid_items_and_reanalyzes_once(
         "<const 0x3>",
     ]
     assert result["analysis_complete"] is True
-    assert result["lines"] == [
-        "int32_t rax_1 = 1",
-        "if (rax_1 == 1)",
-        "    return 0",
-        "return 1",
-    ]
+    assert result["lines"] == ["int32_t rax_1 = 1", "if (rax_1 == 1)", "    return 0", "return 1"]
 
 
 def test_uidf_set_many_validates_limits_and_item_fields() -> None:
@@ -821,7 +816,7 @@ def test_uidf_set_polls_until_analysis_settles(monkeypatch: pytest.MonkeyPatch) 
     # The wait is one slice long: the entry read reports HoldState, the read after the
     # first slice reports IdleState and ends it.
     assert result["analysis_complete"] is True
-    assert clock.sleeps == [float(uidf_tools._UIDF_ANALYSIS_SLICE_MS)]
+    assert clock.sleeps == [float(tools._ANALYSIS_SLICE_MS)]
 
 
 def test_uidf_set_waits_for_the_function_while_the_view_reads_idle(
@@ -834,7 +829,7 @@ def test_uidf_set_waits_for_the_function_while_the_view_reads_idle(
     _, uidf_set = get_tool("rex_uidf_set")
     result = uidf_set(_call(view), 0x1100, "rax_1", "1")
     assert result["analysis_complete"] is True
-    assert clock.sleeps == [float(uidf_tools._UIDF_ANALYSIS_SLICE_MS)]
+    assert clock.sleeps == [float(tools._ANALYSIS_SLICE_MS)]
 
 
 def test_uidf_set_many_waits_for_the_function_while_the_view_reads_idle(
@@ -847,7 +842,7 @@ def test_uidf_set_many_waits_for_the_function_while_the_view_reads_idle(
     _, uidf_set_many = get_tool("rex_uidf_set_many")
     result = uidf_set_many(_call(view), 0x1100, [{"variable": "rax_1", "value": "1"}])
     assert result["analysis_complete"] is True
-    assert clock.sleeps == [float(uidf_tools._UIDF_ANALYSIS_SLICE_MS)]
+    assert clock.sleeps == [float(tools._ANALYSIS_SLICE_MS)]
 
 
 def test_uidf_set_gives_up_on_a_function_that_never_finishes_updating(
@@ -860,7 +855,7 @@ def test_uidf_set_gives_up_on_a_function_that_never_finishes_updating(
     _, uidf_set = get_tool("rex_uidf_set")
     result = uidf_set(_call(view), 0x1100, "rax_1", "1")
     assert result["analysis_complete"] is False
-    assert clock.sleeps == [float(uidf_tools._UIDF_ANALYSIS_SLICE_MS)]
+    assert clock.sleeps == [float(tools._ANALYSIS_SLICE_MS)]
 
 
 def test_uidf_set_stops_at_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -874,11 +869,11 @@ def test_uidf_set_stops_at_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None
     _patch_time(monkeypatch, clock)
     _, uidf_set = get_tool("rex_uidf_set")
     result = uidf_set(_call(view), 0x1100, "rax_1", "1")
-    # 9.999 s is still inside the _MAX_UIDF_ANALYSIS_WAIT_MS budget and polls; the 10.0 s
+    # 9.999 s is still inside the _MAX_ANALYSIS_WAIT_MS budget and polls; the 10.0 s
     # read is not, so the give-up costs exactly one slice, and HLIL renders regardless.
     assert result["analysis_complete"] is False
     assert result["lines"] == ["int32_t rax_1 = 1", "if (rax_1 == 1)", "    return 0", "return 1"]
-    assert clock.sleeps == [float(uidf_tools._UIDF_ANALYSIS_SLICE_MS)]
+    assert clock.sleeps == [float(tools._ANALYSIS_SLICE_MS)]
 
 
 def test_uidf_clear_clears_one_variable_across_sites() -> None:

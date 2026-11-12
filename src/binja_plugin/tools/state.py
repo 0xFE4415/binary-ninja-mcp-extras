@@ -9,6 +9,8 @@ from binaryninja import mcp
 
 from binja_plugin.tools import (
     _MAX_LIMIT,
+    _functions_needing_update,
+    _refresh_analysis,
     _reject_nul,
     _truncate,
     _truncate_with_flag,
@@ -56,6 +58,7 @@ class _UndoResult(TypedDict):
     actions_truncated: bool
     undo_left: int
     redo_left: int
+    analysis_complete: bool
 
 
 class _RedoResult(TypedDict):
@@ -64,6 +67,7 @@ class _RedoResult(TypedDict):
     actions_truncated: bool
     undo_left: int
     redo_left: int
+    analysis_complete: bool
 
 
 class _ReportResult(TypedDict):
@@ -171,12 +175,17 @@ def rex_redo(call: mcp.ToolCall) -> _RedoResult:
     actions, actions_truncated = _top_entry_actions(file.redo_entries)
     _run_undo_stack_step("redo", call.binary_view.redo, "redo_failed")
     redone = len(file.redo_entries) < redo_before
+    analysis_complete = True
+    if redone:
+        bv = call.binary_view
+        analysis_complete = _refresh_analysis(bv, _functions_needing_update(bv))
     return {
         "redone": redone,
         "actions": actions if redone else [],
         "actions_truncated": actions_truncated and redone,
         "undo_left": len(file.undo_entries),
         "redo_left": len(file.redo_entries),
+        "analysis_complete": analysis_complete,
     }
 
 
@@ -281,10 +290,15 @@ def rex_undo(call: mcp.ToolCall) -> _UndoResult:
     actions, actions_truncated = _top_entry_actions(file.undo_entries)
     _run_undo_stack_step("undo", call.binary_view.undo, "undo_failed")
     undone = len(file.undo_entries) < undo_before
+    analysis_complete = True
+    if undone:
+        bv = call.binary_view
+        analysis_complete = _refresh_analysis(bv, _functions_needing_update(bv))
     return {
         "undone": undone,
         "actions": actions if undone else [],
         "actions_truncated": actions_truncated and undone,
         "undo_left": len(file.undo_entries),
         "redo_left": len(file.redo_entries),
+        "analysis_complete": analysis_complete,
     }

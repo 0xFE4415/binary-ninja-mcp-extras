@@ -273,6 +273,7 @@ def test_undo_and_redo_round_trip_and_report_stack_depths() -> None:
         "actions_truncated": False,
         "undo_left": 1,
         "redo_left": 1,
+        "analysis_complete": True,
     }
     assert metadata.undo_entries == [patch]
     assert metadata.redo_entries == [rename]
@@ -283,6 +284,7 @@ def test_undo_and_redo_round_trip_and_report_stack_depths() -> None:
         "actions_truncated": False,
         "undo_left": 2,
         "redo_left": 0,
+        "analysis_complete": True,
     }
     assert metadata.undo_entries == [patch, rename]
     assert metadata.redo_entries == []
@@ -293,6 +295,7 @@ def test_undo_and_redo_round_trip_and_report_stack_depths() -> None:
         "actions_truncated": False,
         "undo_left": 0,
         "redo_left": 0,
+        "analysis_complete": True,
     }
     assert redo(_call(FakeBinaryView())) == {
         "redone": False,
@@ -300,6 +303,7 @@ def test_undo_and_redo_round_trip_and_report_stack_depths() -> None:
         "actions_truncated": False,
         "undo_left": 0,
         "redo_left": 0,
+        "analysis_complete": True,
     }
 
 

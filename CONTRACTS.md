@@ -186,14 +186,18 @@ adds `also_containing` and `same_name`, both lists of function entries; every `f
 field below that a tool fills from an address is one. Fields marked `?` are present only on
 some rows.
 
+- `analysis_complete` (`rex_annotate_many`, `rex_memory_write`, `rex_undo`, `rex_redo`,
+  `rex_uidf_set`, `rex_uidf_set_many`): the tool reanalyzes after a change and waits up to
+  10 s for every function the change left stale. False means the deadline passed; wait
+  with `rex_analysis_wait` before reading IL. True when nothing changed.
 - `rex_analysis_wait`: `completed`, `elapsed_ms`, `progress` (`{state, count, total}`),
   `function_count`, `in_flight` (`{start, name, analysis_time_ms}`, at most 10), and
   `truncated` (more in-flight functions than listed).
-- `rex_annotate_many`: `applied`, `failed`, `failed_count`, `total`, and `results` rows
-  `{addr, ok, function?, error?}`; `function` is the resolved function entry read after the
-  batch applies, so it carries the new name and its `same_name`, present on every row that
-  passed validation. A `comment` lands at the exact `addr` the item named; `name` and
-  `prototype` apply to the whole function. A rename keeps the symbol's type, binding,
+- `rex_annotate_many`: `applied`, `failed`, `failed_count`, `total`, `analysis_complete`, and
+  `results` rows `{addr, ok, function?, error?}`; `function` is the resolved function entry
+  read after the batch applies, so it carries the new name and its `same_name`, present on
+  every row that passed validation. A `comment` lands at the exact `addr` the item named; `name`
+  and `prototype` apply to the whole function. A rename keeps the symbol's type, binding,
   namespace, and ordinal; only the name changes.
 - `rex_binary_close`: `closed` (always true; a failed close raises `close_failed`) and
   `path`, the closed file's full filename as the core reports it (truncated).
@@ -264,19 +268,19 @@ some rows.
   `length`, `value` (preview), `truncated`. `rex_kv_set` stores under the `rex/` metadata
   prefix with the core's persistent-flag default, so values serialize into the BNDB snapshot
   and survive reload.
-- `rex_memory_write`: `address`, `bytes_written`.
+- `rex_memory_write`: `address`, `bytes_written`, `analysis_complete`.
 - `rex_mlil_uses`: `function`, `definition_site` (the queried address), and `variables`, each
   `variable`, `storage`, `type`, `definitions` (addresses of every definition the core records
   for it, ascending), `total`, `truncated`, and `uses` of `{address, operation, text}`.
 - `rex_parameter_variables`: `function`, `parameter`, `storage` (one entry per matching
   variable in the function's variable order), `definitions` (a flat list of addresses over
   all matching variables, ascending), and `carriers` of `{variable, address, text}`.
-- `rex_redo`: `redone`, `actions`, `actions_truncated`, `undo_left`, `redo_left`.
-  `rex_undo`: `undone`, `actions`, `actions_truncated`, `undo_left`, `redo_left`. `undone` and
-  `redone` are false when the stack was empty and nothing changed. `actions` is the core's
-  summary text of each action in the entry that was undone or redone, in the core's order, at
-  most 32; `actions_truncated` says the entry had more. Both are empty and false when nothing
-  changed.
+- `rex_redo`: `redone`, `actions`, `actions_truncated`, `undo_left`, `redo_left`,
+  `analysis_complete`. `rex_undo`: `undone`, `actions`, `actions_truncated`, `undo_left`,
+  `redo_left`, `analysis_complete`. `undone` and `redone` are false when the stack was empty
+  and nothing changed. `actions` is the core's summary text of each action in the entry that
+  was undone or redone, in the core's order, at most 32; `actions_truncated` says the entry
+  had more. Both are empty and false when nothing changed.
 - `rex_relocation_at`: `address`, `count`, and `relocations` of `{address, size, type,
   addend, implicit_addend, pc_relative, target, reloc, symbol}` (`symbol` is null when the
   relocation has none).
