@@ -34,6 +34,15 @@ from helpers_view import (
 )
 
 NO_ALTERNATIVES = types.MappingProxyType({"also_containing": [], "same_name": []})
+
+
+def plain_gap_message(described: str, address: int) -> str:
+    return (
+        f"no {described} contains {address:#x}; the address is mapped but no function covers "
+        f"it; define one with rex_function_define(start={address:#x}) if it is code"
+    )
+
+
 DIRECTORY_NAME_MESSAGE = "filename must end in a file name, not '.' or a trailing '/'"
 
 

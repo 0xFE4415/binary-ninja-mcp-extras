@@ -9,6 +9,7 @@ from helpers import (
     _call,
     _view_with_functions,
     get_tool,
+    plain_gap_message,
 )
 from helpers_view import (
     FakeBinaryView,
@@ -19,7 +20,8 @@ from binja_plugin import tools
 from binja_plugin.tools import functions
 
 
-def test_function_define_and_undefine() -> None:
+def test_function_define_and_undefine(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("time.sleep", _DefineWaitClock().sleep)
     view = FakeBinaryView()
     _, define = get_tool("rex_function_define")
     assert define(_call(view), 0x4000) == {
@@ -41,7 +43,9 @@ def test_function_define_and_undefine() -> None:
     with pytest.raises(FakeToolError) as exc:
         undefine(_call(view), 0x9999)
     assert exc.value.code == "no_function"
-    assert exc.value.message == "no function contains 0x9999"
+    assert exc.value.message == (
+        "no function contains 0x9999; the address is mapped but no function covers it"
+    )
 
 
 def test_function_define_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -53,9 +57,12 @@ def test_function_define_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     assert exc.value.code == "define_failed"
 
 
-def test_function_define_wait_reports_unanalyzed_functions() -> None:
+def test_function_define_wait_reports_unanalyzed_functions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A view whose created functions never get blocks: the wait returns them as pending
     # instead of hanging, and wait=false skips the wait entirely.
+    monkeypatch.setattr("time.sleep", _DefineWaitClock().sleep)
     stalled = FakeBinaryView(create_user_function_analyzes=False)
     _, define = get_tool("rex_function_define")
     result = define(_call(stalled), 0x4000, timeout_ms=0)
@@ -85,6 +92,7 @@ class _DefineWaitClock:
     def sleep(self, seconds: float) -> None:
         slept_ms = round(seconds * 1000)
         self.sleeps.append(slept_ms)
+        assert len(self.sleeps) <= 8, "wait loop ignored the deadline"
         self.now_ms += slept_ms
         if self.landing is not None:
             self.landing.basic_blocks = [FakeBasicBlock([(self.landing.start, "push rbp")])]
@@ -200,7 +208,8 @@ def test_function_define_wait_takes_no_slice_at_the_deadline(
     }
 
 
-def test_function_define_many_defines_and_waits() -> None:
+def test_function_define_many_defines_and_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("time.sleep", _DefineWaitClock().sleep)
     view = FakeBinaryView()
     _, define_many = get_tool("rex_function_define_many")
     result = define_many(FakeParsingToolCall(view), ["0x4000", "0x4100"])
@@ -235,6 +244,7 @@ def test_function_define_many_is_all_or_nothing_on_parse_errors() -> None:
 
 
 def test_function_define_many_reports_pending_and_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("time.sleep", _DefineWaitClock().sleep)
     stalled = FakeBinaryView(create_user_function_analyzes=False)
     _, define_many = get_tool("rex_function_define_many")
     result = define_many(FakeParsingToolCall(stalled), ["0x4000", "0x4100"], timeout_ms=0)
@@ -299,10 +309,9 @@ def test_function_containing_explains_a_containment_miss() -> None:
         exc.value.message
         == "no function contains 0x20000; the address is not mapped by any segment"
     )
-    # A plain gap between functions keeps the original message: nothing specific to add.
     with pytest.raises(FakeToolError) as exc:
         containing(_call(view), 0x1800)
-    assert exc.value.message == "no function contains 0x1800"
+    assert exc.value.message == plain_gap_message("function", 0x1800)
 
 
 def test_function_containing_names_a_one_byte_predecessor() -> None:
@@ -376,6 +385,10 @@ def test_call_paths_depth_shortcut_and_errors() -> None:
     with pytest.raises(FakeToolError) as exc:
         paths(_call(view), 0x7777, 0x3000)
     assert exc.value.code == "no_function"
+    assert exc.value.message == plain_gap_message("function", 0x7777)
+    with pytest.raises(FakeToolError) as exc:
+        paths(_call(view), 0x1100, 0x7777)
+    assert exc.value.message == plain_gap_message("function", 0x7777)
 
 
 def test_call_paths_reports_truncation_and_caps_depth() -> None:
@@ -544,3 +557,32 @@ def test_call_paths_rejects_out_of_range_bounds() -> None:
     assert at_cap_paths["reachable"] is True
     at_cap_depth = paths(_call(view), 0x1100, 0x1100, max_depth=tools._MAX_CALL_PATH_DEPTH)
     assert at_cap_depth["reachable"] is True
+
+
+def test_function_undefine_misses_keep_the_diagnosis_without_define_advice() -> None:
+    view = FakeBinaryView(
+        functions=[FakeFunction("main", 0x1000, 0x1100)],
+        pending_functions=[FakeFunction("sub_4000", 0x4000, 0x4010)],
+    )
+    _, undefine = get_tool("rex_function_undefine")
+    expected = {
+        0x1100: (
+            "no function contains 0x1100; the address is immediately past the end of main at "
+            "0x1000 (highest address 0x10ff); when the last instruction ends the block "
+            "(for example int3, ret, or jmp) the next bytes belong to no function"
+        ),
+        0x1800: "no function contains 0x1800; the address is mapped but no function covers it",
+        0x20000: "no function contains 0x20000; the address is not mapped by any segment",
+    }
+    for address, message in expected.items():
+        with pytest.raises(FakeToolError) as exc:
+            undefine(_call(view), address)
+        assert exc.value.code == "no_function"
+        assert exc.value.message == message
+    with pytest.raises(FakeToolError) as exc:
+        undefine(_call(view), 0x4000)
+    assert exc.value.code == "analysis_pending"
+    assert exc.value.message == (
+        "function at 0x4000 exists but has not been analyzed yet; wait for analysis "
+        "(rex_analysis_wait) or run bn_analysis_update"
+    )

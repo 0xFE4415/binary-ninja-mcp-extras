@@ -13,10 +13,12 @@ from binja_plugin.tools import (
     _MAX_DISASM_CONTEXT,
     _disasm_window,
     _fit_to_export_cap,
+    _reject_unusable_export_target,
     _render_function_disassembly,
     _require_analyzed_function,
     _resolve_export_path,
     _ResolvedFunction,
+    _show_nul,
     _validate_disasm_window,
     _validate_export_path,
     _validate_range,
@@ -91,6 +93,7 @@ def rex_export_disasm(
     before, after = _validate_disasm_window(before, after)
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_EXPORT_DISASM_LINES)
     _validate_export_path(filename)
+    _reject_unusable_export_target(filename)
     resolution = _require_analyzed_function(bv, address)
     lines = _render_function_disassembly(resolution.function)
     start, end = _disasm_window(lines, address, before, after)
@@ -136,10 +139,13 @@ def rex_export_symbols(
     if start >= end:
         raise mcp.ToolError("invalid_params", "end must be greater than start")
     _validate_export_path(filename)
+    _reject_unusable_export_target(filename)
     # Widened to str so the body check stays reachable by direct calls; match the Literal.
     requested: str = format
     if requested not in ("csv", "json"):
-        raise mcp.ToolError("invalid_params", f"format must be 'csv' or 'json', not '{requested}'")
+        raise mcp.ToolError(
+            "invalid_params", f"format must be 'csv' or 'json', not '{_show_nul(requested)}'"
+        )
     symbols = bv.get_symbols(start, end - start)
     # Core symbol order is unsorted; sort before slicing so the file holds a true window.
     ordered = sorted(symbols, key=lambda symbol: symbol.address)

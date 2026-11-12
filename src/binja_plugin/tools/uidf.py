@@ -29,6 +29,7 @@ from binja_plugin.tools import (
     _ItemError,
     _missing_il_error,
     _paginate,
+    _reject_nul,
     _render_hlil_lines,
     _require_analyzed_function,
     _ResolvedFunction,
@@ -211,6 +212,7 @@ def _uidf_item_def_address(call: mcp.ToolCall, raw_site: object) -> int | None:
     if isinstance(raw_site, int):
         # Raw ints pass through untouched: an int expression is already an address.
         return raw_site
+    _reject_nul("def_address", raw_site)
     try:
         return call.parse_address(raw_site)
     except Exception as error:
@@ -244,6 +246,7 @@ def _stage_uidf_item(
             raise mcp.ToolError("invalid_params", "variable must be a non-empty string")
         if not isinstance(value, str) or not value:
             raise mcp.ToolError("invalid_params", "value must be a non-empty string")
+        _reject_nul("value", value)
         def_address = _uidf_item_def_address(call, item.get("def_address"))
         state = item.get("state", "ConstantValue")
         if not isinstance(state, str):
@@ -393,6 +396,7 @@ def rex_uidf_set(
     """
     bv = call.binary_view
     max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
+    _reject_nul("value", value)
     resolution = _require_analyzed_function(bv, function)
     target = resolution.function
     site_variable, site = _select_definition_site(target, variable, def_address)

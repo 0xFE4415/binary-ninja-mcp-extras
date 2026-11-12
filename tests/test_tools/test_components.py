@@ -7,6 +7,7 @@ from helpers import (
     FakeToolError,
     _call,
     get_tool,
+    plain_gap_message,
 )
 from helpers_view import (
     FakeBinaryView,
@@ -224,7 +225,7 @@ def test_component_add_functions_is_all_or_nothing() -> None:
     with pytest.raises(FakeToolError) as exc:
         add(FakeParsingToolCall(view), "/Network", ["0x3000", "0x9999"])
     assert exc.value.code == "invalid_params"
-    assert exc.value.message == "no analyzed function contains 0x9999"
+    assert exc.value.message == plain_gap_message("analyzed function", 0x9999)
     assert network.added_functions == []
 
 

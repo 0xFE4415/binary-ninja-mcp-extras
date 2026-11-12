@@ -540,6 +540,17 @@ def test_no_variable_tells_same_named_variables_apart_by_storage() -> None:
     )
 
 
+def test_no_variable_shows_an_echoed_nul_so_the_core_keeps_the_whole_message() -> None:
+    call = FakeInstruction("MLIL_CALL", 0x1020, output=[FakeVariable("rax")])
+    view = _uses_view([call], {FakeVariable("rax"): [call]})
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(view, variable="mi\x00ssing")
+    assert error.value.message == (
+        "no variable named 'mi\N{REPLACEMENT CHARACTER}ssing' is defined at 0x1020 in check; "
+        "defined there: rax (rax)"
+    )
+
+
 @pytest.mark.parametrize(
     ("variable", "text"),
     [

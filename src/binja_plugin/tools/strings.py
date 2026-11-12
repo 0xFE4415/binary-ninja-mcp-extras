@@ -145,7 +145,10 @@ def rex_string_read_at(
     max_chars = _validate_range("max_chars", max_chars, 1, _MAX_STRING_READ_CHARS)
     string = call.binary_view.get_string_at(addr)
     if string is None:
-        raise mcp.ToolError("no_string", f"no detected string at {addr:#x}")
+        raise mcp.ToolError(
+            "no_string",
+            f"no detected string at {addr:#x}; rex_string_search lists detected strings",
+        )
     value, truncated = _truncate_with_flag(string.value, max_chars)
     return {
         "address": hex(string.start),

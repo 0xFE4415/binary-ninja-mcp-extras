@@ -185,7 +185,10 @@ implementation or raise the discrepancy for resolution. Keep user-facing usage g
   names, and no descriptions.
   `category` returns `category`, `use_when`, and `tools` with each tool's `name` and
   `description`; an unknown name raises `unknown_category`. `tool_name` returns that
-  tool's parameters; an unknown name raises `unknown_tool`. Passing both raises
+  tool's parameters, each with `name`, `type`, `required`, `description`, and any schema
+  bounds (`default`, `enum`, `minimum`, `maximum`, `items`, and the like); an unknown name
+  raises `unknown_tool`. It does not list error codes: this file documents them, and a
+  tool names its code and a next step in the error message. Passing both raises
   `invalid_params`. Every `rex_*` tool appears in exactly one category: the module that
   defines it, or `other` for a registered tool no category module defines. The index lists
   `other` only when it has tools; `category=other` is always valid. `rex_help` reads the
@@ -368,20 +371,38 @@ present only on some rows.
   `key_too_large`, `value_too_large`, `data_too_large`, `name_too_large`, or
   `library_name_too_large`. Over-cap component paths, type-name list entries, and export
   filenames return `invalid_params` instead.
+- An error a caller can act on names the next step in its message: `analysis_pending` names
+  `rex_analysis_wait`, `no_function` for a mapped address names `rex_function_define` (except
+  for `rex_function_undefine`, which has nothing to define and gives only the diagnosis),
+  `ambiguous_definition` names `def_address`, and `not_found` from `rex_eval_result` names
+  the `stdout_key` and `result_key` fields of `rex_eval_python`.
+- A string the core reads as a C string would be cut at a NUL (U+0000), so one containing a
+  NUL returns `invalid_params` with the message `<parameter> must not contain NUL bytes`.
+  This covers key-value keys and values, report titles and markdown, tag types and data,
+  annotation names, comments, prototypes and addresses, component, structure, and
+  type-library names and paths, type names, the `value` of `rex_uidf_set` and of each
+  `rex_uidf_set_many` item, the `def_address` string of each `rex_uidf_set_many` item, export
+  filenames, and every entry of an address-expression list (named like `functions[1]`). A
+  batch tool reports it in the row of the bad item. Scalar address parameters, including the
+  `def_address` of `rex_uidf_set`, are parsed by the built-in server before the plugin runs,
+  so this rule cannot cover them. Patterns, regular expressions, variable names, and eval
+  code are not passed to the core as C strings and are unchanged.
 - The `filename` of `rex_export_disasm`, `rex_export_symbols`, and `rex_type_library_export`
   is a required parameter with no default, and the advertised schema lists it under
   `required`. It raises `invalid_params` for an empty name, an absolute path, a backslash, a
   NUL byte, a `..` component, a last path component that is `.` or empty (a trailing `/`,
-  which names a directory, not a file), or a component over 255 bytes.
+  which names a directory, not a file), or a component over 255 bytes. Before any data is
+  computed it also raises `invalid_params` for a name that is an existing directory and for
+  a name whose parent is not an existing directory (missing, or a regular file); only the
+  export root itself is created on demand.
   `path_escape` is raised only after resolution, when a symlink inside the export root
   points outside it, and `export_failed` when the root or file cannot be written.
-  `rex_help` lists these three codes for the parameter.
-- `rex_help` lists `invalid_params` for `rex_type_library_export` `library_name` (empty), `names`
+- `rex_type_library_export` raises `invalid_params` for an empty `library_name`, for `names`
   (not a list, not 1-128 entries, an empty or over-long entry, or a non-string entry), and
-  `kind`. For `rex_uidf_set_many` it lists `invalid_params` on `function` (no analyzed function
-  contains the address), and on `items` every code an item can fail with in its `results` row
-  or that rejects the list: `invalid_params`, `no_mlil`, `no_variable`,
-  `ambiguous_definition`, `definition_not_found`, and `set_failed`.
+  for `kind`. `rex_uidf_set_many` raises `invalid_params` when no analyzed function contains
+  `function` or the item list is invalid. Each item can fail in its `results` row with
+  `invalid_params`, `no_mlil`, `no_variable`, `ambiguous_definition`,
+  `definition_not_found`, or `set_failed`.
 - A regular expression that does not compile returns `invalid_regex`; the message is
   `Invalid regular expression parameter '<name>': <reason>` and names the bad parameter:
   `pattern` (`rex_string_search` and `rex_string_refs` with `regex=true`), `regex`
@@ -396,7 +417,9 @@ present only on some rows.
   `pattern` that is not a string returns `invalid_params`. A `section` name containing a NUL
   returns `section_not_found`, like any unknown name. The `section_not_found` and
   `invalid_pattern` messages show an echoed NUL as U+FFFD, because the core cuts a message
-  at its first NUL; other tools' messages are not rewritten.
+  at its first NUL. The `no_variable`, `unknown_tool`, `unknown_category`, and eval
+  `not_found` messages, and the `kind` and `format` `invalid_params` messages, do the same;
+  other tools' messages are not rewritten.
 - `rex_constant_find` `value` is an integer (0 to 18446744073709551615) or a string: `0x` or
   `0X`, then 1-16 hex digits in either case. A client that reads JSON numbers as doubles
   rounds the integer maximum to 18446744073709552000, so it should send the hex string for

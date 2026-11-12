@@ -226,6 +226,6 @@ def rex_function_undefine(call: mcp.ToolCall, start: mcp.Address) -> _ResolvedFu
 
     :param start: Any address inside the function to remove.
     """
-    resolution = _require_function(call.binary_view, start)
+    resolution = _require_function(call.binary_view, start, advise_define=False)
     call.binary_view.remove_user_function(resolution.function)
     return resolution.entry

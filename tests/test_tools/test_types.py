@@ -142,7 +142,10 @@ def test_type_library_import_reports_a_missing_library_file(
         import_tool(_call(view), str(tmp_path / "absent.bntl"), ["open"])
     assert exc.value.code == "library_not_found"
     # A path short enough to echo whole is echoed whole.
-    assert exc.value.message == (f"could not load a type library from '{tmp_path / 'absent.bntl'}'")
+    assert exc.value.message == (
+        f"could not load a type library from '{tmp_path / 'absent.bntl'}'; "
+        "pass the path of a .bntl file, such as one rex_type_library_export wrote"
+    )
 
 
 def test_type_library_import_rejects_bad_names_lists(
@@ -840,6 +843,23 @@ def test_type_library_export_reports_write_failure(
     assert exc.value.message == "could not write export file: disk full"
 
 
+def test_type_library_export_reports_a_write_that_produced_no_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    silent = FakeTypeLibrary(writes_file=False)
+    monkeypatch.setattr(FakeTypeLibrary, "new", staticmethod(lambda arch, name: silent))
+    view = FakeBinaryView(arch=FakeArchitecture("x86_64"), types={"open": FakeType("open")})
+    _, export = get_tool("rex_type_library_export")
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(view), "recovered", ["open"], filename="missing.bntl")
+    assert exc.value.code == "export_failed"
+    assert exc.value.message == (
+        f"could not write export file: [Errno 2] No such file or directory: "
+        f"'{root / 'missing.bntl'}'"
+    )
+
+
 def test_type_library_export_enforces_the_byte_cap(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -860,7 +880,8 @@ def test_type_library_export_enforces_the_byte_cap(
         export(_call(view), "recovered", ["open"], filename="huge.bntl")
     assert exc.value.code == "export_failed"
     assert exc.value.message == (
-        f"type library file exceeds the {types._MAX_EXPORT_FILE_BYTES} byte export cap"
+        f"type library file exceeds the {types._MAX_EXPORT_FILE_BYTES} byte export cap; "
+        "export fewer names"
     )
     assert not (root / "huge.bntl").exists()
 

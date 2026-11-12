@@ -7,6 +7,7 @@ from helpers import (
     FakeToolError,
     _call,
     get_tool,
+    plain_gap_message,
 )
 from helpers_view import (
     FakeBinaryView,
@@ -83,7 +84,11 @@ def test_annotate_many_reports_a_missing_function_per_item() -> None:
         "failed_count": 1,
         "total": 2,
         "results": [
-            {"addr": "0x1800", "ok": False, "error": "no analyzed function contains 0x1800"},
+            {
+                "addr": "0x1800",
+                "ok": False,
+                "error": plain_gap_message("analyzed function", 0x1800),
+            },
             {
                 "addr": "0x1100",
                 "ok": True,
@@ -109,7 +114,11 @@ def test_annotate_many_skips_the_transaction_when_every_item_fails() -> None:
         "failed_count": 2,
         "total": 2,
         "results": [
-            {"addr": "0x9999", "ok": False, "error": "no analyzed function contains 0x9999"},
+            {
+                "addr": "0x9999",
+                "ok": False,
+                "error": plain_gap_message("analyzed function", 0x9999),
+            },
             {
                 "addr": "'not an object'",
                 "ok": False,
