@@ -15,7 +15,6 @@ from helpers_view import (
     FakeBinaryView,
     FakeComponent,
     FakeFunction,
-    RenderableText,
 )
 
 from binja_plugin import tools
@@ -175,10 +174,6 @@ def _uidf_list(view: FakeBinaryView) -> Any:
     return _tool("rex_uidf_list")(_call(view), ADDRESS)["function"]
 
 
-def _quick_main(view: FakeBinaryView) -> Any:
-    return _tool("rex_quick_main")(FakeParsingToolCall(view))["function"]
-
-
 _RESOLVING_TOOLS: list[Callable[[FakeBinaryView], Any]] = [
     _constraints,
     _statements,
@@ -198,7 +193,6 @@ _RESOLVING_TOOLS: list[Callable[[FakeBinaryView], Any]] = [
     _uidf_clear_all,
     _uidf_clear_variable,
     _uidf_list,
-    _quick_main,
 ]
 
 
@@ -347,7 +341,7 @@ def test_annotate_changes_the_function_its_row_reports_naming_it_as_resolved() -
     rows = _tool("rex_annotate_many")(
         FakeParsingToolCall(view), [{"addr": ADDRESS, "name": "renamed"}]
     )["results"]
-    assert rows == [{"addr": "0x40ad60", "ok": True, "function": CHOSEN}]
+    assert rows == [{"addr": "0x40ad60", "ok": True, "function": {**CHOSEN, "name": "renamed"}}]
     assert [function.name for function in view.functions] == [
         "sub_412c10",
         "flush_stdout",
@@ -399,41 +393,3 @@ def test_a_containment_miss_still_rejects_without_choosing() -> None:
         _tool("rex_disasm_at")(_call(_descending_view()), 0x500000)
     assert error.value.code == "invalid_params"
     assert error.value.message.startswith("no analyzed function contains 0x500000")
-
-
-def test_quick_main_resolves_the_entry_argument_through_the_same_rule() -> None:
-    entry = FakeFunction(
-        "_start",
-        0x1000,
-        0x1100,
-        hlil=RenderableText("void _start() {\n    __libc_start_main(0x401234, argc, argv);\n}"),
-    )
-    outer = FakeFunction("main_outer", 0x401200, 0x401400, hlil=RenderableText("return 0"))
-    inner = FakeFunction("main_inner", 0x401234, 0x401400, hlil=RenderableText("return 1"))
-    view = FakeBinaryView(entry_point=0x1000, functions=[inner, entry, outer])
-    result = _tool("rex_quick_main")(FakeParsingToolCall(view))
-    assert result["method"] == "entry-arg"
-    assert result["main"] == "0x401200"
-    assert result["function"] == {
-        "start": "0x401200",
-        "name": "main_outer",
-        "also_containing": [{"start": "0x401234", "name": "main_inner"}],
-        "same_name": [],
-    }
-
-
-def test_quick_main_resolves_a_main_symbol_with_its_containing_and_namesake_functions() -> None:
-    entry = FakeFunction("_start", 0x1000, 0x1100, hlil=RenderableText("return"))
-    main = FakeFunction("main", 0x401234, 0x401400, hlil=RenderableText("return 0"))
-    cold = FakeFunction("main.cold", 0x401200, 0x401300, hlil=RenderableText("return 2"))
-    other = FakeFunction("main", 0x402000, 0x402100, hlil=RenderableText("return 1"))
-    view = FakeBinaryView(entry_point=0x1000, functions=[other, cold, main, entry])
-    result = _tool("rex_quick_main")(FakeParsingToolCall(view))
-    assert result["method"] == "symbol"
-    assert result["main"] == "0x401234"
-    assert result["function"] == {
-        "start": "0x401234",
-        "name": "main",
-        "also_containing": [{"start": "0x401200", "name": "main.cold"}],
-        "same_name": [{"start": "0x402000", "name": "main"}],
-    }

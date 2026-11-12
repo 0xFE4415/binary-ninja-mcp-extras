@@ -10,9 +10,16 @@ import contextlib
 import enum
 import types
 from collections.abc import Callable, Generator, Iterator, Mapping
+from dataclasses import dataclass
 from typing import Any, override
 
 from helpers_dataflow import FakeMLILInstructions
+from helpers_symbol import (
+    FakeSymbol,
+    FakeSymbolBinding,
+    FakeSymbolType,
+    fake_symbol_constructor,
+)
 from helpers_uidf import (
     FakeMediumLevelIL,
     FakePossibleValueSet,
@@ -218,32 +225,6 @@ class FakeLinearDisassemblyLine:
         self.contents = FakeLineContents(tokens)
 
 
-class FakeSymbolType(enum.IntEnum):
-    """Mirrors binaryninja.enums.SymbolType."""
-
-    FunctionSymbol = 0
-    ImportAddressSymbol = 1
-    ImportedFunctionSymbol = 2
-    DataSymbol = 3
-    ImportedDataSymbol = 4
-    ExternalSymbol = 5
-    LibraryFunctionSymbol = 6
-    SymbolicFunctionSymbol = 7
-    LocalLabelSymbol = 8
-
-
-class FakeSymbol:
-    """Mirrors the CoreSymbol fields rex_export_symbols and the object export read.
-
-    ``type`` is the SymbolType member the real core hands back, looked up by name.
-    """
-
-    def __init__(self, address: int, type_name: str, name: str) -> None:
-        self.address = address
-        self.type = FakeSymbolType[type_name]
-        self.name = name
-
-
 class FakeCoreSymbol:
     """Mirrors the CoreSymbol surface rex_relocation_at reads."""
 
@@ -406,12 +387,12 @@ class FakeFunction:
         analysis_skipped: bool = False,
         analysis_skip_reason: FakeAnalysisSkipReason = FakeAnalysisSkipReason.NoSkipReason,
         symbol_type: str = "FunctionSymbol",
+        symbol_binding: FakeSymbolBinding = FakeSymbolBinding.NoBinding,
     ) -> None:
-        self.symbol = FakeSymbol(start, symbol_type, name)
+        self.symbol = FakeSymbol(start, symbol_type, name, binding=symbol_binding)
         self.arch = arch if arch is not None else FakeArchitecture("x86_64")
         self.analysis_skipped = analysis_skipped
         self.analysis_skip_reason = analysis_skip_reason
-        self.name = name
         self.start = start
         self.end = end
         self.extra_ranges = extra_ranges
@@ -425,6 +406,9 @@ class FakeFunction:
         self.comments: dict[int, str] = {}
         self.user_type: object | None = None
         self.type: FakeType | None = None
+        # str(Function) is the core's rendered prototype; these surround the current name.
+        self.prototype_before_name = "int32_t"
+        self.prototype_after_name = "()"
         self.user_type_error: Exception | None = None
         self.vars = vars if vars is not None else []
         self.parameter_vars = parameter_vars if parameter_vars is not None else []
@@ -435,13 +419,35 @@ class FakeFunction:
         self.set_user_var_value_calls: list[
             tuple[FakeVariable, int, FakePossibleValueSet, bool]
         ] = []
-        self.cleared_user_var_values: list[tuple[FakeVariable, int]] = []
-        self.cleared_all_user_var_values = 0
+        # The core keys a user value on its after flag too; clearing the other flag is a no-op.
+        self.user_var_after: dict[tuple[FakeVariable, int], bool] = {}
+        self.cleared_user_var_values: list[tuple[FakeVariable, int, bool]] = []
         self.set_user_var_value_error: Exception | None = None
         self.clear_user_var_value_error: Exception | None = None
-        self.clear_all_user_var_values_error: Exception | None = None
         # Empty until "analyzed": the define tools' wait gates on the first block.
         self.basic_blocks: list[FakeBasicBlock] = []
+        # Successive needs_update reads; the last value repeats once the list is spent.
+        self.needs_update_reads: list[bool] = [False]
+        self._needs_update_index = 0
+
+    @override
+    def __str__(self) -> str:
+        return f"{self.prototype_before_name} {self.name}{self.prototype_after_name}"
+
+    @property
+    def name(self) -> str:
+        return self.symbol.name
+
+    @name.setter
+    def name(self, value: str) -> None:
+        """Mirror Function.name's setter: a fresh FunctionSymbol that drops binding and the rest."""
+        self.symbol = fake_symbol_constructor(FakeSymbolType.FunctionSymbol, self.start, value)
+
+    @property
+    def needs_update(self) -> bool:
+        index = min(self._needs_update_index, len(self.needs_update_reads) - 1)
+        self._needs_update_index += 1
+        return self.needs_update_reads[index]
 
     def contains(self, address: int) -> bool:
         """Mirror containment for a discontiguous function: its entry range or a block range."""
@@ -479,10 +485,13 @@ class FakeFunction:
     ) -> None:
         if self.set_user_var_value_error is not None:
             raise self.set_user_var_value_error
-        if def_addr not in self._definition_addresses(variable):
+        if variable not in self.parameter_vars and def_addr not in self._definition_addresses(
+            variable
+        ):
             raise Exception("No definition for Variable found at given address")
         self.set_user_var_value_calls.append((variable, def_addr, value, after))
         self.user_var_values.setdefault(variable, {})[def_addr] = value
+        self.user_var_after[(variable, def_addr)] = after
 
     def get_all_user_var_values(
         self,
@@ -499,20 +508,33 @@ class FakeFunction:
     ) -> None:
         if self.clear_user_var_value_error is not None:
             raise self.clear_user_var_value_error
-        if def_addr not in self._definition_addresses(variable):
+        if variable.index == 0:
+            # Function.clear_user_var_value snaps any index-0 variable to the function start.
+            def_addr = self.start
+        elif def_addr not in self._definition_addresses(variable):
             raise Exception("No definition for Variable found at given address")
-        self.cleared_user_var_values.append((variable, def_addr))
-        sites = self.user_var_values.get(variable)
-        if sites is not None:
-            sites.pop(def_addr, None)
-            if not sites:
-                del self.user_var_values[variable]
+        self.cleared_user_var_values.append((variable, def_addr, after))
+        if self.user_var_after.get((variable, def_addr)) != after:
+            return
+        del self.user_var_after[(variable, def_addr)]
+        sites = self.user_var_values[variable]
+        del sites[def_addr]
+        if not sites:
+            del self.user_var_values[variable]
 
-    def clear_all_user_var_values(self) -> None:
-        if self.clear_all_user_var_values_error is not None:
-            raise self.clear_all_user_var_values_error
-        self.cleared_all_user_var_values += 1
-        self.user_var_values.clear()
+
+@dataclass(frozen=True)
+class FakeUndoAction:
+    summary_text: str
+
+
+@dataclass(frozen=True)
+class FakeUndoEntry:
+    actions: tuple[FakeUndoAction, ...]
+
+
+def undo_entry(*summaries: str) -> FakeUndoEntry:
+    return FakeUndoEntry(tuple(FakeUndoAction(summary) for summary in summaries))
 
 
 class FakeFileMetadata:
@@ -529,8 +551,8 @@ class FakeFileMetadata:
         self.saved_marks = 0
         self.closed = False
         self.close_error: Exception | None = None
-        self.undo_entries: list[str] = []
-        self.redo_entries: list[str] = []
+        self.undo_entries: list[FakeUndoEntry] = []
+        self.redo_entries: list[FakeUndoEntry] = []
         self.undo_error: Exception | None = None
         self.redo_error: Exception | None = None
 
@@ -840,6 +862,11 @@ class FakeBinaryView:
     def update_analysis(self) -> None:
         self.update_analysis_calls += 1
 
+    def define_user_symbol(self, symbol: FakeSymbol) -> None:
+        """Mirror BinaryView.define_user_symbol: the symbol replaces the one at its address."""
+        for function in self.get_functions_at(symbol.address):
+            function.symbol = symbol
+
     @contextlib.contextmanager
     def undoable_transaction(self) -> Generator[None]:
         """Record the lifecycle the real context manager drives: commit, or revert + raise.
@@ -856,7 +883,7 @@ class FakeBinaryView:
             self.transactions.append("revert")
             raise
         self.transactions.append("commit")
-        self.file.undo_entries.append("rex_annotate_many batch")
+        self.file.undo_entries.append(undo_entry("rex_annotate_many batch"))
 
     @property
     def tag_types(self) -> dict[str, object]:

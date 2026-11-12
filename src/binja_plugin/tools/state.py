@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 from binaryninja import mcp
 
 from binja_plugin.tools import (
     _MAX_LIMIT,
+    _functions_needing_update,
+    _refresh_analysis,
     _reject_nul,
     _truncate,
     _truncate_with_flag,
@@ -27,6 +29,7 @@ _MAX_TAG_TYPE_CHARS = 64
 # The core renders title and markdown unbounded in a GUI popup, so both are capped.
 _MAX_REPORT_TITLE_CHARS = 256
 _MAX_REPORT_CONTENT_CHARS = 65536
+_MAX_UNDO_ACTIONS = 32
 
 _METADATA_PREFIX = "rex/"
 _TAG_ICON = "\u25c6"
@@ -51,14 +54,20 @@ class _KvSetResult(TypedDict):
 
 class _UndoResult(TypedDict):
     undone: bool
+    actions: list[str]
+    actions_truncated: bool
     undo_left: int
     redo_left: int
+    analysis_complete: bool
 
 
 class _RedoResult(TypedDict):
     redone: bool
+    actions: list[str]
+    actions_truncated: bool
     undo_left: int
     redo_left: int
+    analysis_complete: bool
 
 
 class _ReportResult(TypedDict):
@@ -93,6 +102,14 @@ def _require_key(key: str) -> None:
     if not key:
         raise mcp.ToolError("invalid_key", "key must not be empty")
     _reject_nul("key", key)
+
+
+def _top_entry_actions(entries: list[Any]) -> tuple[list[str], bool]:
+    """The core's summary of each action in the newest entry, capped, and whether it was cut."""
+    newest = entries[-1].actions if entries else []
+    summaries = [action.summary_text for action in newest]
+    shown = [_truncate(summary) for summary in summaries[:_MAX_UNDO_ACTIONS]]
+    return shown, len(summaries) > _MAX_UNDO_ACTIONS
 
 
 def _run_undo_stack_step(verb: str, step: Callable[[], None], failed_code: str) -> None:
@@ -151,14 +168,23 @@ def rex_kv_set(call: mcp.ToolCall, key: str, value: str) -> _KvSetResult:
 
 @mcp.tool(destructive=True)
 def rex_redo(call: mcp.ToolCall) -> _RedoResult:
-    """Redo the last undone transaction in the view's undo database."""
+    """Redo the last undone transaction; returns what it redid and the stack depths."""
     file = call.binary_view.file
     redo_before = len(file.redo_entries)
+    actions, actions_truncated = _top_entry_actions(file.redo_entries)
     _run_undo_stack_step("redo", call.binary_view.redo, "redo_failed")
+    redone = len(file.redo_entries) < redo_before
+    analysis_complete = True
+    if redone:
+        bv = call.binary_view
+        analysis_complete = _refresh_analysis(bv, _functions_needing_update(bv))
     return {
-        "redone": len(file.redo_entries) < redo_before,
+        "redone": redone,
+        "actions": actions if redone else [],
+        "actions_truncated": actions_truncated and redone,
         "undo_left": len(file.undo_entries),
         "redo_left": len(file.redo_entries),
+        "analysis_complete": analysis_complete,
     }
 
 
@@ -257,12 +283,21 @@ def rex_tag_set(
 
 @mcp.tool(destructive=True)
 def rex_undo(call: mcp.ToolCall) -> _UndoResult:
-    """Undo the last committed transaction in the view's undo database."""
+    """Undo the last committed transaction; returns what it undid and the stack depths."""
     file = call.binary_view.file
     undo_before = len(file.undo_entries)
+    actions, actions_truncated = _top_entry_actions(file.undo_entries)
     _run_undo_stack_step("undo", call.binary_view.undo, "undo_failed")
+    undone = len(file.undo_entries) < undo_before
+    analysis_complete = True
+    if undone:
+        bv = call.binary_view
+        analysis_complete = _refresh_analysis(bv, _functions_needing_update(bv))
     return {
-        "undone": len(file.undo_entries) < undo_before,
+        "undone": undone,
+        "actions": actions if undone else [],
+        "actions_truncated": actions_truncated and undone,
         "undo_left": len(file.undo_entries),
         "redo_left": len(file.redo_entries),
+        "analysis_complete": analysis_complete,
     }

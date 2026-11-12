@@ -3,21 +3,20 @@
 The definition site is the address of the MLIL instruction that defines the variable, the
 same (arch, address) pair the core stores per informed value; resolving it from the
 variable's name is what keeps rex_uidf_set and rex_uidf_clear inside the core's contract
-that a user value always attaches to a real definition site.
+that a user value always attaches to a real definition site. A parameter has no MLIL
+definition; the core defines it at the function start, so that is its only site.
 """
 
 from __future__ import annotations
 
-import time
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Literal, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Annotated, Literal, NamedTuple, NotRequired, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
-from binaryninja.enums import AnalysisState, RegisterValueType, VariableSourceType
+from binaryninja.enums import RegisterValueType
 from binaryninja.function import Function
-from binaryninja.mediumlevelil import MediumLevelILInstruction
 from binaryninja.variable import Variable
 
 from binja_plugin.tools import (
@@ -29,6 +28,7 @@ from binja_plugin.tools import (
     _ItemError,
     _missing_il_error,
     _paginate,
+    _refresh_analysis,
     _reject_nul,
     _render_hlil_lines,
     _require_analyzed_function,
@@ -42,8 +42,6 @@ if TYPE_CHECKING:
     from binaryninja.variable import PossibleValueSet
 
 # rex_uidf_set polls for reanalysis before rendering HLIL; the deadline bounds the hold.
-_UIDF_ANALYSIS_SLICE_MS = 100
-_MAX_UIDF_ANALYSIS_WAIT_MS = 10000
 _MAX_UIDF_BATCH = 128
 
 _UIDF_ITEMS_SCHEMA: dict[str, object] = {
@@ -141,6 +139,7 @@ class _UidfClearAllResult(TypedDict):
     function: _ResolvedFunction
     variable: None
     cleared: int
+    analysis_complete: bool
 
 
 class _UidfClearVariableResult(TypedDict):
@@ -148,6 +147,7 @@ class _UidfClearVariableResult(TypedDict):
     variable: str
     cleared: int
     definition_sites: int
+    analysis_complete: bool
 
 
 class _UidfListResult(TypedDict):
@@ -162,11 +162,11 @@ def _describe_value(value: PossibleValueSet) -> _ValueDescription:
 
 
 def _parse_uidf_value(
-    bv: BinaryView, value: str, state: str, site: MediumLevelILInstruction
+    bv: BinaryView, value: str, state: str, site_address: int
 ) -> PossibleValueSet:
     value_state = _require_value_state(state)
     try:
-        return bv.parse_possiblevalueset(value, value_state, here=site.address)
+        return bv.parse_possiblevalueset(value, value_state, here=site_address)
     except Exception as error:
         raise mcp.ToolError("invalid_params", f"Invalid value parameter 'value': {error}") from None
 
@@ -176,7 +176,8 @@ class _UIDFSetPlan:
     index: int
     variable_name: str
     variable: Variable
-    site: MediumLevelILInstruction
+    site_address: int
+    after: bool
     value: PossibleValueSet
     description: _ValueDescription
 
@@ -184,7 +185,7 @@ class _UIDFSetPlan:
         return {
             "index": self.index,
             "variable": _truncate(self.variable_name),
-            "definition_site": hex(self.site.address),
+            "definition_site": hex(self.site_address),
             "value": self.description,
             "ok": True,
         }
@@ -193,7 +194,7 @@ class _UIDFSetPlan:
         return {
             "index": self.index,
             "variable": _truncate(self.variable_name),
-            "definition_site": hex(self.site.address),
+            "definition_site": hex(self.site_address),
             "value": self.description,
             "ok": False,
             "error": {
@@ -251,10 +252,16 @@ def _stage_uidf_item(
         state = item.get("state", "ConstantValue")
         if not isinstance(state, str):
             raise mcp.ToolError("invalid_params", "state must be a string")
-        site_variable, site = _select_definition_site(target, variable_name, def_address)
-        parsed = _parse_uidf_value(bv, value, state, site)
+        site = _select_definition_site(target, variable_name, def_address)
+        parsed = _parse_uidf_value(bv, value, state, site.address)
         return _UIDFSetPlan(
-            index, variable_name, site_variable, site, parsed, _describe_value(parsed)
+            index,
+            variable_name,
+            site.variable,
+            site.address,
+            site.after,
+            parsed,
+            _describe_value(parsed),
         )
     except mcp.ToolError as error:
         return {
@@ -267,21 +274,31 @@ def _stage_uidf_item(
 
 def _apply_plan(target: Function, plan: _UIDFSetPlan) -> _UidfRow:
     try:
-        # after defaults to True in the core API: apply after the definition site.
-        target.set_user_var_value(plan.variable, plan.site.address, plan.value)
+        target.set_user_var_value(plan.variable, plan.site_address, plan.value, after=plan.after)
     except Exception as error:
         return plan.set_failed_row(error)
     return plan.applied_row()
 
 
-def _wait_analysis_settled(bv: BinaryView) -> bool:
-    """Wait, bounded, for the view's analysis queue to drain; False when the deadline passes."""
-    deadline = time.monotonic() + _MAX_UIDF_ANALYSIS_WAIT_MS / 1000
-    state = bv.analysis_progress.state
-    while state != AnalysisState.IdleState and time.monotonic() < deadline:
-        time.sleep(_UIDF_ANALYSIS_SLICE_MS / 1000)
-        state = bv.analysis_progress.state
-    return state == AnalysisState.IdleState
+def _clear_both_placements(target: Function, variable: Variable, address: int) -> None:
+    # The core keys a value on its after flag and never reports it, so clear both.
+    for after in (True, False):
+        target.clear_user_var_value(variable, address, after=after)
+
+
+def _clear_every_value(bv: BinaryView, target: Function) -> int:
+    cleared = 0
+    try:
+        with bv.undoable_transaction():
+            for stored, sites in target.get_all_user_var_values().items():
+                for site in sites:
+                    _clear_both_placements(target, stored, site.addr)
+                    cleared += 1
+    except Exception as error:
+        raise mcp.ToolError(
+            "clear_failed", f"could not clear user variable values: {error}"
+        ) from None
+    return cleared
 
 
 def _require_value_state(state: str) -> RegisterValueType:
@@ -294,42 +311,38 @@ def _require_value_state(state: str) -> RegisterValueType:
     return value_state
 
 
-def _collect_mlil_definitions(
-    target: Function, name: str
-) -> list[tuple[Variable, MediumLevelILInstruction]]:
-    """Return every (variable, definition) pair whose variable name matches ``name``."""
+class _DefinitionSite(NamedTuple):
+    variable: Variable
+    address: int
+    # A parameter's value holds before the entry instruction, which may already overwrite it.
+    after: bool
+
+
+def _collect_mlil_definitions(target: Function, name: str) -> list[_DefinitionSite]:
+    """Return every definition site of the variables named ``name``.
+
+    A parameter with no MLIL definition is defined at the function start.
+    """
     mlil = target.mlil
     if mlil is None:
         raise _missing_il_error(target, "MediumLevelIL", "no_mlil")
-    matches: list[tuple[Variable, MediumLevelILInstruction]] = []
-    for variable in target.vars:
-        if variable.name != name:
-            continue
-        for definition in mlil.get_var_definitions(variable):
-            matches.append((variable, definition))
+    parameters = list(target.parameter_vars)
+    named = [variable for variable in target.vars if variable.name == name]
+    matches: list[_DefinitionSite] = []
+    for variable in named:
+        definitions = mlil.get_var_definitions(variable)
+        if not definitions and variable in parameters:
+            matches.append(_DefinitionSite(variable, target.start, after=False))
+        for definition in definitions:
+            matches.append(_DefinitionSite(variable, definition.address, after=True))
     if matches:
         return matches
-    named = [variable for variable in target.vars if variable.name == name]
     if not named:
         raise _unknown_variable_error(target, name)
-    parameters = list(target.parameter_vars)
-    advice = ""
-    if all(variable in parameters for variable in named):
-        source_types = {variable.source_type for variable in named}
-        if source_types == {VariableSourceType.StackVariableSourceType}:
-            advice = (
-                "; stack-passed arguments cannot be informed, "
-                "inform the register that loads the value"
-            )
-        if source_types == {VariableSourceType.RegisterVariableSourceType}:
-            advice = (
-                "; a register parameter is live from function entry, inform a variable that "
-                "copies it (rex_parameter_variables lists the copies)"
-            )
     raise mcp.ToolError(
         "no_variable",
         f"MLIL variable '{_truncate(name)}' in {_truncate(target.name)} has no "
-        f"MediumLevelIL definition sites{advice}",
+        "MediumLevelIL definition sites",
     )
 
 
@@ -352,25 +365,25 @@ def _iter_uidf_entries(targets: list[Function]) -> Iterator[_UidfEntry]:
 
 def _select_definition_site(
     target: Function, name: str, def_address: int | None
-) -> tuple[Variable, MediumLevelILInstruction]:
+) -> _DefinitionSite:
     """Resolve exactly one definition site for ``name``, rejecting ambiguity."""
     matches = _collect_mlil_definitions(target, name)
     if def_address is not None:
-        known = sorted({site.address for _, site in matches})
-        matches = [(variable, site) for variable, site in matches if site.address == def_address]
+        known = sorted({site.address for site in matches})
+        matches = [site for site in matches if site.address == def_address]
         if not matches:
             raise mcp.ToolError(
                 "definition_not_found",
                 f"variable '{_truncate(name)}' has no definition at {def_address:#x}; "
-                f"definitions: {', '.join(f'{site:#x}' for site in known)}",
+                f"definitions: {', '.join(f'{address:#x}' for address in known)}",
             )
     if len(matches) > 1:
-        sites = sorted({site.address for _, site in matches})
+        sites = sorted({site.address for site in matches})
         suffix = "; pass def_address to choose one" if def_address is None else ""
         raise mcp.ToolError(
             "ambiguous_definition",
             f"variable '{_truncate(name)}' matches {len(matches)} definitions at "
-            f"{', '.join(f'{site:#x}' for site in sites)}{suffix}",
+            f"{', '.join(f'{address:#x}' for address in sites)}{suffix}",
         )
     return matches[0]
 
@@ -388,7 +401,7 @@ def rex_uidf_set(
     """Inform an MLIL value; a ConstantPointerValue key-table base folds byte checks. Undoable.
 
     :param function: Address expression inside the target function.
-    :param variable: MLIL variable name, as listed by bn_variable_list.
+    :param variable: MLIL variable name from bn_variable_list; a parameter uses the function start.
     :param value: Value spec: "0x10" constant (hex default), "start:end:step" range, "1,2,3" set.
     :param def_address: Definition site to inform when the variable has several.
     :param state: Grammar of the value spec; "$here" inside it resolves to the definition site.
@@ -399,17 +412,16 @@ def rex_uidf_set(
     _reject_nul("value", value)
     resolution = _require_analyzed_function(bv, function)
     target = resolution.function
-    site_variable, site = _select_definition_site(target, variable, def_address)
-    parsed = _parse_uidf_value(bv, value, state, site)
+    site = _select_definition_site(target, variable, def_address)
+    parsed = _parse_uidf_value(bv, value, state, site.address)
     description = _describe_value(parsed)
     try:
-        target.set_user_var_value(site_variable, site.address, parsed, after=True)
+        target.set_user_var_value(site.variable, site.address, parsed, after=site.after)
     except Exception as error:
         raise mcp.ToolError(
             "set_failed", f"could not inform '{_truncate(variable)}': {error}"
         ) from None
-    bv.update_analysis()
-    analysis_complete = _wait_analysis_settled(bv)
+    analysis_complete = _refresh_analysis(bv, [target])
     lines, truncated = _render_hlil_lines(target.hlil, max_lines)
     return {
         "function": resolution.entry,
@@ -454,8 +466,7 @@ def rex_uidf_set_many(
     applied = sum(1 for row in results if row["ok"])
     analysis_complete = True
     if applied:
-        bv.update_analysis()
-        analysis_complete = _wait_analysis_settled(bv)
+        analysis_complete = _refresh_analysis(bv, [target])
     lines, truncated = _render_hlil_lines(target.hlil, max_lines)
     failed = len(results) - applied
     return {
@@ -485,16 +496,14 @@ def rex_uidf_clear(
     resolution = _require_analyzed_function(bv, function)
     target = resolution.function
     if variable is None:
-        cleared = sum(len(sites) for sites in target.get_all_user_var_values().values())
-        try:
-            with bv.undoable_transaction():
-                target.clear_all_user_var_values()
-        except Exception as error:
-            raise mcp.ToolError(
-                "clear_failed", f"could not clear user variable values: {error}"
-            ) from None
-        bv.update_analysis()
-        return {"function": resolution.entry, "variable": None, "cleared": cleared}
+        cleared = _clear_every_value(bv, target)
+        analysis_complete = _refresh_analysis(bv, [target])
+        return {
+            "function": resolution.entry,
+            "variable": None,
+            "cleared": cleared,
+            "analysis_complete": analysis_complete,
+        }
     matches = _collect_mlil_definitions(target, variable)
     informed_sites: set[int] = set()
     for stored, sites in target.get_all_user_var_values().items():
@@ -503,22 +512,23 @@ def rex_uidf_clear(
                 informed_sites.add(site.addr)
     cleared = 0
     with bv.undoable_transaction():
-        for site_variable, definition in matches:
+        for site in matches:
             try:
-                target.clear_user_var_value(site_variable, definition.address, after=True)
+                _clear_both_placements(target, site.variable, site.address)
             except Exception as error:
                 raise mcp.ToolError(
                     "clear_failed",
-                    f"could not clear '{_truncate(variable)}' at {definition.address:#x}: {error}",
+                    f"could not clear '{_truncate(variable)}' at {site.address:#x}: {error}",
                 ) from None
-            if definition.address in informed_sites:
+            if site.address in informed_sites:
                 cleared += 1
-    bv.update_analysis()
+    analysis_complete = _refresh_analysis(bv, [target])
     return {
         "function": resolution.entry,
         "variable": _truncate(variable),
         "cleared": cleared,
         "definition_sites": len(matches),
+        "analysis_complete": analysis_complete,
     }
 
 

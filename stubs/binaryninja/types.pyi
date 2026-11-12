@@ -1,6 +1,6 @@
 from typing import Any
 
-from binaryninja.enums import TypeClass
+from binaryninja.enums import SymbolBinding, SymbolType, TypeClass
 
 
 class Type:
@@ -31,3 +31,20 @@ class StructureMember:
 class StructureType(Type):
     members: list[StructureMember]
     width: int
+
+
+class NameSpace: ...
+
+
+class Symbol:
+    def __init__(
+        self,
+        sym_type: SymbolType,
+        addr: int,
+        short_name: str,
+        full_name: str | None = None,
+        raw_name: str | None = None,
+        binding: SymbolBinding | None = None,
+        namespace: NameSpace | str | None = None,
+        ordinal: int = 0,
+    ) -> None: ...

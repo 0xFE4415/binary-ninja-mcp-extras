@@ -56,7 +56,7 @@ def test_help_index_entries_carry_only_a_name_a_use_when_line_and_tool_names() -
 def test_help_index_pins_every_use_when_line() -> None:
     assert {entry["name"]: entry["use_when"] for entry in _help()["categories"]} == {
         "decompile": (
-            "First contact and reading code: entry point, main, HLIL/disassembly, HLIL grep."
+            "bn_binary_triage gives the entry point; read its HLIL or disassembly, grep HLIL."
         ),
         "strings": "Locate detected strings and the code that references them.",
         "scanning": "Find a magic constant or byte pattern, and the functions that contain it.",
@@ -66,7 +66,7 @@ def test_help_index_pins_every_use_when_line() -> None:
         ),
         "dataflow": "Decide what a branch compares: constraints, HLIL statements, MLIL uses.",
         "uidf": (
-            "Pin values the decompiler cannot know so obfuscated arithmetic and byte checks fold."
+            "MLIL only: pin a value at a definition or parameter entry; the fold shows in HLIL."
         ),
         "types": "Recover structs from access patterns, import or export type libraries.",
         "annotations": "Record conclusions: batch renames, comments, and types.",
@@ -232,13 +232,12 @@ def test_help_details_types_defaults_and_bounds() -> None:
 def test_help_states_that_call_paths_defaults_to_callers_and_reachability_needs_callees() -> None:
     detail = _help("rex_call_paths")
     assert detail["description"] == (
-        "Bounded BFS for call paths; direction defaults to callers, "
-        'so "A reaches B?" needs callees.'
+        'Bounded call paths. "Does A reach B?" is from_addr=A, to_addr=B, direction="callees".'
     )
     by_name = {parameter["name"]: parameter for parameter in detail["parameters"]}
     assert by_name["direction"]["default"] == "callers"
     assert by_name["direction"]["description"] == (
-        'Default "callers": to_addr reaches from_addr; "callees": the reverse.'
+        '"callees": from_addr reaches to_addr; "callers" (default): the reverse.'
     )
 
 

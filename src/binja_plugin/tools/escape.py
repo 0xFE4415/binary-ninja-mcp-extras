@@ -17,7 +17,14 @@ from typing import Annotated, NamedTuple, TypedDict
 import binaryninja
 from binaryninja import mcp
 
-from binja_plugin.tools import _show_nul, _truncate, _truncate_with_flag, _validate_range
+from binja_plugin.tools import (
+    _functions_needing_update,
+    _refresh_analysis,
+    _show_nul,
+    _truncate,
+    _truncate_with_flag,
+    _validate_range,
+)
 
 _MAX_EVAL_STDOUT_CHARS = 65536
 _MAX_EVAL_RESULT_CHARS = 16384
@@ -70,6 +77,7 @@ class _EvalPage(TypedDict):
 class _MemoryWriteResult(TypedDict):
     address: str
     bytes_written: int
+    analysis_complete: bool
 
 
 def _spill_echo(text: str, cap: int, kind: str) -> _Echo:
@@ -285,6 +293,12 @@ def rex_memory_write(call: mcp.ToolCall, addr: mcp.Address, hex_data: str) -> _M
         data = bytes.fromhex(compact)
     except ValueError:
         raise mcp.ToolError("invalid_hex", "hex_data must contain hex byte pairs") from None
-    with call.binary_view.undoable_transaction():
-        written = call.binary_view.write(addr, data)
-    return {"address": hex(addr), "bytes_written": written}
+    bv = call.binary_view
+    with bv.undoable_transaction():
+        written = bv.write(addr, data)
+    analysis_complete = _refresh_analysis(bv, _functions_needing_update(bv))
+    return {
+        "address": hex(addr),
+        "bytes_written": written,
+        "analysis_complete": analysis_complete,
+    }

@@ -14,6 +14,7 @@ from helpers import (
 from helpers_view import (
     FakeBinaryView,
     FakeFunction,
+    undo_entry,
 )
 
 from binja_plugin import tools
@@ -223,7 +224,7 @@ def test_function_define_many_defines_and_waits(monkeypatch: pytest.MonkeyPatch)
     assert len(view.created_functions) == 2
     # One transaction, so one rex_undo reverts the whole batch.
     assert view.transactions == ["open", "commit"]
-    assert view.file.undo_entries == ["rex_annotate_many batch"]
+    assert view.file.undo_entries == [undo_entry("rex_annotate_many batch")]
 
 
 def test_function_define_many_reverts_its_transaction_when_the_core_raises(

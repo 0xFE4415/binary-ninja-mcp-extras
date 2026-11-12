@@ -9,9 +9,11 @@ from helpers import (
     get_tool,
     plain_gap_message,
 )
+from helpers_symbol import FakeSymbolBinding, FakeSymbolType
 from helpers_view import (
     FakeBinaryView,
     FakeFunction,
+    undo_entry,
 )
 
 from binja_plugin.tools import annotations as annotations_tools
@@ -21,6 +23,27 @@ def _annotate_view() -> FakeBinaryView:
     main = FakeFunction("main", 0x1100, 0x1200)
     helper = FakeFunction("helper", 0x2000, 0x2100)
     return FakeBinaryView(functions=[main, helper])
+
+
+def test_annotate_many_rename_keeps_symbol_type_binding_namespace_and_ordinal() -> None:
+    exported = FakeFunction(
+        "dup_mid",
+        0x1100,
+        0x1200,
+        symbol_type="LibraryFunctionSymbol",
+        symbol_binding=FakeSymbolBinding.GlobalBinding,
+    )
+    exported.symbol.namespace = "ns"
+    exported.symbol.ordinal = 7
+    view = FakeBinaryView(functions=[exported])
+    _, annotate = get_tool("rex_annotate_many")
+    annotate(FakeParsingToolCall(view), [{"addr": "0x1100", "name": "renamed"}])
+    symbol = exported.symbol
+    assert (symbol.name, symbol.address) == ("renamed", 0x1100)
+    assert symbol.type == FakeSymbolType.LibraryFunctionSymbol
+    assert symbol.binding == FakeSymbolBinding.GlobalBinding
+    assert symbol.namespace == "ns"
+    assert symbol.ordinal == 7
 
 
 def test_annotate_many_applies_name_comment_and_prototype_in_one_transaction() -> None:
@@ -35,19 +58,16 @@ def test_annotate_many_applies_name_comment_and_prototype_in_one_transaction() -
         ],
     )
     # A comment-bearing row echoes the exact address the comment lands on; name and
-    # prototype are function-level, so their rows echo the function start. "failed" is
-    # this tool's legacy count key; "applied"/"failed_count"/"total" are the uniform
-    # batch-summary keys every batch tool now carries.
+    # prototype are function-level, so their rows echo the function start.
     assert result == {
         "applied": 2,
-        "failed": 0,
         "failed_count": 0,
         "total": 2,
         "results": [
             {
                 "addr": "0x1150",
                 "ok": True,
-                "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+                "function": {"start": "0x1100", "name": "read_config", **NO_ALTERNATIVES},
             },
             {
                 "addr": "0x2000",
@@ -55,6 +75,7 @@ def test_annotate_many_applies_name_comment_and_prototype_in_one_transaction() -
                 "function": {"start": "0x2000", "name": "helper", **NO_ALTERNATIVES},
             },
         ],
+        "analysis_complete": True,
     }
     assert main.name == "read_config"
     # The comment is an addressed comment at the exact address given, not the
@@ -80,7 +101,6 @@ def test_annotate_many_reports_a_missing_function_per_item() -> None:
     )
     assert result == {
         "applied": 1,
-        "failed": 1,
         "failed_count": 1,
         "total": 2,
         "results": [
@@ -92,9 +112,10 @@ def test_annotate_many_reports_a_missing_function_per_item() -> None:
             {
                 "addr": "0x1100",
                 "ok": True,
-                "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+                "function": {"start": "0x1100", "name": "renamed", **NO_ALTERNATIVES},
             },
         ],
+        "analysis_complete": True,
     }
     # The batch still applies and commits; only the dead item failed.
     assert main.name == "renamed"
@@ -110,7 +131,6 @@ def test_annotate_many_skips_the_transaction_when_every_item_fails() -> None:
     )
     assert result == {
         "applied": 0,
-        "failed": 2,
         "failed_count": 2,
         "total": 2,
         "results": [
@@ -125,6 +145,7 @@ def test_annotate_many_skips_the_transaction_when_every_item_fails() -> None:
                 "error": "each item must be a JSON object",
             },
         ],
+        "analysis_complete": True,
     }
     # Nothing to apply, so no undo step is created at all.
     assert view.transactions == []
@@ -167,7 +188,7 @@ def test_annotate_many_reports_item_content_errors_per_item() -> None:
     }
     assert unknown == {"addr": "0x1100", "ok": False, "error": "unknown field(s): hue"}
     assert result["applied"] == 0
-    assert result["failed"] == 5
+    assert result["failed_count"] == 5
 
 
 def test_annotate_many_rejects_bad_batch_shape_and_size() -> None:
@@ -204,10 +225,10 @@ def test_annotate_many_rejects_the_removed_type_alias_as_an_unknown_field() -> N
     )
     assert result == {
         "applied": 0,
-        "failed": 1,
         "failed_count": 1,
         "total": 1,
         "results": [{"addr": "0x1100", "ok": False, "error": "unknown field(s): type"}],
+        "analysis_complete": True,
     }
     # The rejected item staged nothing: no type applied, no undo step created.
     assert main.user_type is None
@@ -225,10 +246,10 @@ def test_annotate_many_rejects_an_unparsable_prototype_before_applying_anything(
     )
     assert result == {
         "applied": 0,
-        "failed": 1,
         "failed_count": 1,
         "total": 1,
         "results": [{"addr": "0x1100", "ok": False, "error": "bad type: expected ';'"}],
+        "analysis_complete": True,
     }
     # An item is atomic: a failing type must not leave the rename half-applied.
     assert main.name == "main"
@@ -294,7 +315,7 @@ def test_annotate_many_rejects_oversized_or_mistyped_strings_per_item() -> None:
         == f"prototype exceeds {annotations_tools._MAX_ANNOTATE_PROTOTYPE_CHARS} characters"
     )
     assert result["applied"] == 0
-    assert result["failed"] == 7
+    assert result["failed_count"] == 7
     assert view.transactions == []
 
 
@@ -333,7 +354,7 @@ def test_annotate_many_accepts_strings_exactly_at_the_caps() -> None:
         ],
     )
     assert result["applied"] == 1
-    assert result["failed"] == 0
+    assert result["failed_count"] == 0
     assert main.name == "n" * annotations_tools._MAX_ANNOTATE_NAME_CHARS
     assert main.get_comment_at(0x1100) == "c" * annotations_tools._MAX_ANNOTATE_COMMENT_CHARS
     assert main.comment == ""
@@ -376,12 +397,12 @@ def test_annotate_many_echoes_the_function_start_for_function_level_fields() -> 
         {
             "addr": "0x1100",
             "ok": True,
-            "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+            "function": {"start": "0x1100", "name": "renamed", **NO_ALTERNATIVES},
         },
         {
             "addr": "0x1100",
             "ok": True,
-            "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
+            "function": {"start": "0x1100", "name": "renamed", **NO_ALTERNATIVES},
         },
     ]
     assert main.name == "renamed"
@@ -433,10 +454,17 @@ def test_annotate_batch_leaves_one_undo_entry_that_rex_undo_reverses() -> None:
     # whole. The tag/metadata/type-library writes the API leaves undocumented push
     # nothing here, so the fake cannot pin those either way.
     annotate(FakeParsingToolCall(view), [{"addr": "0x1100", "name": "renamed"}])
-    assert view.file.undo_entries == ["rex_annotate_many batch"]
-    assert undo(_call(view)) == {"undone": True, "undo_left": 0, "redo_left": 1}
+    assert view.file.undo_entries == [undo_entry("rex_annotate_many batch")]
+    assert undo(_call(view)) == {
+        "undone": True,
+        "actions": ["rex_annotate_many batch"],
+        "actions_truncated": False,
+        "undo_left": 0,
+        "redo_left": 1,
+        "analysis_complete": True,
+    }
     assert view.file.undo_entries == []
-    assert view.file.redo_entries == ["rex_annotate_many batch"]
+    assert view.file.redo_entries == [undo_entry("rex_annotate_many batch")]
     # A batch the core rolls back mid-apply commits nothing, so there is no entry to undo.
     rollback_view = _annotate_view()
     rollback_view.functions[1].user_type_error = RuntimeError("core exploded")
@@ -470,3 +498,28 @@ def test_optional_text_passes_through_strings_and_maps_everything_else_to_none()
     assert annotations_tools._optional_text(None) is None
     assert annotations_tools._optional_text(123) is None
     assert annotations_tools._optional_text(["note"]) is None
+
+
+def test_annotate_many_reports_each_function_as_it_is_after_the_batch() -> None:
+    main = FakeFunction("main", 0x1100, 0x1200)
+    helper = FakeFunction("helper", 0x2000, 0x2100)
+    view = FakeBinaryView(functions=[main, helper])
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [{"addr": 0x1100, "name": "parse_config"}, {"addr": 0x2000, "name": "parse_config"}],
+    )
+    assert [row["function"] for row in result["results"]] == [
+        {
+            "start": "0x1100",
+            "name": "parse_config",
+            "also_containing": [],
+            "same_name": [{"start": "0x2000", "name": "parse_config"}],
+        },
+        {
+            "start": "0x2000",
+            "name": "parse_config",
+            "also_containing": [],
+            "same_name": [{"start": "0x1100", "name": "parse_config"}],
+        },
+    ]

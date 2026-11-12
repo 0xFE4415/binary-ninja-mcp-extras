@@ -93,7 +93,7 @@ def stub() -> Iterator[StubServer]:
     server.tools["bn_binary_open"] = lambda arguments: opened_reply("0x400000")
     server.tools["rex_analysis_wait"] = lambda arguments: structured({"completed": True})
     server.tools["rex_eval_python"] = lambda arguments: structured(
-        {"error": None, "result": "'1.0'"}
+        {"error": None, "result": "'6.1.11124-dev Personal'"}
     )
     server.tools["rex_binary_close"] = lambda arguments: structured({"closed": True})
     server.tools["probe"] = lambda arguments: structured({"value": 1})
@@ -138,7 +138,6 @@ def write_playbook(
     tmp_path: Path,
     fixture_file: Path,
     steps: list[dict[str, Any]],
-    version: str = "1.0",
     base: str | None = "0x400000",
 ) -> Path:
     fixture = {
@@ -147,7 +146,7 @@ def write_playbook(
     }
     if base is not None:
         fixture["base"] = base
-    playbook = {"binary_ninja_version": version, "fixture": fixture, "steps": steps}
+    playbook = {"fixture": fixture, "steps": steps}
     path = tmp_path / "playbook.json"
     path.write_text(json.dumps(playbook))
     return path
@@ -519,12 +518,22 @@ def test_run_passes_and_closes_the_opened_view(
     assert "1 passed, 0 failed of 1 steps" in capsys.readouterr().out
 
 
-def test_run_warns_about_a_version_mismatch(
-    stub: StubServer, tmp_path: Path, fixture_file: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(("version", "warns"), [("6.1.11124-dev Personal", False), ("6.0.1", True)])
+def test_run_warns_only_below_binary_ninja_6_1(
+    stub: StubServer,
+    tmp_path: Path,
+    fixture_file: Path,
+    capsys: pytest.CaptureFixture[str],
+    version: str,
+    warns: bool,
 ):
-    playbook_path = write_playbook(tmp_path, fixture_file, [], version="2.0")
+    stub.tools["rex_eval_python"] = lambda arguments: structured(
+        {"error": None, "result": repr(version)}
+    )
+    playbook_path = write_playbook(tmp_path, fixture_file, [])
     assert runner.run(playbook_path, stub.url) == 0
-    assert "WARNING: playbook pinned 2.0" in capsys.readouterr().out
+    warned = "WARNING: playbook needs Binary Ninja 6.1 or newer" in capsys.readouterr().out
+    assert warned is warns
 
 
 def test_run_fails_when_a_step_fails(
@@ -962,3 +971,12 @@ def test_unwinding_ignores_every_further_termination_signal(termination_signal: 
     assert exit_info.value.code == 128 + termination_signal
     for number in runner.UNWIND_SIGNALS:
         assert signal.getsignal(number) == signal.SIG_IGN
+
+
+def test_a_global_step_is_called_without_the_binary(stub: StubServer):
+    client = runner.McpClient(stub.url)
+    client.initialize()
+    global_step = {**probe_step("global", 1), "args": {"category": "x"}, "global": True}
+    assert runner.run_step(global_step, "h1", client) == []
+    assert runner.run_step(probe_step("bound", 1), "h1", client) == []
+    assert stub.calls == [("probe", {"category": "x"}), ("probe", {"binary": "h1"})]

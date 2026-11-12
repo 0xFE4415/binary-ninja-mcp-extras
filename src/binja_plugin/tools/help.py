@@ -17,13 +17,13 @@ _UNCATEGORIZED = "other"
 _UNCATEGORIZED_USE_WHEN = "Registered rex_ tools that no category module defines."
 
 _CATEGORY_USE_WHEN: dict[str, str] = {
-    "decompile": "First contact and reading code: entry point, main, HLIL/disassembly, HLIL grep.",
+    "decompile": "bn_binary_triage gives the entry point; read its HLIL or disassembly, grep HLIL.",
     "strings": "Locate detected strings and the code that references them.",
     "scanning": "Find a magic constant or byte pattern, and the functions that contain it.",
     "data": "Read mapped bytes, relocations, or list references to an address.",
     "functions": "Define missing functions (code after int3, indirect targets), map call paths.",
     "dataflow": "Decide what a branch compares: constraints, HLIL statements, MLIL uses.",
-    "uidf": "Pin values the decompiler cannot know so obfuscated arithmetic and byte checks fold.",
+    "uidf": "MLIL only: pin a value at a definition or parameter entry; the fold shows in HLIL.",
     "types": "Recover structs from access patterns, import or export type libraries.",
     "annotations": "Record conclusions: batch renames, comments, and types.",
     "components": "Group functions into named components.",
