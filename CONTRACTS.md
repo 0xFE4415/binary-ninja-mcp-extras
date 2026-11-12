@@ -385,8 +385,8 @@ present only on some rows.
   filenames, and every entry of an address-expression list (named like `functions[1]`). A
   batch tool reports it in the row of the bad item. Scalar address parameters, including the
   `def_address` of `rex_uidf_set`, are parsed by the built-in server before the plugin runs,
-  so this rule cannot cover them. Patterns, regular expressions, variable names, and eval code are not passed
-  to the core as C strings and are unchanged.
+  so this rule cannot cover them. Patterns, regular expressions, variable names, and eval
+  code are not passed to the core as C strings and are unchanged.
 - The `filename` of `rex_export_disasm`, `rex_export_symbols`, and `rex_type_library_export`
   is a required parameter with no default, and the advertised schema lists it under
   `required`. It raises `invalid_params` for an empty name, an absolute path, a backslash, a
