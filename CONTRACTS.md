@@ -437,9 +437,12 @@ Usage strategies that do not fit a tool's one-line description.
   operand index at all is kept, since it cannot be judged. The optional boolean
   `include_non_operand_hits` (default false) returns the dropped hits too; it is only
   allowed with `value` 0 and otherwise returns `invalid_params`. Dropped hits take no slot
-  in `total`, paging, the address cap, or `truncated`. Other values are not filtered. The
-  tool lists a hit under the function the core attributes the line to, not by the
-  lowest-start rule, so in overlapping code one address can appear under several functions.
+  in `total`, paging, the address cap, or `truncated`. With `include_non_operand_hits` true,
+  those extra hits depend on how much IL the view has already generated, so counts can grow
+  after decompiling. The default operand-only results do not depend on this. Other values
+  are not filtered. The tool lists a hit under the function the core attributes the line
+  to, not by the lowest-start rule, so in overlapping code one address can appear under
+  several functions.
   A value that is rare or absent makes the core scan the whole view before the search ends.
   Use it to enumerate every function touching a magic value; when the value lives in data
   rather than code, use `rex_data_find` or `rx_multi_find` instead.
@@ -447,7 +450,9 @@ Usage strategies that do not fit a tool's one-line description.
   this" without hand-walking xrefs. "Does main reach X?" needs `direction=callees` from
   main, which answers "what can this reach". Both directions are bounded by `max_depth` and
   `max_paths`. A function called from several sites is one edge, so a path is never listed
-  twice.
+  twice. Edges come from the core's call graph, and tail calls are included. Code pointers
+  passed as data (for example `_start` handing main to `__libc_start_main`) and imports
+  with no function object are not edges.
 - `rex_struct_from_access` only sees offset accesses analysis has already recorded, so
   run it after the dereferencing code is analyzed; it registers the inferred struct
   under an auto type id.
