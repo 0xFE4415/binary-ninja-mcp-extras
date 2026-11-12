@@ -888,6 +888,7 @@ def test_uidf_clear_clears_one_variable_across_sites() -> None:
         "variable": "var_10",
         "cleared": 2,
         "definition_sites": 3,
+        "analysis_complete": True,
     }
     assert view.update_analysis_calls == 1
     variable = _variable(main, "var_10")
@@ -933,6 +934,7 @@ def test_uidf_clear_all_for_a_function() -> None:
         "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
         "variable": None,
         "cleared": 2,
+        "analysis_complete": True,
     }
     assert main.user_var_values == {}
     assert view.transactions == ["open", "commit"]
@@ -970,6 +972,7 @@ def test_uidf_clear_needs_mlil_only_for_named_variables() -> None:
         "function": {"start": "0x2000", "name": "leaf", **NO_ALTERNATIVES},
         "variable": None,
         "cleared": 0,
+        "analysis_complete": True,
     }
 
 

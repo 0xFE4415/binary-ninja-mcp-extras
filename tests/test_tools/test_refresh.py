@@ -60,7 +60,12 @@ def _redo(view: FakeBinaryView) -> Any:
     return redo(_call(view))
 
 
-_WRITERS = [_annotate, _memory_write, _undo, _redo]
+def _uidf_clear(view: FakeBinaryView) -> Any:
+    _, uidf_clear = get_tool("rex_uidf_clear")
+    return uidf_clear(_call(view), 0x1100)
+
+
+_WRITERS = [_annotate, _memory_write, _undo, _redo, _uidf_clear]
 
 
 @pytest.mark.parametrize("write", _WRITERS, ids=lambda write: write.__name__)
@@ -69,7 +74,9 @@ def test_a_write_waits_for_the_functions_it_left_stale(write, clock: SteppingClo
     result = write(view)
     assert view.update_analysis_calls == 1
     assert result["analysis_complete"] is True
-    assert clock.sleeps == [float(tools._ANALYSIS_SLICE_MS)]
+    # The scan before the wait reads needs_update too, so the slice count varies by tool.
+    assert clock.sleeps
+    assert set(clock.sleeps) == {float(tools._ANALYSIS_SLICE_MS)}
 
 
 @pytest.mark.parametrize("write", _WRITERS, ids=lambda write: write.__name__)

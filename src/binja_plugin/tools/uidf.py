@@ -139,6 +139,7 @@ class _UidfClearAllResult(TypedDict):
     function: _ResolvedFunction
     variable: None
     cleared: int
+    analysis_complete: bool
 
 
 class _UidfClearVariableResult(TypedDict):
@@ -146,6 +147,7 @@ class _UidfClearVariableResult(TypedDict):
     variable: str
     cleared: int
     definition_sites: int
+    analysis_complete: bool
 
 
 class _UidfListResult(TypedDict):
@@ -495,8 +497,13 @@ def rex_uidf_clear(
     target = resolution.function
     if variable is None:
         cleared = _clear_every_value(bv, target)
-        bv.update_analysis()
-        return {"function": resolution.entry, "variable": None, "cleared": cleared}
+        analysis_complete = _refresh_analysis(bv, [target])
+        return {
+            "function": resolution.entry,
+            "variable": None,
+            "cleared": cleared,
+            "analysis_complete": analysis_complete,
+        }
     matches = _collect_mlil_definitions(target, variable)
     informed_sites: set[int] = set()
     for stored, sites in target.get_all_user_var_values().items():
@@ -515,12 +522,13 @@ def rex_uidf_clear(
                 ) from None
             if site.address in informed_sites:
                 cleared += 1
-    bv.update_analysis()
+    analysis_complete = _refresh_analysis(bv, [target])
     return {
         "function": resolution.entry,
         "variable": _truncate(variable),
         "cleared": cleared,
         "definition_sites": len(matches),
+        "analysis_complete": analysis_complete,
     }
 
 

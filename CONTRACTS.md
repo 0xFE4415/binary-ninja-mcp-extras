@@ -186,13 +186,13 @@ field below that a tool fills from an address is one. Fields marked `?` are pres
 some rows.
 
 - `analysis_complete` (`rex_annotate_many`, `rex_memory_write`, `rex_undo`, `rex_redo`,
-  `rex_uidf_set`, `rex_uidf_set_many`): the tool reanalyzes after a change and waits up to
+  `rex_uidf_set`, `rex_uidf_set_many`, `rex_uidf_clear`): the tool reanalyzes after a change and waits up to
   10 s for every function the change left stale. False means the deadline passed; wait
   with `rex_analysis_wait` before reading IL. True when nothing changed.
 - `rex_analysis_wait`: `completed`, `elapsed_ms`, `progress` (`{state, count, total}`),
   `function_count`, `in_flight` (`{start, name, analysis_time_ms}`, at most 10), and
   `truncated` (more in-flight functions than listed).
-- `rex_annotate_many`: `applied`, `failed`, `failed_count`, `total`, `analysis_complete`, and
+- `rex_annotate_many`: `applied`, `failed_count`, `total`, `analysis_complete`, and
   `results` rows `{addr, ok, function?, error?}`; `function` is the resolved function entry
   read after the batch applies, so it carries the new name and its `same_name`, present on
   every row that passed validation. A `comment` lands at the exact `addr` the item named; `name`
@@ -303,8 +303,8 @@ some rows.
   `failed_count`, `total`. `rex_type_library_import`: `library` (null when none loaded),
   `imported` of `{requested, resolved}`, `failed`, `applied`, `failed_count`, `total`.
 - `rex_uidf_clear`: `function`, `variable` (null when clearing the whole function),
-  `cleared`, and `definition_sites` when a variable is named. A failure at any site rolls back
-  the sites already cleared in that call. `rex_uidf_list`: `function` (resolved entry, null
+  `cleared`, `analysis_complete`, and, when a variable is named, `definition_sites`. A
+  failure at any site rolls back the sites already cleared in that call. `rex_uidf_list`: `function` (resolved entry, null
   when listing the whole view), `total`, `truncated`, and `values` of `{function, variable,
   definition_site, architecture, state, value}`, where each value's `function` is a plain
   function entry. `rex_uidf_set`: `function`, `variable`, `definition_site`, `value`
