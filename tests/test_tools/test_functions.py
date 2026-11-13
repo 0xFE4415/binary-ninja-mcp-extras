@@ -400,6 +400,7 @@ def test_call_paths_depth_shortcut_and_errors() -> None:
         "reachable": True,
         "paths": [[{"start": "0x1100", "name": "main"}]],
         "truncated": False,
+        "depth_limited": False,
         "explored": 1,
     }
     with pytest.raises(FakeToolError) as exc:
@@ -470,6 +471,7 @@ def test_call_paths_reports_one_path_per_intermediate_and_sorts_neighbors() -> N
             ]
         ],
         "truncated": False,
+        "depth_limited": False,
         "explored": 4,
     }
     # Neighbors are ordered by start address, not insertion order, in both directions.
@@ -606,3 +608,144 @@ def test_function_undefine_misses_keep_the_diagnosis_without_define_advice() -> 
         "function at 0x4000 exists but has not been analyzed yet; wait for analysis "
         "(rex_analysis_wait) or run bn_analysis_update"
     )
+
+
+def _callee_chain() -> FakeBinaryView:
+    root = FakeFunction("root", 0x1000, 0x1010)
+    mid = FakeFunction("mid", 0x2000, 0x2010)
+    leaf = FakeFunction("leaf", 0x3000, 0x3010)
+    far = FakeFunction("far", 0x4000, 0x4010)
+    root.callees = [mid]
+    mid.callees = [leaf]
+    leaf.callees = [far]
+    return FakeBinaryView(functions=[root, mid, leaf, far])
+
+
+def test_call_paths_flags_a_miss_caused_by_max_depth() -> None:
+    _, paths = get_tool("rex_call_paths")
+    limited = paths(_call(_callee_chain()), 0x1000, 0x4000, direction="callees", max_depth=2)
+    assert limited["reachable"] is False
+    assert limited["paths"] == []
+    assert limited["truncated"] is False
+    assert limited["depth_limited"] is True
+    deep_enough = paths(_call(_callee_chain()), 0x1000, 0x4000, direction="callees", max_depth=3)
+    assert deep_enough["reachable"] is True
+    assert deep_enough["depth_limited"] is False
+
+
+def test_call_paths_clean_miss_is_not_depth_limited() -> None:
+    root = FakeFunction("root", 0x1000, 0x1010)
+    mid = FakeFunction("mid", 0x2000, 0x2010)
+    island = FakeFunction("island", 0x5000, 0x5010)
+    root.callees = [mid]
+    view = FakeBinaryView(functions=[root, mid, island])
+    _, paths = get_tool("rex_call_paths")
+    result = paths(_call(view), 0x1000, 0x5000, direction="callees", max_depth=2)
+    assert result["reachable"] is False
+    assert result["depth_limited"] is False
+    shallow = paths(_call(view), 0x1000, 0x5000, direction="callees", max_depth=1)
+    assert shallow["reachable"] is False
+    assert shallow["depth_limited"] is False
+
+
+def test_call_paths_depth_limit_needs_an_unvisited_neighbor_or_the_target() -> None:
+    root = FakeFunction("root", 0x1000, 0x1010)
+    mid = FakeFunction("mid", 0x2000, 0x2010)
+    deeper = FakeFunction("deeper", 0x3000, 0x3010)
+    target = FakeFunction("target", 0x4000, 0x4010)
+    view = FakeBinaryView(functions=[root, mid, deeper, target])
+    _, paths = get_tool("rex_call_paths")
+
+    root.callees = [mid]
+    mid.callees = [deeper]
+    unvisited = paths(_call(view), 0x1000, 0x4000, direction="callees", max_depth=1)
+    assert unvisited["depth_limited"] is True
+
+    mid.callees = [root, mid]
+    visited_only = paths(_call(view), 0x1000, 0x4000, direction="callees", max_depth=1)
+    assert visited_only["reachable"] is False
+    assert visited_only["depth_limited"] is False
+
+    mid.callees = [root, target]
+    target_next = paths(_call(view), 0x1000, 0x4000, direction="callees", max_depth=1)
+    assert target_next["reachable"] is False
+    assert target_next["depth_limited"] is True
+
+    mid.callees = []
+    root.callees = [mid, deeper]
+    deeper.callees = [mid]
+    siblings = paths(_call(view), 0x1000, 0x4000, direction="callees", max_depth=1)
+    assert siblings["depth_limited"] is False
+
+
+def test_call_paths_flags_depth_limit_even_when_a_path_was_found() -> None:
+    root = FakeFunction("root", 0x1000, 0x1010)
+    mid = FakeFunction("mid", 0x2000, 0x2010)
+    leaf = FakeFunction("leaf", 0x3000, 0x3010)
+    root.callees = [leaf, mid]
+    mid.callees = [leaf]
+    view = FakeBinaryView(functions=[root, mid, leaf])
+    _, paths = get_tool("rex_call_paths")
+    shallow = paths(_call(view), 0x1000, 0x3000, direction="callees", max_depth=1, max_paths=5)
+    assert [[step["name"] for step in path] for path in shallow["paths"]] == [["root", "leaf"]]
+    assert shallow["depth_limited"] is True
+    full = paths(_call(view), 0x1000, 0x3000, direction="callees", max_depth=2, max_paths=5)
+    assert len(full["paths"]) == 2
+    assert full["depth_limited"] is False
+
+
+def test_call_paths_stops_checking_once_depth_limited() -> None:
+    root = FakeFunction("root", 0x1000, 0x1010)
+    first = FakeFunction("first", 0x2000, 0x2010)
+    second = FakeFunction("second", 0x3000, 0x3010)
+    beyond = FakeFunction("beyond", 0x4000, 0x4010)
+    target = FakeFunction("target", 0x5000, 0x5010)
+    root.callees = [first, second]
+    first.callees = [beyond]
+    second.callees = [beyond]
+    view = FakeBinaryView(functions=[root, first, second, beyond, target])
+    _, paths = get_tool("rex_call_paths")
+    result = paths(_call(view), 0x1000, 0x5000, direction="callees", max_depth=1)
+    assert result["reachable"] is False
+    assert result["depth_limited"] is True
+    assert result["explored"] == 1
+
+
+def _numbered_callee_graph(
+    node_count: int, edges: list[tuple[int, int]]
+) -> tuple[FakeBinaryView, list[int]]:
+    starts = [0x1000 + 0x10 * index for index in range(node_count)]
+    functions = [FakeFunction(f"f{index}", start, start + 8) for index, start in enumerate(starts)]
+    for caller, callee in edges:
+        functions[caller].callees.append(functions[callee])
+    return FakeBinaryView(functions=functions), starts
+
+
+def test_call_paths_depth_limited_with_a_dense_graph_and_a_path_cap_of_one() -> None:
+    edges = [
+        (5, 6), (6, 8), (1, 0), (5, 7), (0, 3), (0, 2), (5, 0), (3, 0), (4, 6), (8, 2),
+        (3, 5), (5, 5), (6, 3), (3, 7), (0, 3), (3, 3), (7, 2), (0, 7), (2, 2), (7, 8),
+        (5, 3), (5, 0), (1, 2), (2, 1), (1, 5), (6, 5), (8, 5), (3, 6), (1, 6), (5, 0),
+        (5, 7), (0, 2),
+    ]  # fmt: skip
+    view, starts = _numbered_callee_graph(9, edges)
+    _, paths = get_tool("rex_call_paths")
+    result = paths(_call(view), starts[2], starts[8], direction="callees", max_depth=1, max_paths=1)
+    assert result["reachable"] is False
+    assert result["paths"] == []
+    assert result["truncated"] is False
+    assert result["depth_limited"] is True
+
+
+def test_call_paths_depth_limited_ignores_visited_neighbors_of_other_skipped_nodes() -> None:
+    edges = [
+        (5, 3), (3, 1), (1, 0), (0, 3), (5, 3), (2, 5), (2, 5), (4, 5), (2, 3), (4, 5),
+        (1, 1), (0, 3), (3, 4), (1, 1), (1, 0), (3, 2), (3, 5), (3, 4), (1, 1), (0, 3),
+        (0, 3),
+    ]  # fmt: skip
+    view, starts = _numbered_callee_graph(6, edges)
+    _, paths = get_tool("rex_call_paths")
+    result = paths(_call(view), starts[5], starts[0], direction="callees", max_depth=1, max_paths=4)
+    assert result["reachable"] is False
+    assert result["truncated"] is False
+    assert result["depth_limited"] is True

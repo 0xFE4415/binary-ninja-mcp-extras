@@ -192,8 +192,9 @@ some rows.
   `rex_uidf_set`, `rex_uidf_set_many`, `rex_uidf_clear`): the tool reanalyzes after a change and
   waits up to 10 s for every function the change left stale. False means the deadline passed; wait
   with `rex_analysis_wait` before reading IL. True when nothing changed.
-- `rex_analysis_wait`: `completed`, `elapsed_ms`, `progress` (`{state, count, total}`),
-  `function_count`, `in_flight` (`{start, name, analysis_time_ms}`, at most 10), and
+- `rex_analysis_wait`: `timeout_ms` defaults to 10000. Returns `completed`, `elapsed_ms`,
+  `progress` (`{state, count, total}`), `function_count`,
+  `in_flight` (`{start, name, analysis_time_ms}`, at most 10), and
   `truncated` (more in-flight functions than listed).
 - `rex_annotate_many`: `applied`, `failed_count`, `total`, `analysis_complete`, and `results` rows
   `{addr, ok, function?, error?, prototype_name_ignored?}`; `function` is the resolved function
@@ -210,12 +211,18 @@ some rows.
 - `rex_binary_close`: `closed` (always true; a failed close raises `close_failed`) and
   `path`, the closed file's full filename as the core reports it (truncated).
 - `rex_call_paths`: `from_function` and `to_function` (resolved function entries for
-  `from_addr` and `to_addr`), `reachable`, `paths` (lists of function entries), `truncated`,
-  and `explored` (functions expanded during the search). `direction` defaults to `callers`.
-  Both directions are bounded by `max_depth` and `max_paths`. Edges come from the core's call
-  graph and include tail calls. A function called from several sites is one edge, so a path
-  is never listed twice. Code pointers passed as data and imports with no function object are
-  not edges.
+  `from_addr` and `to_addr`), `reachable`, `paths` (lists of function entries), `truncated`
+  (reached the `max_paths` cap; more paths may exist), `depth_limited`, and `explored`
+  (functions expanded during the search). `depth_limited` is true when the search stopped
+  expanding at `max_depth` a function that had a neighbor not yet visited (the target counts,
+  because it is never marked visited), whether or not paths were found. `reachable` false
+  with `depth_limited` false means no path exists in the core's call graph; with it true,
+  raise `max_depth`. `depth_limited` is only meaningful when `truncated` is false, because
+  the search may stop before it reaches depth-limited nodes. `direction` defaults to
+  `callers`. Both directions are bounded by `max_depth` and `max_paths`. Edges come from the
+  core's call graph and include tail calls. A function called from several sites is one edge,
+  so a path is never listed twice. Code pointers passed as data and imports with no function
+  object are not edges.
 - `rex_component_add_functions`: `path`, `applied`, `failed_count`, `total`,
   and `results` rows `{start, name, also_containing, same_name, added}`.
 - `rex_component_create`: `path`, `display_name`, `guid`.
