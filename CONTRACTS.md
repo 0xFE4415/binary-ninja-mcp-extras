@@ -363,7 +363,8 @@ some rows.
 - `rex_memory_write` raises `write_failed` when the core writes fewer bytes than requested,
   usually because the address is unmapped or not backed by the file. The message gives the
   address and the requested and written byte counts, and says nothing was written: the write
-  runs in one undoable transaction that reverts, so a partial write leaves no bytes behind.
+  runs in one undoable transaction that reverts, so a short write is reverted as a whole and
+  leaves no bytes behind.
   It raises `relocation_overlap` when the range overlaps a relocation, pointing to
   `rex_relocation_at`; there is no way to force such a write.
 - A regular expression that does not compile returns `invalid_regex`; the message is

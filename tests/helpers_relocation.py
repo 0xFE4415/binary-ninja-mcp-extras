@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import types
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from helpers_view import FakeCoreSymbol
 
 
 class RelocationWriteException(Exception):
@@ -43,7 +46,7 @@ class FakeRelocation:
         info: FakeRelocationInfo,
         target: int,
         reloc: int,
-        symbol: Any = None,
+        symbol: FakeCoreSymbol | None = None,
     ) -> None:
         self.info = info
         self.target = target

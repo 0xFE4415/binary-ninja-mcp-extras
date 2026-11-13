@@ -726,7 +726,9 @@ class FakeBinaryView:
     def write(self, address: int, data: bytes, except_on_relocation: bool = True) -> int:
         """Mirror BinaryView.write: raise over a relocation, else write the mapped prefix."""
         if except_on_relocation and self.range_contains_relocation(address, len(data)):
-            raise RelocationWriteException("Attempting to write to a location with a relocation")
+            raise RelocationWriteException(
+                "Attempting to write to a location which has a relocation"
+            )
         mapped = 0
         while mapped < len(data) and self.is_valid_offset(address + mapped):
             mapped += 1
