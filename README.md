@@ -1,4 +1,4 @@
-# binja-plugin
+# Binja MCP Extras
 
 Extra MCP tools for Binary Ninja's built-in MCP server. The stock server exposes its
 `bn_*` tools, and this plugin registers more alongside them, covering the moves an
