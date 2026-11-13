@@ -14,6 +14,10 @@ from dataclasses import dataclass
 from typing import Any, override
 
 from helpers_dataflow import FakeMLILInstructions
+from helpers_relocation import (
+    FakeRelocation,
+    RelocationWriteException,
+)
 from helpers_symbol import (
     FakeSymbol,
     FakeSymbolBinding,
@@ -230,47 +234,6 @@ class FakeCoreSymbol:
 
     def __init__(self, full_name: str) -> None:
         self.full_name = full_name
-
-
-class FakeRelocationInfo:
-    """Mirrors the RelocationInfo fields rex_relocation_at reads.
-
-    ``type`` is a namespace with ``name`` like the other fakes, mirroring the enum
-    member the real core hands back.
-    """
-
-    def __init__(
-        self,
-        *,
-        type_name: str,
-        address: int,
-        size: int = 8,
-        addend: int = 0,
-        implicit_addend: bool = False,
-        pc_relative: bool = False,
-    ) -> None:
-        self.type = types.SimpleNamespace(name=type_name)
-        self.address = address
-        self.size = size
-        self.addend = addend
-        self.implicit_addend = implicit_addend
-        self.pc_relative = pc_relative
-
-
-class FakeRelocation:
-    """Mirrors the Relocation fields rex_relocation_at reads."""
-
-    def __init__(
-        self,
-        info: FakeRelocationInfo,
-        target: int,
-        reloc: int,
-        symbol: FakeCoreSymbol | None = None,
-    ) -> None:
-        self.info = info
-        self.target = target
-        self.reloc = reloc
-        self.symbol = symbol
 
 
 class FakeAnalysisState(enum.IntEnum):
@@ -752,9 +715,24 @@ class FakeBinaryView:
                 return blob[offset : offset + length]
         return b""
 
-    def write(self, address: int, data: bytes) -> int:
-        self.written.append((address, bytes(data)))
-        return len(data)
+    def range_contains_relocation(self, addr: int, size: int) -> bool:
+        """Mirror BinaryView.range_contains_relocation: any relocation overlaps the range."""
+        return any(
+            relocation.info.address < addr + size
+            and addr < relocation.info.address + relocation.info.size
+            for relocation in self._relocations
+        )
+
+    def write(self, address: int, data: bytes, except_on_relocation: bool = True) -> int:
+        """Mirror BinaryView.write: raise over a relocation, else write the mapped prefix."""
+        if except_on_relocation and self.range_contains_relocation(address, len(data)):
+            raise RelocationWriteException("Attempting to write to a location with a relocation")
+        mapped = 0
+        while mapped < len(data) and self.is_valid_offset(address + mapped):
+            mapped += 1
+        if mapped:
+            self.written.append((address, bytes(data[:mapped])))
+        return mapped
 
     def get_functions_containing(self, address: int) -> list[FakeFunction]:
         return [f for f in self.functions if f.contains(address)]
@@ -877,9 +855,11 @@ class FakeBinaryView:
         modelable here. Metadata and type-library writes push nothing and are not wrapped.
         """
         self.transactions.append("open")
+        written_before = list(self.written)
         try:
             yield
         except Exception:
+            self.written[:] = written_before
             self.transactions.append("revert")
             raise
         self.transactions.append("commit")
