@@ -256,6 +256,12 @@ def test_help_details_the_annotate_items_schema() -> None:
     assert items["type"] == "array"
     assert items["items"]["properties"]["addr"]["type"] == ["integer", "string"]
     assert items["items"]["required"] == ["addr"]
+    properties = items["items"]["properties"]
+    assert properties["name"]["description"] == "new function name"
+    assert properties["comment"]["description"] == (
+        "comment at exactly addr; an empty string clears it"
+    )
+    assert "function prototype" in properties["prototype"]["description"]
 
 
 def test_help_details_the_uidf_batch_items_schema() -> None:

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated, NotRequired, TypedDict
 
 from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
+from binaryninja.enums import TypeClass
 from binaryninja.function import Function
 from binaryninja.types import Symbol
 
@@ -39,9 +40,24 @@ _ANNOTATE_ITEMS_SCHEMA: dict[str, object] = {
             "type": ["integer", "string"],
             "description": "address expression at or inside the function to annotate",
         },
-        "name": {"type": "string", "minLength": 1, "maxLength": _MAX_ANNOTATE_NAME_CHARS},
-        "comment": {"type": "string", "maxLength": _MAX_ANNOTATE_COMMENT_CHARS},
-        "prototype": {"type": "string", "minLength": 1, "maxLength": _MAX_ANNOTATE_PROTOTYPE_CHARS},
+        "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": _MAX_ANNOTATE_NAME_CHARS,
+            "description": "new function name",
+        },
+        "comment": {
+            "type": "string",
+            "maxLength": _MAX_ANNOTATE_COMMENT_CHARS,
+            "description": "comment at exactly addr; an empty string clears it",
+        },
+        "prototype": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": _MAX_ANNOTATE_PROTOTYPE_CHARS,
+            "description": "function prototype such as 'int name(int a, int b)'; a name inside"
+            " it is not applied, use name",
+        },
     },
     "required": ["addr"],
 }
@@ -52,6 +68,7 @@ class _AnnotationRow(TypedDict):
     ok: bool
     function: NotRequired[_ResolvedFunction]
     error: NotRequired[str]
+    prototype_name_ignored: NotRequired[str]
 
 
 class _AnnotateManyResult(TypedDict):
@@ -80,6 +97,7 @@ class _AnnotationPlan:
     name: str | None = None
     comment: str | None = None
     parsed_type: Type | None = None
+    prototype_name_ignored: str | None = None
 
 
 def _annotate_item_error(item: object, message: str) -> _AnnotationRow:
@@ -146,6 +164,10 @@ def _annotate_fields(item: dict[str, object], address: int) -> _AnnotationFields
     )
     if error is not None:
         return _annotate_function_error(address, error)
+    if name is None and comment is None and prototype is None:
+        return _annotate_function_error(
+            address, "at least one of name, comment, prototype is required"
+        )
     return _AnnotationFields(
         name=_optional_text(name),
         comment=_optional_text(comment),
@@ -183,6 +205,23 @@ def _annotate_apply_plans(bv: BinaryView, staged: list[_AnnotationPlan]) -> None
         raise mcp.ToolError("annotate_failed", f"batch rolled back: {error}") from None
 
 
+def _annotate_parse_prototype(
+    bv: BinaryView, address: int, fields: _AnnotationFields
+) -> tuple[Type, str | None] | _AnnotationRow:
+    """The function type of the item's prototype and the name it carried but did not apply."""
+    try:
+        parsed_type, parsed_name = bv.parse_type_string(str(fields.prototype))
+    except Exception as error:
+        return _annotate_function_error(address, f"bad type: {_truncate(str(error))}")
+    if parsed_type.type_class != TypeClass.FunctionTypeClass:
+        return _annotate_function_error(
+            address,
+            "prototype must be a function prototype such as 'int name(int a, int b)',"
+            f" got {parsed_type.type_class.name}",
+        )
+    return parsed_type, str(parsed_name) if fields.name is None and parsed_name else None
+
+
 def _annotate_resolve(
     call: mcp.ToolCall, bv: BinaryView, item: object
 ) -> _AnnotationRow | _AnnotationPlan:
@@ -210,11 +249,12 @@ def _annotate_resolve(
     if not isinstance(fields, _AnnotationFields):
         return fields
     parsed_type: Type | None = None
+    ignored_name: str | None = None
     if fields.prototype is not None:
-        try:
-            parsed_type, _ = bv.parse_type_string(fields.prototype)
-        except Exception as error:
-            return _annotate_function_error(address, f"bad type: {_truncate(str(error))}")
+        parsed = _annotate_parse_prototype(bv, address, fields)
+        if not isinstance(parsed, tuple):
+            return parsed
+        parsed_type, ignored_name = parsed
     return _AnnotationPlan(
         function=_resolve_containing(bv, containing).function,
         containing=containing,
@@ -222,6 +262,7 @@ def _annotate_resolve(
         name=fields.name,
         comment=fields.comment,
         parsed_type=parsed_type,
+        prototype_name_ignored=ignored_name,
     )
 
 
@@ -229,11 +270,14 @@ def _applied_row(bv: BinaryView, plan: _AnnotationPlan) -> _AnnotationRow:
     """Row for an applied plan, read after the batch so it shows the function's new name."""
     # A comment lands at the named address, other fields at the function start; the row echoes it.
     annotated = plan.address if plan.comment is not None else plan.function.start
-    return {
+    row: _AnnotationRow = {
         "addr": hex(annotated),
         "ok": True,
         "function": _resolved_entry(bv, plan.function, plan.containing),
     }
+    if plan.prototype_name_ignored is not None:
+        row["prototype_name_ignored"] = plan.prototype_name_ignored
+    return row
 
 
 @mcp.tool(destructive=True)

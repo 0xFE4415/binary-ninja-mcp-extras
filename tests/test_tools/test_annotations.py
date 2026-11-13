@@ -13,6 +13,8 @@ from helpers_symbol import FakeSymbolBinding, FakeSymbolType
 from helpers_view import (
     FakeBinaryView,
     FakeFunction,
+    FakeType,
+    FakeTypeClass,
     undo_entry,
 )
 
@@ -86,7 +88,7 @@ def test_annotate_many_applies_name_comment_and_prototype_in_one_transaction() -
     assert main.user_type is None
     assert helper.name == "helper"
     assert helper.get_comment_at(0x2000) == ""
-    assert helper.user_type == "int helper(int fd)"
+    assert str(helper.user_type) == "int helper(int fd)"
     # One transaction for the whole batch: a single undo step, committed not reverted.
     assert view.transactions == ["open", "commit"]
 
@@ -238,7 +240,7 @@ def test_annotate_many_rejects_the_removed_type_alias_as_an_unknown_field() -> N
 def test_annotate_many_rejects_an_unparsable_prototype_before_applying_anything() -> None:
     view = _annotate_view()
     main, _helper = view.functions
-    view.parse_type_error = SyntaxError("expected ';'")
+    view.parse_type_results["int main(void)"] = SyntaxError("expected ';'")
     _, annotate = get_tool("rex_annotate_many")
     result = annotate(
         FakeParsingToolCall(view),
@@ -358,7 +360,7 @@ def test_annotate_many_accepts_strings_exactly_at_the_caps() -> None:
     assert main.name == "n" * annotations_tools._MAX_ANNOTATE_NAME_CHARS
     assert main.get_comment_at(0x1100) == "c" * annotations_tools._MAX_ANNOTATE_COMMENT_CHARS
     assert main.comment == ""
-    assert main.user_type == "t" * annotations_tools._MAX_ANNOTATE_PROTOTYPE_CHARS
+    assert str(main.user_type) == "t" * annotations_tools._MAX_ANNOTATE_PROTOTYPE_CHARS
 
 
 def test_annotate_many_lands_a_comment_at_the_exact_address_given() -> None:
@@ -406,7 +408,7 @@ def test_annotate_many_echoes_the_function_start_for_function_level_fields() -> 
         },
     ]
     assert main.name == "renamed"
-    assert main.user_type == "int main(void)"
+    assert str(main.user_type) == "int main(void)"
 
 
 def test_annotate_many_collapses_repeated_items_onto_one_function_last_write_wins() -> None:
@@ -523,3 +525,69 @@ def test_annotate_many_reports_each_function_as_it_is_after_the_batch() -> None:
             "same_name": [{"start": "0x1100", "name": "parse_config"}],
         },
     ]
+
+
+def test_annotate_many_rejects_a_prototype_that_is_not_a_function_type() -> None:
+    view = _annotate_view()
+    main, helper = view.functions
+    view.parse_type_results["int"] = (
+        FakeType("", "int", type_class=FakeTypeClass.IntegerTypeClass),
+        "",
+    )
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [
+            {"addr": "0x1100", "name": "renamed", "prototype": "int"},
+            {"addr": "0x2000", "prototype": "int helper(int fd)"},
+        ],
+    )
+    assert result["applied"] == 1
+    assert result["failed_count"] == 1
+    assert result["results"][0] == {
+        "addr": "0x1100",
+        "ok": False,
+        "error": "prototype must be a function prototype such as 'int name(int a, int b)',"
+        " got IntegerTypeClass",
+    }
+    assert result["results"][1]["ok"] is True
+    assert main.name == "main"
+    assert main.user_type is None
+    assert str(helper.user_type) == "int helper(int fd)"
+
+
+def test_annotate_many_rejects_an_item_with_nothing_to_apply() -> None:
+    view = _annotate_view()
+    main, _helper = view.functions
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [{"addr": "0x1100"}, {"addr": "0x1100", "name": None}, {"addr": "0x1100", "comment": ""}],
+    )
+    message = "at least one of name, comment, prototype is required"
+    assert result["results"][0] == {"addr": "0x1100", "ok": False, "error": message}
+    assert result["results"][1] == {"addr": "0x1100", "ok": False, "error": message}
+    assert result["results"][2]["ok"] is True
+    assert (result["applied"], result["failed_count"]) == (1, 2)
+    assert main.get_comment_at(0x1100) == ""
+
+
+def test_annotate_many_reports_a_name_the_prototype_carried_but_did_not_apply() -> None:
+    view = _annotate_view()
+    main, helper = view.functions
+    named = FakeType("", "int proto_name(int a)", type_class=FakeTypeClass.FunctionTypeClass)
+    view.parse_type_results["int proto_name(int a)"] = (named, "proto_name")
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [
+            {"addr": "0x1100", "prototype": "int proto_name(int a)"},
+            {"addr": "0x2000", "name": "chosen", "prototype": "int proto_name(int a)"},
+            {"addr": "0x2000", "prototype": "int(int a)"},
+        ],
+    )
+    assert result["results"][0]["prototype_name_ignored"] == "proto_name"
+    assert "prototype_name_ignored" not in result["results"][1]
+    assert "prototype_name_ignored" not in result["results"][2]
+    assert main.name == "main"
+    assert helper.name == "chosen"
