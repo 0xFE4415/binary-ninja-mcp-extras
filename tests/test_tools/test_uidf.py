@@ -141,6 +141,7 @@ def test_uidf_set_many_applies_valid_items_and_reanalyzes_once(
     )
     assert result["applied"] == 2
     assert result["failed"] == 2
+    assert result["failed_count"] == 2
     assert result["total"] == 4
     assert result["results"][0] == {
         "index": 0,

@@ -128,6 +128,7 @@ class _UidfSetManyResult(TypedDict):
     function: _ResolvedFunction
     applied: int
     failed: int
+    failed_count: int
     total: int
     results: list[_UidfRow]
     analysis_complete: bool
@@ -473,6 +474,7 @@ def rex_uidf_set_many(
         "function": resolution.entry,
         "applied": applied,
         "failed": failed,
+        "failed_count": failed,
         "total": len(results),
         "results": results,
         "analysis_complete": analysis_complete,

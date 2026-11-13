@@ -305,8 +305,9 @@ some rows.
   null when listing the whole view), `total`, `truncated`, and `values` of `{function, variable,
   definition_site, architecture, state, value}`, where each value's `function` is a plain function
   entry. `rex_uidf_set`: `function`, `variable`, `definition_site`, `value` (`{state, rendered}`),
-  `analysis_complete`, `lines`, `truncated`. `rex_uidf_set_many`: `function`, `applied`, `failed`,
-  `total`, `results` of `{index, variable, ok, definition_site?, value?, error?}`,
+  `analysis_complete`, `lines`, `truncated`. `rex_uidf_set_many`: `function`, `applied`,
+  `failed_count`, `failed` (an alias of `failed_count`, kept), `total`,
+  `results` of `{index, variable, ok, definition_site?, value?, error?}`,
   `analysis_complete`, `lines`, `truncated`.
 - `rex_xrefs_to`: `total`, `truncated`, `code_refs` of `{function_start, function_name, arch,
   address, kind}` (`kind` is `call` or `code`; the first three are null outside a function),

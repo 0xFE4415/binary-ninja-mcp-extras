@@ -189,6 +189,17 @@ def test_help_fails_on_an_unknown_category_and_lists_the_valid_ones() -> None:
     assert exc.value.message == f"no category named 'nope'; categories: {expected_categories}"
 
 
+def test_help_truncates_a_long_unknown_category_name_in_the_error() -> None:
+    with pytest.raises(FakeToolError) as exc:
+        _help(category="c" * 600)
+    assert exc.value.code == "unknown_category"
+    expected_categories = ", ".join([*_CATEGORY_USE_WHEN, _UNCATEGORIZED])
+    expected_echo = "c" * 512 + "... [88 chars truncated]"
+    assert exc.value.message == (
+        f"no category named '{expected_echo}'; categories: {expected_categories}"
+    )
+
+
 @pytest.mark.parametrize("category", ["strings", "nope"])
 def test_help_rejects_a_tool_name_together_with_any_category(category: str) -> None:
     with pytest.raises(FakeToolError) as exc:
@@ -305,6 +316,15 @@ def test_help_fails_on_an_unknown_name_and_lists_the_valid_ones() -> None:
     registered = ", ".join(sorted(tool.name for tool in FakeTool.list()))
     expected = f"no tool named 'rex_nope'; registered tools: {registered}"
     assert exc.value.message == expected
+
+
+def test_help_truncates_a_long_unknown_tool_name_in_the_error() -> None:
+    with pytest.raises(FakeToolError) as exc:
+        _help("t" * 600)
+    assert exc.value.code == "unknown_tool"
+    registered = ", ".join(sorted(tool.name for tool in FakeTool.list()))
+    expected_echo = "t" * 512 + "... [88 chars truncated]"
+    assert exc.value.message == f"no tool named '{expected_echo}'; registered tools: {registered}"
 
 
 def test_help_uncategorized_category_reports_the_uncategorized_use_when() -> None:
