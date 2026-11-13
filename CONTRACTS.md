@@ -98,7 +98,10 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
   count.
   `offset`/`next_offset` count functions in the view, not matches; pass the cursor back as
   `offset` and page while either flag is set. A call renders at most `max_functions`
-  functions.
+  functions. `limit=0` and `max_functions=0` are probes: `max_functions=0` scans nothing and
+  returns `scan_incomplete` with `next_offset` equal to `offset`, and `limit=0` stops at the
+  first matching function with `next_offset` pointing at it. A paging loop must pass at least 1
+  for both, or it never advances.
 - Returned strings usually keep 512 characters, then append `... [N chars truncated]`; the
   suffix is additional. Larger caps are `rex_eval_python.stdout` (65,536), `result` (16,384),
   `rex_kv_get.value` (65,536), and `rex_string_read_at.value` (up to 4,096 via `max_chars`,
@@ -220,9 +223,10 @@ some rows.
 - `rex_decompile_many`: `functions` of `{index, start, name, also_containing, same_name,
   lines, truncated}` and `errors` of `{index, address, error: {code, message}}`; `index` is
   the position in the request; every entry lands in exactly one list, and an address that
-  fails to resolve is an `errors` row. Only a non-list `functions` or a count outside 1-1024
-  raises for the whole call. `lines` starts with the function's signature, then the HLIL
-  body; the signature counts toward `max_lines`.
+  fails to resolve is an `errors` row, as is a function with no HLIL (`no_hlil`: skipped
+  analysis, which waiting will not fix, or pending analysis, which a retry may). Only a
+  non-list `functions` or a count outside 1-1024 raises for the whole call. `lines` starts with
+  the function's signature, then the HLIL body; the signature counts toward `max_lines`.
 - `rex_disasm_at`: `function`, `instructions` (`{address, text}`), `truncated`.
   `rex_disasm_many`: `windows` of `{address, index, function, instructions, truncated}`,
   `errors` of `{index, address, error: {code, message}}`, `truncated`, `next_offset` (an

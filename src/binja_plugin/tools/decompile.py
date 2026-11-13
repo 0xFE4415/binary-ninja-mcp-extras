@@ -12,6 +12,7 @@ from binja_plugin.tools import (
     _disasm_window,
     _drop,
     _ItemError,
+    _missing_il_error,
     _name_filter,
     _parse_address_entry,
     _render_function_disassembly,
@@ -158,6 +159,16 @@ def rex_decompile_many(
             )
             continue
         function = resolution.function
+        if function.hlil is None:
+            missing = _missing_il_error(function, "HLIL", "no_hlil")
+            errors.append(
+                {
+                    "index": index,
+                    "address": _truncate(str(expression)),
+                    "error": {"code": missing.code, "message": missing.message},
+                }
+            )
+            continue
         body, truncated = _render_hlil_lines(function.hlil, max_lines - 1)
         lines = [_truncate(str(function)), *body]
         rendered.append(
@@ -275,8 +286,8 @@ def rex_hlil_grep(
 
     :param regex: Regular expression applied to every rendered HLIL line.
     :param function_filter: Case-insensitive regex matched against function names.
-    :param limit: Maximum matching functions to return.
-    :param max_functions: Maximum functions to scan before stopping.
+    :param limit: Maximum matching functions to return; 0 only probes, page with at least 1.
+    :param max_functions: Maximum functions to scan; 0 only probes, page with at least 1.
     :param offset: Functions to skip before scanning starts.
     :param context_before: HLIL lines included before each match.
     :param context_after: HLIL lines included after each match.

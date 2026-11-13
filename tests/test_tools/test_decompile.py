@@ -15,6 +15,7 @@ from helpers import (
     plain_gap_message,
 )
 from helpers_view import (
+    FakeAnalysisSkipReason,
     FakeBasicBlock,
     FakeBinaryView,
     FakeDisassemblyLine,
@@ -623,24 +624,54 @@ def test_decompile_many_truncates_lines_and_echoes() -> None:
     assert signature.startswith("int32_t f(b") and signature.endswith(" chars truncated]")
 
 
-def test_decompile_many_renders_unlifted_functions_as_empty() -> None:
-    # A function can contain addresses without having lifted HLIL; that renders the
-    # signature alone, not an error and not a truncation.
+def test_decompile_many_reports_a_pending_function_without_hlil_as_an_error() -> None:
     view = _decompile_view()
     _, decompile = get_tool("rex_decompile_many")
     assert decompile(FakeParsingToolCall(view), ["0x3000"]) == {
-        "functions": [
+        "functions": [],
+        "errors": [
             {
-                "start": "0x3000",
-                "name": "sink",
-                **NO_ALTERNATIVES,
                 "index": 0,
-                "lines": ["int32_t sink()"],
-                "truncated": False,
+                "address": "0x3000",
+                "error": {
+                    "code": "no_hlil",
+                    "message": (
+                        "function sink has no HLIL yet; "
+                        "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) "
+                        "and retry"
+                    ),
+                },
             }
         ],
-        "errors": [],
     }
+
+
+def test_decompile_many_reports_a_skipped_function_without_hlil_as_an_error() -> None:
+    skipped = FakeFunction(
+        "dup_leaf",
+        0x4000,
+        0x4010,
+        analysis_skipped=True,
+        analysis_skip_reason=FakeAnalysisSkipReason.AlwaysSkipReason,
+    )
+    view = FakeBinaryView(functions=[_decompile_view().functions[0], skipped])
+    _, decompile = get_tool("rex_decompile_many")
+    result = decompile(FakeParsingToolCall(view), ["0x1100", "0x4000"])
+    assert [entry["index"] for entry in result["functions"]] == [0]
+    assert result["errors"] == [
+        {
+            "index": 1,
+            "address": "0x4000",
+            "error": {
+                "code": "no_hlil",
+                "message": (
+                    "function dup_leaf has no HLIL: its analysis is skipped "
+                    "(its analysis_skip_override always skips it); "
+                    "waiting for analysis will not produce one"
+                ),
+            },
+        }
+    ]
 
 
 def test_decompile_many_reports_a_bad_entry_per_item_and_renders_the_rest() -> None:
