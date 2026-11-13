@@ -382,6 +382,7 @@ def install_fake_binaryninja() -> None:
         ("highlevelil", hlil_module),
     ):
         setattr(package, attribute, module)
+    setattr(package, "user_directory", lambda: str(Path.home() / ".binaryninja"))
     setattr(package, "Type", FakeType)
     setattr(package, "TypeLibrary", FakeTypeLibrary)
 

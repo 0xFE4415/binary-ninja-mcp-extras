@@ -17,7 +17,7 @@ from itertools import islice
 from pathlib import Path
 from typing import Literal, NamedTuple, NoReturn, TypedDict, TypeIs
 
-from binaryninja import mcp
+from binaryninja import mcp, user_directory
 from binaryninja.binaryview import BinaryView
 from binaryninja.enums import AnalysisSkipReason, AnalysisState
 from binaryninja.function import Function
@@ -36,8 +36,16 @@ _MAX_RESOLUTION_ALTERNATIVES = 64
 _ANALYSIS_SLICE_MS = 100
 _MAX_ANALYSIS_WAIT_MS = 10000
 
+
+def _default_export_root() -> Path:
+    user_root = user_directory()
+    if user_root is None:
+        return Path.home() / ".binaryninja" / "exports"
+    return Path(user_root) / "exports"
+
+
 # Export sweeps write to one fixed directory and echo only a summary.
-_EXPORT_ROOT = Path.home() / ".binaryninja" / "exports"
+_EXPORT_ROOT = _default_export_root()
 _MAX_EXPORT_COMPONENT_BYTES = 255
 _MAX_EXPORT_FILE_BYTES = 4 * 1024 * 1024
 

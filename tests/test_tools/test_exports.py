@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from helpers import (
     DIRECTORY_NAME_MESSAGE,
     NO_ALTERNATIVES,
+    FakeDisasmFunction,
+    FakeTool,
     FakeToolError,
     _call,
     _disasm_view,
@@ -14,12 +17,20 @@ from helpers import (
     plain_gap_message,
 )
 from helpers_view import (
+    FakeBasicBlock,
     FakeBinaryView,
     FakeSymbol,
 )
 
 from binja_plugin import tools
 from binja_plugin.tools import exports
+
+
+def get_tool_schema(name: str) -> dict[str, Any]:
+    for tool in FakeTool.list():
+        if tool.name == name:
+            return tool.input_schema
+    raise KeyError(name)
 
 
 def test_export_disasm_writes_the_window_to_a_file(
@@ -29,7 +40,14 @@ def test_export_disasm_writes_the_window_to_a_file(
     view = _disasm_view()
     _, export = get_tool("rex_export_disasm")
     result = export(_call(view), 0x1104, filename="main.txt")
-    expected = "push rbp\nmov rbp, rsp\nsub rsp, 0x20\nmov eax, 1\nleave\nret\n"
+    expected = (
+        "0x1100  push rbp\n"
+        "0x1101  mov rbp, rsp\n"
+        "0x1104  sub rsp, 0x20\n"
+        "0x1108  mov eax, 1\n"
+        "0x110d  leave\n"
+        "0x110e  ret\n"
+    )
     assert result == {
         "function": {"start": "0x1100", "name": "main", **NO_ALTERNATIVES},
         "path": str((root / "main.txt").resolve()),
@@ -50,7 +68,8 @@ def test_export_disasm_creates_nested_export_root(
     result = export(_call(_disasm_view()), 0x1104, filename="main.txt")
     assert Path(result["path"]) == root / "main.txt"
     assert (root / "main.txt").read_bytes() == (
-        b"push rbp\nmov rbp, rsp\nsub rsp, 0x20\nmov eax, 1\nleave\nret\n"
+        b"0x1100  push rbp\n0x1101  mov rbp, rsp\n0x1104  sub rsp, 0x20\n"
+        b"0x1108  mov eax, 1\n0x110d  leave\n0x110e  ret\n"
     )
 
 
@@ -64,7 +83,7 @@ def test_export_disasm_caps_the_window_at_max_lines(
     clipped = export(_call(view), 0x1101, before=2, after=1, max_lines=2, filename="clip.txt")
     assert clipped["lines"] == 2
     assert clipped["truncated"] is True
-    assert (root / "clip.txt").read_bytes() == b"push rbp\nmov rbp, rsp\n"
+    assert (root / "clip.txt").read_bytes() == b"0x1100  push rbp\n0x1101  mov rbp, rsp\n"
     # Exactly at max_lines nothing is reported as truncated.
     exact = export(_call(view), 0x1104, max_lines=6, filename="full.txt")
     assert exact["lines"] == 6
@@ -159,31 +178,30 @@ def test_export_disasm_shrinks_to_the_byte_cap(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     root = _use_export_root(monkeypatch, tmp_path)
-    # 36 bytes hold exactly the first three lines; the fourth ("mov eax, 1\n") would
-    # push the file to 47 bytes, so it and everything after it are dropped.
-    monkeypatch.setattr(tools, "_MAX_EXPORT_FILE_BYTES", 36)
+    expected = b"0x1100  push rbp\n0x1101  mov rbp, rsp\n0x1104  sub rsp, 0x20\n"
+    monkeypatch.setattr(tools, "_MAX_EXPORT_FILE_BYTES", len(expected))
     view = _disasm_view()
     _, export = get_tool("rex_export_disasm")
     result = export(_call(view), 0x1104, filename="shrink.txt")
-    expected = b"push rbp\nmov rbp, rsp\nsub rsp, 0x20\n"
     assert result["lines"] == 3
     assert result["truncated"] is True
     assert result["bytes_written"] == len(expected)
     assert (root / "shrink.txt").read_bytes() == expected
 
-    monkeypatch.setattr(tools, "_MAX_EXPORT_FILE_BYTES", len(b"push rbp\n"))
+    first_line = b"0x1100  push rbp\n"
+    monkeypatch.setattr(tools, "_MAX_EXPORT_FILE_BYTES", len(first_line))
     exact = export(_call(view), 0x1104, filename="exact.txt")
     assert exact["lines"] == 1
-    assert exact["bytes_written"] == len(b"push rbp\n")
+    assert exact["bytes_written"] == len(first_line)
     assert exact["truncated"] is True
-    assert (root / "exact.txt").read_bytes() == b"push rbp\n"
+    assert (root / "exact.txt").read_bytes() == first_line
 
 
 def test_export_disasm_rejects_a_single_line_over_the_cap(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     root = _use_export_root(monkeypatch, tmp_path)
-    # Even the first line ("push rbp\n" is 9 bytes) cannot fit under an 8-byte cap, so
+    # Even the first line ("0x1100  push rbp\n" is 17 bytes) cannot fit under 8 bytes, so
     # shrinking from the end could never produce a file: reject instead of writing one.
     monkeypatch.setattr(tools, "_MAX_EXPORT_FILE_BYTES", 8)
     view = _disasm_view()
@@ -665,3 +683,75 @@ def test_a_symlink_to_a_directory_inside_the_root_is_a_directory_name_or_a_paren
     result = export(_call(_disasm_view()), 0x1104, filename="inner_link/out.txt")
     assert result["path"] == str((root / "inner_dir" / "out.txt").resolve())
     assert (root / "inner_dir" / "out.txt").exists()
+
+
+def test_export_disasm_max_lines_covers_the_full_inline_window() -> None:
+    assert exports._MAX_EXPORT_DISASM_LINES == 2 * tools._MAX_DISASM_CONTEXT + 1 == 8193
+    schema = get_tool_schema("rex_export_disasm")["properties"]["max_lines"]
+    assert schema["maximum"] == 8193
+    assert schema["minimum"] == 1
+    assert schema["default"] == 200
+
+
+def test_export_disasm_writes_a_full_inline_window_without_truncation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    count = 2 * tools._MAX_DISASM_CONTEXT + 1
+    start = 0x400000
+    function = FakeDisasmFunction(
+        "big",
+        start,
+        start + count,
+        blocks=[FakeBasicBlock([(start + index, "nop") for index in range(count)])],
+    )
+    _, export = get_tool("rex_export_disasm")
+    result = export(
+        _call(FakeBinaryView(functions=[function])),
+        start + tools._MAX_DISASM_CONTEXT,
+        before=tools._MAX_DISASM_CONTEXT,
+        after=tools._MAX_DISASM_CONTEXT,
+        max_lines=exports._MAX_EXPORT_DISASM_LINES,
+        filename="big.txt",
+    )
+    assert result["lines"] == count
+    assert result["truncated"] is False
+    written = (root / "big.txt").read_text().splitlines()
+    assert written[0] == "0x400000  nop"
+    assert written[-1] == f"{hex(start + count - 1)}  nop"
+
+
+def test_export_symbols_start_and_end_accept_integers_and_address_expressions() -> None:
+    properties = get_tool_schema("rex_export_symbols")["properties"]
+    for name in ("start", "end"):
+        assert properties[name]["type"] == ["integer", "string"]
+        assert properties[name]["minimum"] == 0
+
+
+def test_export_symbols_handles_addresses_above_two_to_the_53(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _use_export_root(monkeypatch, tmp_path)
+    high = 0xFFFFFFFFFFFF0000
+    view = FakeBinaryView(symbols=[FakeSymbol(high + 0x10, "FunctionSymbol", "high")])
+    _, export = get_tool("rex_export_symbols")
+    result = export(_call(view), high, high + 0x100, filename="high.csv")
+    assert result["rows"] == 1
+    assert (root / "high.csv").read_bytes() == (
+        b"symbol_address,symbol_type,name\n0xffffffffffff0010,FunctionSymbol,high\n"
+    )
+
+
+def test_export_root_is_the_exports_directory_of_the_binja_user_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(tools, "user_directory", lambda: str(tmp_path / "Binary Ninja"))
+    assert tools._default_export_root() == tmp_path / "Binary Ninja" / "exports"
+
+
+def test_export_root_falls_back_to_the_home_directory_without_a_user_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(tools, "user_directory", lambda: None)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert tools._default_export_root() == tmp_path / ".binaryninja" / "exports"

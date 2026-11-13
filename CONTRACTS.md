@@ -233,6 +233,16 @@ some rows.
   `error_location`. `rex_eval_result`: `key`, `value`, `total`, `truncated`, `next_offset`.
 - `rex_export_disasm`: `function`, `path`, `bytes_written`, `lines`, `truncated`.
   `rex_export_symbols`: `path`, `bytes_written`, `rows`, `truncated`, `total`.
+- Each line of a `rex_export_disasm` file is the instruction address as lowercase `0x` hex,
+  two spaces, then the instruction text (`0x400084  sub     rsp, 0x18`), so a branch target
+  can be found by its address. The `max_lines` maximum is 8193 (4096 before, 4096 after, and
+  the anchor), the default stays 200, and the 4 MiB file cap still drops trailing lines.
+- `rex_export_symbols` takes `start` and `end` as an unsigned integer or an address-expression
+  string (`0x` hex included), like the built-in `IntegerExpression` type. Send a string for
+  values above 2^53, which clients that read JSON numbers as doubles would round. `end` must
+  be greater than `start`.
+- The export root is the `exports` directory inside `binaryninja.user_directory()`, resolved
+  once at import. When that returns `None`, it is `~/.binaryninja/exports`.
 - `rex_find_functions_by_pattern`: `total`, `truncated`, and `functions` of `{start, name,
   match_count, addresses, addresses_truncated}`.
 - `rex_function_constraints`: `function`, `total`, `truncated`, and `constraints` of
