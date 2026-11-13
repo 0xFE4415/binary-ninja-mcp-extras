@@ -202,16 +202,15 @@ some rows.
   `from_addr` and `to_addr`), `reachable`, `paths` (lists of function entries), `truncated`
   (reached the `max_paths` cap; more paths may exist), `depth_limited`, and `explored`
   (functions expanded during the search). `depth_limited` is true when the search stopped
-  expanding at `max_depth` a function that had a neighbor it had not visited, or the target,
-  whether or not paths were found. `reachable` false with `depth_limited` false means no path
-  exists in the core's call graph; with it true, raise `max_depth`. `depth_limited` is only
-  meaningful when `truncated` is false, because the search may stop before it reaches
-  depth-limited nodes. `direction` defaults to `callers`. Both directions are bounded by
-  `max_depth` and `max_paths`.
-  Edges come from the core's call
-  graph and include tail calls. A function called from several sites is one edge, so a path
-  is never listed twice. Code pointers passed as data and imports with no function object are
-  not edges.
+  expanding at `max_depth` a function that had a neighbor not yet visited (the target counts,
+  because it is never marked visited), whether or not paths were found. `reachable` false
+  with `depth_limited` false means no path exists in the core's call graph; with it true,
+  raise `max_depth`. `depth_limited` is only meaningful when `truncated` is false, because
+  the search may stop before it reaches depth-limited nodes. `direction` defaults to
+  `callers`. Both directions are bounded by `max_depth` and `max_paths`. Edges come from the
+  core's call graph and include tail calls. A function called from several sites is one edge,
+  so a path is never listed twice. Code pointers passed as data and imports with no function
+  object are not edges.
 - `rex_component_add_functions`: `path`, `applied`, `failed_count`, `total`,
   and `results` rows `{start, name, also_containing, same_name, added}`.
 - `rex_component_create`: `path`, `display_name`, `guid`.

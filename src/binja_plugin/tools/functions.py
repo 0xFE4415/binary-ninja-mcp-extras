@@ -130,8 +130,9 @@ def rex_call_paths(
         # The core lists one edge per call site; keep one edge per function.
         neighbors = {edge.start: edge for edge in edges}
         if len(path) > max_depth:
+            # The target is never marked visited, so it counts as an unvisited neighbor.
             for start in neighbors:
-                if start == target.start or start not in visited:
+                if start not in visited:
                     depth_limited = True
                     break
             continue

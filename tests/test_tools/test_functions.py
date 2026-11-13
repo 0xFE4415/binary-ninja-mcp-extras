@@ -709,3 +709,43 @@ def test_call_paths_stops_checking_once_depth_limited() -> None:
     assert result["reachable"] is False
     assert result["depth_limited"] is True
     assert result["explored"] == 1
+
+
+def _numbered_callee_graph(
+    node_count: int, edges: list[tuple[int, int]]
+) -> tuple[FakeBinaryView, list[int]]:
+    starts = [0x1000 + 0x10 * index for index in range(node_count)]
+    functions = [FakeFunction(f"f{index}", start, start + 8) for index, start in enumerate(starts)]
+    for caller, callee in edges:
+        functions[caller].callees.append(functions[callee])
+    return FakeBinaryView(functions=functions), starts
+
+
+def test_call_paths_depth_limited_with_a_dense_graph_and_a_path_cap_of_one() -> None:
+    edges = [
+        (5, 6), (6, 8), (1, 0), (5, 7), (0, 3), (0, 2), (5, 0), (3, 0), (4, 6), (8, 2),
+        (3, 5), (5, 5), (6, 3), (3, 7), (0, 3), (3, 3), (7, 2), (0, 7), (2, 2), (7, 8),
+        (5, 3), (5, 0), (1, 2), (2, 1), (1, 5), (6, 5), (8, 5), (3, 6), (1, 6), (5, 0),
+        (5, 7), (0, 2),
+    ]  # fmt: skip
+    view, starts = _numbered_callee_graph(9, edges)
+    _, paths = get_tool("rex_call_paths")
+    result = paths(_call(view), starts[2], starts[8], direction="callees", max_depth=1, max_paths=1)
+    assert result["reachable"] is False
+    assert result["paths"] == []
+    assert result["truncated"] is False
+    assert result["depth_limited"] is True
+
+
+def test_call_paths_depth_limited_ignores_visited_neighbors_of_other_skipped_nodes() -> None:
+    edges = [
+        (5, 3), (3, 1), (1, 0), (0, 3), (5, 3), (2, 5), (2, 5), (4, 5), (2, 3), (4, 5),
+        (1, 1), (0, 3), (3, 4), (1, 1), (1, 0), (3, 2), (3, 5), (3, 4), (1, 1), (0, 3),
+        (0, 3),
+    ]  # fmt: skip
+    view, starts = _numbered_callee_graph(6, edges)
+    _, paths = get_tool("rex_call_paths")
+    result = paths(_call(view), starts[5], starts[0], direction="callees", max_depth=1, max_paths=4)
+    assert result["reachable"] is False
+    assert result["truncated"] is False
+    assert result["depth_limited"] is True
