@@ -28,8 +28,10 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
   omitted refs are not necessarily higher addresses, and `truncated` can be false.
 - `rex_mlil_uses` takes definitions from the core: a variable is defined at an instruction
   when `get_var_definitions` lists it there (assignments, split writes, field writes, call,
-  syscall, tailcall, and intrinsic outputs, and forced versions). An instruction with no core
-  definition (a call without outputs, a store) is `no_definition`; its message lists up to 10
+  syscall, tailcall, and intrinsic outputs, and forced versions). As for the uidf tools, a
+  declared parameter with no MLIL definition is defined at the function start, after the
+  variables the entry instruction defines, in parameter order. An address with no definition
+  (a call without outputs, a store) is `no_definition`; its message lists up to 10
   addresses that do define variables (`(+N more)` past that), or says the function defines no
   MLIL variables. It returns `variables`, one entry per defined variable (in `vars_written`
   order, then any further variable the core records, such as a field write's destination),
@@ -270,7 +272,13 @@ some rows.
 - `rex_find_functions_by_pattern`: `total`, `truncated`, and `functions` of `{start, name,
   match_count, addresses, addresses_truncated}`.
 - `rex_function_constraints`: `function`, `total`, `truncated`, and `constraints` of
-  `{address, operator, constant, char, subject, subject_text}`. `operator` is `==` or `!=`.
+  `{address, operator, constant, char, subject, subject_text}`. With `operators`
+  `"equality"` (the default), `operator` is `==` or `!=`. With `"all"`, it can also be an
+  ordered comparison, spelled as in HLIL: `s<`, `s<=`, `s>=`, `s>` (signed) and `u<`, `u<=`,
+  `u>=`, `u>` (unsigned). Rows read subject, operator, constant, so a constant
+  on the left mirrors the operator (`5 s< x` is `s>` 5). A signed row adds `signed_constant`,
+  the constant as signed two's complement at its width (`x s< -1` in four bytes has
+  `constant` `0xffffffff` and `signed_constant` `-0x1`); other rows have no such key.
   `constant` and a `load` `offset` render the value the expression computes: a zero or sign
   extension of a constant is applied at its outer width first, then shown at that width.
   `constant` is unsigned hex (-1 is `0xffffffff` in four bytes and `0xffffffffffffffff` in
@@ -319,7 +327,8 @@ some rows.
   instead (see Errors), and no reanalysis runs.
 - `rex_mlil_uses`: `function`, `definition_site` (the queried address), and `variables`, each
   `variable`, `storage`, `type`, `definitions` (addresses of every definition the core records
-  for it, ascending), `total`, `truncated`, and `uses` of `{address, operation, text}`.
+  for it, ascending; empty for a parameter defined at the function start), `total`,
+  `truncated`, and `uses` of `{address, operation, text}`.
 - `rex_parameter_variables`: `function`, `parameter`, `storage` (one entry per matching
   variable in the function's variable order), `definitions` (a flat list of addresses over
   all matching variables, ascending), and `carriers` of `{variable, address, text}`.
@@ -374,6 +383,10 @@ some rows.
 
 ### Parameters
 
+- `rex_mlil_uses` `function` may be omitted (or null); the function is then the one
+  containing `address`, by the lowest-start rule. `address` stays required.
+  `rex_function_constraints` `operators` is `"equality"` or `"all"`; any other value returns
+  `invalid_params` naming it.
 - Numeric parameters such as `limit`, `length`, `offset`, `max_depth`, `max_paths`,
   `max_functions`, and `max_chars` are range-checked, not clamped; invalid values return
   `invalid_params`.
@@ -440,8 +453,8 @@ some rows.
   returns `section_not_found`, like any unknown name. The `section_not_found` and
   `invalid_pattern` messages show an echoed NUL as U+FFFD, because the core cuts a message at
   its first NUL. The `no_variable`, `unknown_tool`, `unknown_category`, and eval `not_found`
-  messages, and the `kind` and `format` `invalid_params` messages, do the same; other tools'
-  messages are not rewritten.
+  messages, and the `kind`, `format`, and `operators` `invalid_params` messages, do the
+  same; other tools' messages are not rewritten.
 - `rex_constant_find` `value` is an integer (0 to 18446744073709551615) or a string: `0x` or
   `0X`, then 1-16 hex digits in either case. A client that reads JSON numbers as doubles
   rounds the integer maximum to 18446744073709552000, so send the hex string for values above

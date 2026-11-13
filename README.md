@@ -66,8 +66,8 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rx_data_find` | Same as `rex_data_find`, with the scan in native Rust. |
 | `rex_hlil_grep` | Regex search over HLIL text, one page of functions at a time. |
 | `rex_hlil_statements` | List a function's HLIL statements with their addresses. |
-| `rex_function_constraints` | List branch comparisons against a constant. |
-| `rex_mlil_uses` | Show every read of the MLIL variables defined at an address. |
+| `rex_function_constraints` | List branch tests on a constant; `operators="all"` adds ranges. |
+| `rex_mlil_uses` | Show reads of the MLIL variables defined at an address; parameters at start. |
 | `rex_parameter_variables` | Map a parameter to its storage, variables, and copies. |
 | `rex_constant_find` | Find functions that use a constant in a disassembly line. |
 | `rex_find_functions_by_pattern` | Map a byte pattern to the functions that contain it. |
