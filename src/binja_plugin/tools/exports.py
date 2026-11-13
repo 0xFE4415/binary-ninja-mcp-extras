@@ -25,7 +25,7 @@ from binja_plugin.tools import (
     _write_export_file,
 )
 
-_MAX_EXPORT_DISASM_LINES = 512
+_MAX_EXPORT_DISASM_LINES = 2 * _MAX_DISASM_CONTEXT + 1
 _MAX_EXPORT_SYMBOLS = 2048
 
 ExportFormat = Literal["csv", "json"]
@@ -81,7 +81,7 @@ def rex_export_disasm(
     after: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_DISASM_CONTEXT)] = 8,
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_EXPORT_DISASM_LINES)] = 200,
 ) -> _ExportDisasmResult:
-    """Write one function's disassembly window to a file; returns the path and line count.
+    """Write a function's disassembly window to a file as "0xADDR  text" lines; returns the path.
 
     :param address: Address expression inside the target function.
     :param filename: Plain file name inside the export root; overwritten if it exists.
@@ -100,7 +100,7 @@ def rex_export_disasm(
     window = lines[start:end][:max_lines]
 
     def serialize(selected: list[tuple[int, str]]) -> str:
-        return "".join(f"{text}\n" for _, text in selected)
+        return "".join(f"{hex(line_address)}  {text}\n" for line_address, text in selected)
 
     text, dropped = _fit_to_export_cap(serialize, window)
     resolved = _resolve_export_path(filename)
@@ -116,8 +116,8 @@ def rex_export_disasm(
 @mcp.tool(destructive=True)
 def rex_export_symbols(
     call: mcp.ToolCall,
-    start: Annotated[int, mcp.Minimum(0)],
-    end: int,
+    start: mcp.IntegerExpression,
+    end: mcp.IntegerExpression,
     filename: str,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_EXPORT_SYMBOLS)] = 500,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
@@ -125,8 +125,8 @@ def rex_export_symbols(
 ) -> _ExportSymbolsResult:
     """Export the symbols in an address range to a file.
 
-    :param start: Start of the address range, inclusive.
-    :param end: End of the address range, exclusive; must be greater than ``start``.
+    :param start: Range start, inclusive; an integer or address expression string.
+    :param end: Range end, exclusive, above ``start``; an integer or address expression string.
     :param filename: Plain file name inside the export root; overwritten if it exists.
     :param limit: Maximum symbols to export.
     :param offset: Sorted symbols to skip before the window starts.
@@ -135,7 +135,8 @@ def rex_export_symbols(
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_EXPORT_SYMBOLS)
     offset = _validate_range("offset", offset, 0)
-    start = _validate_range("start", start, 0)
+    # The core rejects negatives first; this guards direct handler calls.
+    _validate_range("start", start, 0)
     if start >= end:
         raise mcp.ToolError("invalid_params", "end must be greater than start")
     _validate_export_path(filename)

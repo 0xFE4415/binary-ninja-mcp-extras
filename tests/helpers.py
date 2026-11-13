@@ -387,6 +387,7 @@ def install_fake_binaryninja() -> None:
         ("exceptions", exceptions_module),
     ):
         setattr(package, attribute, module)
+    setattr(package, "user_directory", lambda: str(Path.home() / ".bn-fake-user"))
     setattr(package, "Type", FakeType)
     setattr(package, "TypeLibrary", FakeTypeLibrary)
 

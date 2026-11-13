@@ -307,6 +307,40 @@
    ]
   },
   {
+   "id": "export-symbols-hex-string-range",
+   "guards": "Hex strings are accepted for start and end, so a reversed range reaches the range check.",
+   "tool": "rex_export_symbols",
+   "args": {
+    "start": "0x400100",
+    "end": "0x400000",
+    "filename": "range.csv"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "end must be greater than start"
+    }
+   ]
+  },
+  {
+   "id": "export-symbols-mixed-integer-and-string-range",
+   "guards": "An integer start and a hex string end are both accepted in one call.",
+   "tool": "rex_export_symbols",
+   "args": {
+    "start": 4194560,
+    "end": "0x400000",
+    "filename": "range.csv"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "end must be greater than start"
+    }
+   ]
+  },
+  {
    "id": "export-symbols-dot-filename",
    "guards": "A filename of '.' is rejected as an invalid file name.",
    "tool": "rex_export_symbols",
