@@ -35,8 +35,20 @@ _METADATA_PREFIX = "rex/"
 _TAG_ICON = "\u25c6"
 
 
-class _KvKeyResult(TypedDict):
+class _KvDeleteResult(TypedDict):
     key: str
+    existed: bool
+
+
+class _KvListEntry(TypedDict):
+    key: str
+    length: int
+
+
+class _KvListResult(TypedDict):
+    total: int
+    truncated: bool
+    keys: list[_KvListEntry]
 
 
 class _KvGetResult(TypedDict):
@@ -79,6 +91,7 @@ class _ReportResult(TypedDict):
 
 class _TagEntry(TypedDict):
     address: str
+    scope: str
     tag_type: str
     data: str
     data_truncated: bool
@@ -120,14 +133,52 @@ def _run_undo_stack_step(verb: str, step: Callable[[], None], failed_code: str) 
 
 
 @mcp.tool(destructive=True)
-def rex_kv_delete(call: mcp.ToolCall, key: str) -> _KvKeyResult:
+def rex_kv_delete(call: mcp.ToolCall, key: str) -> _KvDeleteResult:
     """Delete a value previously stored with rex_kv_set. Writes; not undoable.
 
     :param key: Key to delete.
     """
     _require_key(key)
-    call.binary_view.remove_metadata(_METADATA_PREFIX + key)
-    return {"key": _truncate(key)}
+    bv = call.binary_view
+    try:
+        bv.query_metadata(_METADATA_PREFIX + key)
+    except KeyError:
+        existed = False
+    else:
+        existed = True
+    bv.remove_metadata(_METADATA_PREFIX + key)
+    return {"key": _truncate(key), "existed": existed}
+
+
+@mcp.tool(read_only=True)
+def rex_kv_list(
+    call: mcp.ToolCall,
+    prefix: str = "",
+    limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
+    offset: Annotated[int, mcp.Minimum(0)] = 0,
+) -> _KvListResult:
+    """List the keys stored with rex_kv_set, sorted, with each value's length.
+
+    :param prefix: Only list keys that start with this text.
+    :param limit: Maximum keys to return.
+    :param offset: Keys to skip before collecting results.
+    """
+    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
+    offset = _validate_range("offset", offset, 0)
+    _reject_nul("prefix", prefix)
+    entries: list[_KvListEntry] = []
+    for metadata_key, value in call.binary_view.metadata.items():
+        if not metadata_key.startswith(_METADATA_PREFIX):
+            continue
+        key = metadata_key.removeprefix(_METADATA_PREFIX)
+        if not key or not key.startswith(prefix):
+            continue
+        entries.append({"key": key, "length": len(str(value))})
+    entries.sort(key=lambda entry: entry["key"])
+    page: list[_KvListEntry] = []
+    for entry in entries[offset : offset + limit]:
+        page.append({"key": _truncate(entry["key"]), "length": entry["length"]})
+    return {"total": len(entries), "truncated": offset + limit < len(entries), "keys": page}
 
 
 @mcp.tool(read_only=True)
@@ -208,10 +259,11 @@ def rex_report_show(
     return {"title": title, "length": len(markdown), "preview": preview, "truncated": truncated}
 
 
-def _tag_entry(address: int, tag: Tag) -> _TagEntry:
+def _tag_entry(address: int, scope: str, tag: Tag) -> _TagEntry:
     data, data_truncated = _truncate_with_flag(tag.data)
     return {
         "address": hex(address),
+        "scope": scope,
         "tag_type": tag.type.name,
         "data": data,
         "data_truncated": data_truncated,
@@ -224,14 +276,25 @@ def rex_tag_list(
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> _TagListResult:
-    """List the tags set on the binary view.
+    """List the tags in every scope (data, address, function), sorted by address then scope.
 
     :param limit: Maximum tags to return.
     :param offset: Tags to skip before collecting results.
     """
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
-    tags = [_tag_entry(address, tag) for address, tag in call.binary_view.get_tags()]
+    bv = call.binary_view
+    scoped_tags = {
+        "data": bv.tags_for_data,
+        "address": bv.tags_for_address,
+        "function": bv.tags_for_function,
+    }
+    ordered: list[tuple[int, str, str, str, Tag]] = []
+    for scope, scope_tags in scoped_tags.items():
+        for address, tag in scope_tags:
+            ordered.append((address, scope, tag.type.name, tag.data, tag))
+    ordered.sort(key=lambda row: row[:4])
+    tags = [_tag_entry(address, scope, tag) for address, scope, _, _, tag in ordered]
     return {
         "total": len(tags),
         "truncated": offset + limit < len(tags),

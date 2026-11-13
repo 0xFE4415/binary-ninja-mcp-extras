@@ -24,7 +24,7 @@ def test_kv_set_get_delete_roundtrip() -> None:
         "value": "C2 at 0x401000",
         "truncated": False,
     }
-    assert kv_delete(_call(view), "notes") == {"key": "notes"}
+    assert kv_delete(_call(view), "notes") == {"key": "notes", "existed": True}
     with pytest.raises(FakeToolError) as exc:
         kv_get(_call(view), "notes")
     assert exc.value.code == "not_found"
@@ -213,8 +213,20 @@ def test_tag_list_paginates_with_offset() -> None:
         "total": 4,
         "truncated": True,
         "tags": [
-            {"address": "0x1001", "tag_type": "Finding", "data": "t1", "data_truncated": False},
-            {"address": "0x1002", "tag_type": "Finding", "data": "t2", "data_truncated": False},
+            {
+                "address": "0x1001",
+                "scope": "data",
+                "tag_type": "Finding",
+                "data": "t1",
+                "data_truncated": False,
+            },
+            {
+                "address": "0x1002",
+                "scope": "data",
+                "tag_type": "Finding",
+                "data": "t2",
+                "data_truncated": False,
+            },
         ],
     }
     # A page starting past the end is empty and not truncated.
@@ -431,3 +443,145 @@ def test_report_show_rejects_empty_title_and_markdown() -> None:
 def test_report_show_is_read_only() -> None:
     options, _ = get_tool("rex_report_show")
     assert options == {"read_only": True}
+
+
+def test_kv_delete_reports_whether_the_key_existed() -> None:
+    view = FakeBinaryView()
+    _, kv_set = get_tool("rex_kv_set")
+    _, kv_delete = get_tool("rex_kv_delete")
+    assert kv_delete(_call(view), "never") == {"key": "never", "existed": False}
+    kv_set(_call(view), "once", "v")
+    assert kv_delete(_call(view), "once")["existed"] is True
+    assert kv_delete(_call(view), "once")["existed"] is False
+
+
+def test_kv_delete_existed_ignores_keys_outside_the_prefix() -> None:
+    view = FakeBinaryView()
+    view.store_metadata("other", "x")
+    _, kv_delete = get_tool("rex_kv_delete")
+    assert kv_delete(_call(view), "other")["existed"] is False
+    assert view.metadata == {"other": "x"}
+
+
+def test_kv_list_returns_sorted_stripped_keys_with_value_lengths() -> None:
+    view = FakeBinaryView()
+    _, kv_set = get_tool("rex_kv_set")
+    _, kv_list = get_tool("rex_kv_list")
+    assert kv_list(_call(view)) == {"total": 0, "truncated": False, "keys": []}
+    kv_set(_call(view), "zeta", "abc")
+    kv_set(_call(view), "alpha", "")
+    kv_set(_call(view), "mid", "x" * 600)
+    view.store_metadata("foreign", "ignored")
+    view.store_metadata("rex", "no slash")
+    view.store_metadata("rex/", "empty key")
+    assert kv_list(_call(view)) == {
+        "total": 3,
+        "truncated": False,
+        "keys": [
+            {"key": "alpha", "length": 0},
+            {"key": "mid", "length": 600},
+            {"key": "zeta", "length": 3},
+        ],
+    }
+
+
+def test_kv_list_reports_non_string_values_by_their_text_length() -> None:
+    view = FakeBinaryView()
+    view.store_metadata("rex/count", 12345)
+    view.store_metadata("rex/items", [1, 2])
+    _, kv_list = get_tool("rex_kv_list")
+    assert kv_list(_call(view))["keys"] == [
+        {"key": "count", "length": 5},
+        {"key": "items", "length": 6},
+    ]
+
+
+def test_kv_list_pages_with_exact_total_and_truncated() -> None:
+    view = FakeBinaryView()
+    for name in ("d", "b", "a", "c", "e"):
+        view.store_metadata("rex/" + name, name)
+    _, kv_list = get_tool("rex_kv_list")
+    page = kv_list(_call(view), limit=2, offset=1)
+    assert page == {
+        "total": 5,
+        "truncated": True,
+        "keys": [{"key": "b", "length": 1}, {"key": "c", "length": 1}],
+    }
+    last = kv_list(_call(view), limit=2, offset=3)
+    assert last["truncated"] is False
+    assert [row["key"] for row in last["keys"]] == ["d", "e"]
+    assert kv_list(_call(view), limit=0) == {"total": 5, "truncated": True, "keys": []}
+    assert kv_list(_call(view), offset=9) == {"total": 5, "truncated": False, "keys": []}
+
+
+def test_kv_list_prefix_filters_on_the_stripped_key() -> None:
+    view = FakeBinaryView()
+    for name in ("run/a", "run/b", "other", "xrun/c"):
+        view.store_metadata("rex/" + name, "v")
+    _, kv_list = get_tool("rex_kv_list")
+    result = kv_list(_call(view), prefix="run/")
+    assert result["total"] == 2
+    assert [row["key"] for row in result["keys"]] == ["run/a", "run/b"]
+    assert kv_list(_call(view), prefix="nothing")["total"] == 0
+
+
+def test_kv_list_truncates_long_keys_and_rejects_bad_input() -> None:
+    view = FakeBinaryView()
+    view.store_metadata("rex/" + "k" * 1000, "v")
+    _, kv_list = get_tool("rex_kv_list")
+    assert kv_list(_call(view))["keys"][0]["key"].endswith("chars truncated]")
+    for kwargs in ({"limit": -1}, {"limit": tools._MAX_LIMIT + 1}, {"offset": -1}):
+        with pytest.raises(FakeToolError) as exc:
+            kv_list(_call(view), **kwargs)
+        assert exc.value.code == "invalid_params"
+    with pytest.raises(FakeToolError) as exc:
+        kv_list(_call(view), prefix="a\x00b")
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == "prefix must not contain NUL bytes"
+
+
+def test_tag_list_covers_every_scope_in_address_then_scope_order() -> None:
+    view = FakeBinaryView()
+    view.add_scoped_tag("function", 0x1000, "Finding", "whole function")
+    view.add_scoped_tag("address", 0x1000, "Finding", "inside function")
+    view.add_tag(0x1000, "Finding", "data tag")
+    view.add_tag(0x0800, "Crashes", "early")
+    _, tag_list = get_tool("rex_tag_list")
+    result = tag_list(_call(view))
+    assert result["total"] == 4
+    assert result["truncated"] is False
+    assert [(row["address"], row["scope"], row["data"]) for row in result["tags"]] == [
+        ("0x800", "data", "early"),
+        ("0x1000", "address", "inside function"),
+        ("0x1000", "data", "data tag"),
+        ("0x1000", "function", "whole function"),
+    ]
+    assert result["tags"][0] == {
+        "address": "0x800",
+        "scope": "data",
+        "tag_type": "Crashes",
+        "data": "early",
+        "data_truncated": False,
+    }
+
+
+def test_tag_list_orders_same_address_and_scope_by_type_then_data() -> None:
+    view = FakeBinaryView()
+    view.add_tag(0x10, "B", "z")
+    view.add_tag(0x10, "B", "a")
+    view.add_tag(0x10, "A", "m")
+    _, tag_list = get_tool("rex_tag_list")
+    rows = tag_list(_call(view))["tags"]
+    assert [(row["tag_type"], row["data"]) for row in rows] == [("A", "m"), ("B", "a"), ("B", "z")]
+
+
+def test_tag_list_pages_across_scopes_with_exact_total() -> None:
+    view = FakeBinaryView()
+    view.add_tag(0x30, "T", "d")
+    view.add_scoped_tag("address", 0x10, "T", "a")
+    view.add_scoped_tag("function", 0x20, "T", "f")
+    _, tag_list = get_tool("rex_tag_list")
+    page = tag_list(_call(view), limit=1, offset=1)
+    assert page["total"] == 3
+    assert page["truncated"] is True
+    assert [row["scope"] for row in page["tags"]] == ["function"]

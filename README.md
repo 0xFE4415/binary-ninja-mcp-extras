@@ -52,7 +52,7 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 
 Each tool registers as read-only or destructive. That mark is the only approval signal an
 MCP client gets, so read the destructive table before you let an agent run those tools.
-The tables list all 51 tools: 49 Python `rex_*` tools and 2 native `rx_*` scanners.
+The tables list all 52 tools: 50 Python `rex_*` tools and 2 native `rx_*` scanners.
 CONTRACTS.md holds the exact rules for every response field and limit.
 
 ### Read-only tools
@@ -83,9 +83,10 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_component_get` | Show a component's functions and child components. |
 | `rex_string_read_at` | Read the detected string at an address. |
 | `rex_relocation_at` | List the relocations that cover an address. |
-| `rex_tag_list` | List the tags in the view. |
+| `rex_tag_list` | List the data, address, and function tags in the view. |
 | `rex_report_show` | Show a markdown report inside Binary Ninja. |
 | `rex_kv_get` | Read a scratch string stored in the database. |
+| `rex_kv_list` | List the stored scratch keys with their value lengths. |
 | `rex_eval_result` | Page through a long `rex_eval_python` result. |
 | `rex_help` | List tool categories, a category's tools, or one tool's parameters. |
 
@@ -108,7 +109,7 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_component_add_functions` | Add functions to a component. |
 | `rex_tag_set` | Add a tag at an address; creates the tag type if needed. |
 | `rex_kv_set` | Store a scratch string in the view's database. |
-| `rex_kv_delete` | Delete a stored scratch string. |
+| `rex_kv_delete` | Delete a stored scratch string; reports if it existed. |
 | `rex_export_disasm` | Write a function's disassembly window to a file. |
 | `rex_export_symbols` | Write the symbols in an address range to a CSV or JSON file. |
 | `rex_eval_python` | Run Binary Ninja Python with `bv`, `bn`, `binaryninja`, and `call`. |

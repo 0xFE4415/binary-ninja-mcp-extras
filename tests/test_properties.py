@@ -318,13 +318,14 @@ def test_tag_list_pages_arbitrary_limits(tags: list[tuple[int, str]], limit: int
     expected = [
         {
             "address": hex(address),
+            "scope": "data",
             "tag_type": "Finding",
             "data": data
             if len(data) <= tools._MAX_CHARS
             else data[: tools._MAX_CHARS] + f"... [{len(data) - tools._MAX_CHARS} chars truncated]",
             "data_truncated": len(data) > tools._MAX_CHARS,
         }
-        for address, data in tags
+        for address, data in sorted(tags)
     ]
     assert result["total"] == len(tags)
     assert result["truncated"] is (len(tags) > limit)

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, override
 
 from helpers_dataflow import FakeMLILInstructions
+from helpers_state import FakeStateMixin
 from helpers_symbol import (
     FakeSymbol,
     FakeSymbolBinding,
@@ -49,16 +50,6 @@ class FakeStringReference:
     @property
     def value(self) -> str:
         return self._value
-
-    @property
-    def type(self) -> types.SimpleNamespace:
-        return types.SimpleNamespace(name=self._type_name)
-
-
-class FakeTag:
-    def __init__(self, type_name: str, data: str) -> None:
-        self.data = data
-        self._type_name = type_name
 
     @property
     def type(self) -> types.SimpleNamespace:
@@ -595,7 +586,7 @@ class FakeDataVariable:
         return len(self.type)
 
 
-class FakeBinaryView:
+class FakeBinaryView(FakeStateMixin):
     data_variable_types: Mapping[int, FakeType] = types.MappingProxyType({})
 
     def __init__(
@@ -632,8 +623,7 @@ class FakeBinaryView:
         self.functions = functions if functions is not None else []
         self._sections: dict[str, tuple[int, int]] = sections or {}
         self._memory: dict[int, bytes] = memory or {}
-        self._metadata: dict[str, object] = {}
-        self._tags: list[tuple[int, FakeTag]] = []
+        self._init_state()
         self._tag_types: dict[str, object] = {}
         self.written: list[tuple[int, bytes]] = []
         self.shown_reports: list[tuple[str, str, str]] = []
@@ -891,23 +881,6 @@ class FakeBinaryView:
 
     def create_tag_type(self, name: str, icon: str) -> None:
         self._tag_types[name] = types.SimpleNamespace(name=name, icon=icon)
-
-    def add_tag(self, address: int, tag_type_name: str, data: str) -> None:
-        self._tags.append((address, FakeTag(tag_type_name, data)))
-
-    def get_tags(self) -> list[tuple[int, FakeTag]]:
-        return list(self._tags)
-
-    def store_metadata(self, key: str, value: object) -> None:
-        self._metadata[key] = value
-
-    def query_metadata(self, key: str) -> object:
-        if key not in self._metadata:
-            raise KeyError(key)
-        return self._metadata[key]
-
-    def remove_metadata(self, key: str) -> None:
-        self._metadata.pop(key, None)
 
     def add_type_library(self, library: FakeTypeLibrary) -> None:
         self.type_libraries.append(library)
