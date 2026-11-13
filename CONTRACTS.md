@@ -295,8 +295,11 @@ some rows.
   undoable transaction, so code already using the type shows the members; `registered` is
   `name`. An auto type, for example from debug info or a type library, becomes a user type.
   A name that is not a type raises `type_not_found`. A type that is not a plain struct (a
-  union, a class, an alias, which names its target, or any other type) raises
-  `not_a_structure`. Neither calls the core. Inference keeps the existing members, so
+  union, a class, an alias, or any other type) raises `not_a_structure`. For a union the
+  message names `bn_type_union_modify`, and for a class `bn_type_struct_modify`. For an
+  alias it names the target: to pass instead when the target is a plain struct, and
+  otherwise as not a plain struct. An alias that names itself is reported as such. Neither
+  error calls the core. Inference keeps the existing members, so
   `create_failed` means the core inferred nothing, or nothing beyond the existing width and
   members (offset, name, type); nothing is written then. Each message names the next step.
 - `rex_tag_list`: `total`, `truncated`, and `tags` of `{address, tag_type, data,

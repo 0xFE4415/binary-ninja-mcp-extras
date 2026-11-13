@@ -1077,28 +1077,76 @@ def test_struct_from_access_rejects_a_type_that_is_not_a_structure() -> None:
     assert view.defined_types == []
 
 
-def test_struct_from_access_rejects_an_alias_and_names_its_target() -> None:
-    alias = FakeNamedTypeReference("conn", "struct conn")
-    view = FakeBinaryView(types={"conn_t": alias, "conn": FakeStructureType([], 0)})
+def _union() -> FakeStructureType:
+    union = FakeStructureType([], 8)
+    union.type = FakeStructureVariant.UnionStructureType
+    return union
+
+
+_NOT_PLAIN = "which is not a plain struct; pass the name of a plain struct type"
+_LONG_TARGET = "s" * 513
+
+
+@pytest.mark.parametrize(
+    ("target_name", "target", "message"),
+    [
+        (
+            "conn",
+            FakeStructureType([], 0),
+            "type 'conn_t' is an alias of struct 'conn'; pass 'conn' as name instead",
+        ),
+        ("conn", _union(), f"type 'conn_t' is an alias of 'conn', {_NOT_PLAIN}"),
+        ("conn", FakeType("conn", "int32_t"), f"type 'conn_t' is an alias of 'conn', {_NOT_PLAIN}"),
+        ("conn", None, f"type 'conn_t' is an alias of 'conn', {_NOT_PLAIN}"),
+        (
+            "conn_t",
+            None,
+            "type 'conn_t' is a named reference to itself, not a struct definition; define it "
+            "with bn_type_struct_create, then " + _NEXT_STEP.format(name="conn_t"),
+        ),
+        (
+            _LONG_TARGET,
+            FakeStructureType([], 0),
+            "type 'conn_t' is an alias of struct '{shown}'; pass '{shown}' as name instead".format(
+                shown="s" * 512 + "... [1 chars truncated]"
+            ),
+        ),
+    ],
+)
+def test_struct_from_access_rejects_an_alias_by_its_target(
+    target_name: str, target: FakeType | FakeStructureType | None, message: str
+) -> None:
+    named: dict[str, FakeType | FakeStructureType] = {
+        "conn_t": FakeNamedTypeReference(target_name, f"struct {target_name}")
+    }
+    if target is not None:
+        named[target_name] = target
+    view = FakeBinaryView(types=named, structure=FakeStructureType([], 8))
     _, create = get_tool("rex_struct_from_access")
     with pytest.raises(FakeToolError) as exc:
         create(_call(view), "conn_t")
     assert exc.value.code == "not_a_structure"
-    assert exc.value.message == (
-        "type 'conn_t' is an alias of 'conn', not a structure; pass the aliased struct's own name"
-    )
+    assert exc.value.message == message
     assert view.defined_types == []
 
 
 @pytest.mark.parametrize(
-    ("variant", "described"),
+    ("variant", "message"),
     [
-        (FakeStructureVariant.UnionStructureType, "union"),
-        (FakeStructureVariant.ClassStructureType, "class"),
+        (
+            FakeStructureVariant.UnionStructureType,
+            "type 'ctx' is a union, and this tool fills plain structs only; "
+            "edit the union's members with bn_type_union_modify",
+        ),
+        (
+            FakeStructureVariant.ClassStructureType,
+            "type 'ctx' is a class, and this tool fills plain structs only; "
+            "edit the class's members with bn_type_struct_modify",
+        ),
     ],
 )
 def test_struct_from_access_rejects_a_union_or_class(
-    variant: FakeStructureVariant, described: str
+    variant: FakeStructureVariant, message: str
 ) -> None:
     existing = FakeStructureType([], 0)
     existing.type = variant
@@ -1107,7 +1155,7 @@ def test_struct_from_access_rejects_a_union_or_class(
     with pytest.raises(FakeToolError) as exc:
         create(_call(view), "ctx")
     assert exc.value.code == "not_a_structure"
-    assert exc.value.message == (f"type 'ctx' is a {described}; only plain structs are supported")
+    assert exc.value.message == message
     assert view.defined_types == []
 
 

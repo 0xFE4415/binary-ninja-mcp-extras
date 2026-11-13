@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import enum
-from typing import Literal, NamedTuple, TypedDict
+from typing import Literal, NamedTuple, NoReturn, TypedDict
 
 from binaryninja import Type, TypeLibrary, mcp
 from binaryninja.binaryview import BinaryView
@@ -134,6 +134,60 @@ def _member_layout(structure: StructureType) -> list[tuple[int, str, str]]:
     return layout
 
 
+def _reject_alias(bv: BinaryView, name: str, alias: NamedTypeReferenceType) -> NoReturn:
+    shown = _truncate(name)
+    target_name = str(alias.name)
+    target_shown = _truncate(target_name)
+    if target_name == name:
+        raise mcp.ToolError(
+            "not_a_structure",
+            f"type '{shown}' is a named reference to itself, not a struct definition; "
+            f"define it with bn_type_struct_create, then {_access_next_step(shown)}",
+        )
+    target = bv.get_type_by_name(target_name)
+    if isinstance(target, StructureType) and target.type == StructureVariant.StructStructureType:
+        raise mcp.ToolError(
+            "not_a_structure",
+            f"type '{shown}' is an alias of struct '{target_shown}'; "
+            f"pass '{target_shown}' as name instead",
+        )
+    raise mcp.ToolError(
+        "not_a_structure",
+        f"type '{shown}' is an alias of '{target_shown}', which is not a plain struct; "
+        "pass the name of a plain struct type",
+    )
+
+
+def _require_plain_struct(bv: BinaryView, name: str) -> StructureType:
+    shown = _truncate(name)
+    existing = bv.get_type_by_name(name)
+    if existing is None:
+        raise mcp.ToolError(
+            "type_not_found",
+            f"no type named '{shown}' in the view; create it as an empty struct with "
+            f"bn_type_struct_create, then {_access_next_step(shown)}",
+        )
+    if isinstance(existing, NamedTypeReferenceType):
+        _reject_alias(bv, name, existing)
+    if not isinstance(existing, StructureType):
+        raise mcp.ToolError(
+            "not_a_structure", f"type '{shown}' is not a structure; pass the name of a struct type"
+        )
+    if existing.type == StructureVariant.UnionStructureType:
+        raise mcp.ToolError(
+            "not_a_structure",
+            f"type '{shown}' is a union, and this tool fills plain structs only; "
+            "edit the union's members with bn_type_union_modify",
+        )
+    if existing.type != StructureVariant.StructStructureType:
+        raise mcp.ToolError(
+            "not_a_structure",
+            f"type '{shown}' is a class, and this tool fills plain structs only; "
+            "edit the class's members with bn_type_struct_modify",
+        )
+    return existing
+
+
 @mcp.tool(destructive=True)
 def rex_struct_from_access(call: mcp.ToolCall, name: str) -> _StructFromAccessResult:
     """Fill an existing struct from offset accesses; it becomes a user type. Writes; undoable.
@@ -144,28 +198,7 @@ def rex_struct_from_access(call: mcp.ToolCall, name: str) -> _StructFromAccessRe
     # The plugin's per-parameter *_too_large string-cap code family.
     _validate_text("name", name, _MAX_TYPE_NAME_CHARS, "name_too_large")
     shown = _truncate(name)
-    existing = bv.get_type_by_name(name)
-    if existing is None:
-        raise mcp.ToolError(
-            "type_not_found",
-            f"no type named '{shown}' in the view; create it as an empty struct with "
-            f"bn_type_struct_create, then {_access_next_step(shown)}",
-        )
-    if isinstance(existing, NamedTypeReferenceType):
-        raise mcp.ToolError(
-            "not_a_structure",
-            f"type '{shown}' is an alias of '{_truncate(str(existing.name))}', not a structure; "
-            "pass the aliased struct's own name",
-        )
-    if not isinstance(existing, StructureType):
-        raise mcp.ToolError(
-            "not_a_structure", f"type '{shown}' is not a structure; pass the name of a struct type"
-        )
-    if existing.type != StructureVariant.StructStructureType:
-        described = "union" if existing.type == StructureVariant.UnionStructureType else "class"
-        raise mcp.ToolError(
-            "not_a_structure", f"type '{shown}' is a {described}; only plain structs are supported"
-        )
+    existing = _require_plain_struct(bv, name)
     try:
         structure = bv.create_structure_from_offset_access(name)
     except Exception as error:

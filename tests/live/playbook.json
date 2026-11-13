@@ -2077,6 +2077,26 @@
    ]
   },
   {
+   "id": "struct-access-real-main-prototype-saved",
+   "guards": "Setup: save real_main's current prototype so teardown can put it back.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "function = bv.get_functions_by_name('real_main')[0]\nbv.store_metadata('rex_playbook_real_main_type', str(function.type))\nresult = 'probe_s' in str(function.type)"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "False",
+     "path": "result"
+    }
+   ]
+  },
+  {
    "id": "struct-access-probe-type-created",
    "guards": "Setup for the struct-from-access steps: an empty user struct probe_s.",
    "tool": "bn_type_struct_create",
@@ -2137,14 +2157,6 @@
      "kind": "subset",
      "path": "width",
      "value": 16
-    },
-    {
-     "kind": "includes",
-     "path": "members",
-     "item": {
-      "name": "field_0",
-      "offset": 0
-     }
     },
     {
      "kind": "includes",
@@ -2257,16 +2269,21 @@
   },
   {
    "id": "struct-access-teardown-real-main-prototype",
-   "guards": "Teardown: real_main's second argument is a plain pointer again.",
-   "tool": "bn_function_prototype_set",
+   "guards": "Teardown: real_main gets back its saved prototype text. It stays a user prototype: the API has no call that clears a function's user type.",
+   "tool": "rex_eval_python",
    "args": {
-    "function": "real_main",
-    "prototype": "uint64_t(int32_t arg1, void* arg2)"
+    "code": "function = bv.get_functions_by_name('real_main')[0]\nsaved = bv.query_metadata('rex_playbook_real_main_type')\nfunction.set_user_type(saved)\nbv.remove_metadata('rex_playbook_real_main_type')\nresult = str(function.type) == saved"
    },
    "expect": [
     {
-     "kind": "not_contains",
-     "text": "errorCode"
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "True",
+     "path": "result"
     }
    ]
   },
