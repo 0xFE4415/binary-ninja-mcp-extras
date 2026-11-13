@@ -56,7 +56,8 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
   before or after the instruction, including values set outside the plugin.
 - `no_mlil` (`rex_function_constraints`, `rex_mlil_uses`, `rex_parameter_variables`, and the
   uidf setters and clearers that resolve a variable name) and `no_hlil`
-  (`rex_hlil_statements`) distinguish a skipped function from a pending one. When the core
+  (`rex_hlil_statements`, and per item `rex_decompile_many`) distinguish a skipped function
+  from a pending one. When the core
   reports `analysis_skipped`, the message says analysis is skipped, names the cause from
   `analysis_skip_reason` (user override, size, time, or update-count limit, suppressed
   new-function analysis, `analysis.mode`, or a suspended pipeline), and does not advise
@@ -98,7 +99,12 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
   count.
   `offset`/`next_offset` count functions in the view, not matches; pass the cursor back as
   `offset` and page while either flag is set. A call renders at most `max_functions`
-  functions.
+  functions. `limit=0` and `max_functions=0` are probes. `max_functions=0` scans nothing: it
+  returns `scan_incomplete` with `next_offset` equal to `offset` when `offset` is below the
+  function count, and `scan_incomplete` false with a null `next_offset` otherwise. `limit=0`
+  scans until the first matching function and returns `next_offset` pointing at it; with no
+  match inside the `max_functions` budget it ends as `scan_incomplete` at the first unscanned
+  function. A paging loop must pass at least 1 for both, or it stalls at a match.
 - Returned strings usually keep 512 characters, then append `... [N chars truncated]`; the
   suffix is additional. Larger caps are `rex_eval_python.stdout` (65,536), `result` (16,384),
   `rex_kv_get.value` (65,536), and `rex_string_read_at.value` (up to 4,096 via `max_chars`,
@@ -220,9 +226,10 @@ some rows.
 - `rex_decompile_many`: `functions` of `{index, start, name, also_containing, same_name,
   lines, truncated}` and `errors` of `{index, address, error: {code, message}}`; `index` is
   the position in the request; every entry lands in exactly one list, and an address that
-  fails to resolve is an `errors` row. Only a non-list `functions` or a count outside 1-1024
-  raises for the whole call. `lines` starts with the function's signature, then the HLIL
-  body; the signature counts toward `max_lines`.
+  fails to resolve is an `errors` row, as is a function with no HLIL (`no_hlil`: skipped
+  analysis, which waiting will not fix, or pending analysis, which a retry may). Only a
+  non-list `functions` or a count outside 1-1024 raises for the whole call. `lines` starts with
+  the function's signature, then the HLIL body; the signature counts toward `max_lines`.
 - `rex_disasm_at`: `function`, `instructions` (`{address, text}`), `truncated`.
   `rex_disasm_many`: `windows` of `{address, index, function, instructions, truncated}`,
   `errors` of `{index, address, error: {code, message}}`, `truncated`, `next_offset` (an
