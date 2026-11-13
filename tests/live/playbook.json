@@ -2075,6 +2075,234 @@
      "item": "Comment in function dup_leaf at 0x400060: \"undo probe\""
     }
    ]
+  },
+  {
+   "id": "struct-access-probe-type-created",
+   "guards": "Setup for the struct-from-access steps: an empty user struct probe_s.",
+   "tool": "bn_type_struct_create",
+   "args": {
+    "source": "struct probe_s {};"
+   },
+   "expect": [
+    {
+     "kind": "contains",
+     "text": "probe_s"
+    }
+   ]
+  },
+  {
+   "id": "struct-access-probe-applied-to-real-main",
+   "guards": "Setup: real_main's second argument, read at +8, is typed struct probe_s*.",
+   "tool": "bn_function_prototype_set",
+   "args": {
+    "function": "real_main",
+    "prototype": "uint64_t(int32_t arg1, struct probe_s* arg2)"
+   },
+   "expect": [
+    {
+     "kind": "contains",
+     "text": "probe_s"
+    }
+   ]
+  },
+  {
+   "id": "struct-access-probe-analysis-settles",
+   "guards": "Setup: analysis records the +8 access through the retyped argument.",
+   "tool": "rex_analysis_wait",
+   "args": {
+    "timeout_ms": 30000
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "completed",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": "struct-access-fills-the-existing-type",
+   "guards": "rex_struct_from_access fills probe_s itself and registers no duplicate.",
+   "tool": "rex_struct_from_access",
+   "args": {
+    "name": "probe_s"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "registered",
+     "value": "probe_s"
+    },
+    {
+     "kind": "subset",
+     "path": "width",
+     "value": 16
+    },
+    {
+     "kind": "includes",
+     "path": "members",
+     "item": {
+      "name": "field_0",
+      "offset": 0
+     }
+    },
+    {
+     "kind": "includes",
+     "path": "members",
+     "item": {
+      "name": "field_8",
+      "offset": 8
+     }
+    }
+   ]
+  },
+  {
+   "id": "struct-access-unchanged-layout-rejected",
+   "guards": "A second call infers nothing new, so it writes nothing and says so.",
+   "tool": "rex_struct_from_access",
+   "args": {
+    "name": "probe_s"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "create_failed",
+     "message_contains": "beyond its existing members"
+    }
+   ]
+  },
+  {
+   "id": "struct-access-unknown-type-rejected",
+   "guards": "A name that is not a type is rejected up front with the next step.",
+   "tool": "rex_struct_from_access",
+   "args": {
+    "name": "nope"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "type_not_found",
+     "message_contains": "bn_type_struct_create"
+    }
+   ]
+  },
+  {
+   "id": "struct-access-no-duplicate-type",
+   "guards": "No deconflicted duplicate such as probe_s_1 was defined.",
+   "tool": "bn_type_list",
+   "args": {
+    "query": "probe_s"
+   },
+   "expect": [
+    {
+     "kind": "contains",
+     "text": "probe_s"
+    },
+    {
+     "kind": "not_contains",
+     "text": "probe_s_1"
+    }
+   ]
+  },
+  {
+   "id": "struct-access-undo-restores-the-empty-type",
+   "guards": "rex_undo reverses the struct redefinition as one entry.",
+   "tool": "rex_undo",
+   "args": {},
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "undone",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": "struct-access-undone-type-has-no-members",
+   "guards": "After the undo, bn_type_info shows probe_s without the inferred members.",
+   "tool": "bn_type_info",
+   "args": {
+    "type": "probe_s"
+   },
+   "expect": [
+    {
+     "kind": "contains",
+     "text": "probe_s"
+    },
+    {
+     "kind": "not_contains",
+     "text": "field_8"
+    }
+   ]
+  },
+  {
+   "id": "struct-access-undone-type-is-empty",
+   "guards": "After the undo, probe_s is the empty struct again: width 0, no members.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "probe = bv.get_type_by_name('probe_s')\nresult = [probe.width, len(probe.members)]"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "[0, 0]",
+     "path": "result"
+    }
+   ]
+  },
+  {
+   "id": "struct-access-teardown-real-main-prototype",
+   "guards": "Teardown: real_main's second argument is a plain pointer again.",
+   "tool": "bn_function_prototype_set",
+   "args": {
+    "function": "real_main",
+    "prototype": "uint64_t(int32_t arg1, void* arg2)"
+   },
+   "expect": [
+    {
+     "kind": "not_contains",
+     "text": "errorCode"
+    }
+   ]
+  },
+  {
+   "id": "struct-access-teardown-probe-type",
+   "guards": "Teardown: the probe_s user type is deleted.",
+   "tool": "bn_type_delete",
+   "args": {
+    "type": "probe_s"
+   },
+   "expect": [
+    {
+     "kind": "not_contains",
+     "text": "errorCode"
+    }
+   ]
+  },
+  {
+   "id": "struct-access-teardown-complete",
+   "guards": "Teardown check: no probe_s type remains and real_main no longer uses it.",
+   "tool": "rex_eval_python",
+   "args": {
+    "code": "function = bv.get_functions_by_name('real_main')[0]\nresult = [bv.get_type_by_name('probe_s') is None, 'probe_s' in str(function.type)]"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "[True, False]",
+     "path": "result"
+    }
+   ]
   }
  ]
 }

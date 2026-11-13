@@ -8,8 +8,8 @@ from typing import Literal, NamedTuple, TypedDict
 
 from binaryninja import Type, TypeLibrary, mcp
 from binaryninja.binaryview import BinaryView
-from binaryninja.enums import SymbolType, TypeClass
-from binaryninja.types import StructureType
+from binaryninja.enums import StructureVariant, SymbolType, TypeClass
+from binaryninja.types import NamedTypeReferenceType, StructureType
 
 from binja_plugin.tools import (
     _MAX_EXPORT_FILE_BYTES,
@@ -136,9 +136,9 @@ def _member_layout(structure: StructureType) -> list[tuple[int, str, str]]:
 
 @mcp.tool(destructive=True)
 def rex_struct_from_access(call: mcp.ToolCall, name: str) -> _StructFromAccessResult:
-    """Add members inferred from recorded offset accesses to an existing struct. Writes; undoable.
+    """Fill an existing struct from offset accesses; it becomes a user type. Writes; undoable.
 
-    :param name: Existing struct type that dereferenced variables are typed as pointers to.
+    :param name: Existing plain struct that dereferenced variables point to; members are kept.
     """
     bv = call.binary_view
     # The plugin's per-parameter *_too_large string-cap code family.
@@ -151,9 +151,20 @@ def rex_struct_from_access(call: mcp.ToolCall, name: str) -> _StructFromAccessRe
             f"no type named '{shown}' in the view; create it as an empty struct with "
             f"bn_type_struct_create, then {_access_next_step(shown)}",
         )
+    if isinstance(existing, NamedTypeReferenceType):
+        raise mcp.ToolError(
+            "not_a_structure",
+            f"type '{shown}' is an alias of '{_truncate(str(existing.name))}', not a structure; "
+            "pass the aliased struct's own name",
+        )
     if not isinstance(existing, StructureType):
         raise mcp.ToolError(
             "not_a_structure", f"type '{shown}' is not a structure; pass the name of a struct type"
+        )
+    if existing.type != StructureVariant.StructStructureType:
+        described = "union" if existing.type == StructureVariant.UnionStructureType else "class"
+        raise mcp.ToolError(
+            "not_a_structure", f"type '{shown}' is a {described}; only plain structs are supported"
         )
     try:
         structure = bv.create_structure_from_offset_access(name)
@@ -163,6 +174,7 @@ def rex_struct_from_access(call: mcp.ToolCall, name: str) -> _StructFromAccessRe
             f"analysis has recorded no offset accesses for struct '{shown}' ({error}); "
             f"{_access_next_step(shown)}",
         ) from None
+    # Inference keeps the existing members, so an equal layout means nothing new was recorded.
     same_width = structure.width == existing.width
     if same_width and _member_layout(structure) == _member_layout(existing):
         raise mcp.ToolError(

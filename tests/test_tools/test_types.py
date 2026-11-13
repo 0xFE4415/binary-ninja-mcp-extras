@@ -5,11 +5,13 @@ from pathlib import Path
 import pytest
 from helpers import (
     DIRECTORY_NAME_MESSAGE,
+    FakeNamedTypeReference,
     FakeToolError,
     _call,
     _use_export_root,
     get_tool,
 )
+from helpers_types import FakeStructureVariant
 from helpers_view import (
     TYPE_LIBRARIES_ON_DISK,
     FakeArchitecture,
@@ -231,6 +233,23 @@ def test_type_library_import_objects_reports_a_failed_core_import(tmp_path: Path
         {"requested": "open", "reason": "the core could not import this object"}
     ]
     assert view.imported_library_objects == [(library, "open")]
+
+
+@pytest.mark.parametrize(
+    ("type_string", "reported"),
+    [
+        ("t" * 512, "t" * 512),
+        ("t" * 513, "t" * 512 + "... [1 chars truncated]"),
+    ],
+)
+def test_type_library_import_objects_bounds_the_reported_type_string(
+    tmp_path: Path, type_string: str, reported: str
+) -> None:
+    library = FakeTypeLibrary(name="libc", named_objects={"wide": FakeType("wide", type_string)})
+    path = _library_on_disk(tmp_path, library)
+    _, import_tool = get_tool("rex_type_library_import")
+    result = import_tool(_call(FakeBinaryView()), path, ["wide"], kind="objects")
+    assert result["imported"] == [{"requested": "wide", "type": reported}]
 
 
 def test_type_library_import_rejects_an_unknown_kind(tmp_path: Path) -> None:
@@ -1055,6 +1074,40 @@ def test_struct_from_access_rejects_a_type_that_is_not_a_structure() -> None:
         create(_call(view), "ctx_t")
     assert exc.value.code == "not_a_structure"
     assert exc.value.message == "type 'ctx_t' is not a structure; pass the name of a struct type"
+    assert view.defined_types == []
+
+
+def test_struct_from_access_rejects_an_alias_and_names_its_target() -> None:
+    alias = FakeNamedTypeReference("conn", "struct conn")
+    view = FakeBinaryView(types={"conn_t": alias, "conn": FakeStructureType([], 0)})
+    _, create = get_tool("rex_struct_from_access")
+    with pytest.raises(FakeToolError) as exc:
+        create(_call(view), "conn_t")
+    assert exc.value.code == "not_a_structure"
+    assert exc.value.message == (
+        "type 'conn_t' is an alias of 'conn', not a structure; pass the aliased struct's own name"
+    )
+    assert view.defined_types == []
+
+
+@pytest.mark.parametrize(
+    ("variant", "described"),
+    [
+        (FakeStructureVariant.UnionStructureType, "union"),
+        (FakeStructureVariant.ClassStructureType, "class"),
+    ],
+)
+def test_struct_from_access_rejects_a_union_or_class(
+    variant: FakeStructureVariant, described: str
+) -> None:
+    existing = FakeStructureType([], 0)
+    existing.type = variant
+    view = FakeBinaryView(types={"ctx": existing}, structure=FakeStructureType([], 8))
+    _, create = get_tool("rex_struct_from_access")
+    with pytest.raises(FakeToolError) as exc:
+        create(_call(view), "ctx")
+    assert exc.value.code == "not_a_structure"
+    assert exc.value.message == (f"type 'ctx' is a {described}; only plain structs are supported")
     assert view.defined_types == []
 
 

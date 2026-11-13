@@ -17,6 +17,7 @@ import pytest
 # These fake modules never import helpers, so importing them here cannot cycle.
 from helpers_dataflow import FakeInstruction, FakeMLILInstructions
 from helpers_symbol import FakeSymbolBinding, FakeSymbolType, fake_symbol_constructor
+from helpers_types import FakeStructureVariant
 from helpers_uidf import FakeRegisterValueType, FakeVariable, FakeVariableSourceType
 from helpers_view import (
     TYPE_LIBRARIES_ON_DISK,
@@ -286,10 +287,18 @@ class FakeToolCallBase:
     pass
 
 
+class FakeNamedTypeReference(FakeType):
+    """Mirrors NamedTypeReferenceType: ``name`` is the referenced type's name."""
+
+    def __init__(self, name: str, type_string: str) -> None:
+        super().__init__(name, type_string, type_class=FakeTypeClass.NamedTypeReferenceClass)
+
+
 def _fake_types_module() -> types.ModuleType:
     module = types.ModuleType("binaryninja.types")
     setattr(module, "Symbol", fake_symbol_constructor)
     setattr(module, "StructureType", FakeStructureType)
+    setattr(module, "NamedTypeReferenceType", FakeNamedTypeReference)
     return module
 
 
@@ -339,6 +348,7 @@ def install_fake_binaryninja() -> None:
     enums_module = types.ModuleType("binaryninja.enums")
     setattr(enums_module, "AnalysisState", FakeAnalysisState)
     setattr(enums_module, "AnalysisSkipReason", FakeAnalysisSkipReason)
+    setattr(enums_module, "StructureVariant", FakeStructureVariant)
     setattr(enums_module, "RegisterValueType", FakeRegisterValueType)
     setattr(enums_module, "TypeClass", FakeTypeClass)
     setattr(enums_module, "InstructionTextTokenType", FakeInstructionTextTokenType)

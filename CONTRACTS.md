@@ -289,14 +289,16 @@ some rows.
   derived, refs, refs_truncated}`, `location` being `{type, address, length}` or null and each
   ref `{function_start, function_name, address}` (the first two are null outside a function).
 - `rex_struct_from_access`: `name`, `registered`, `width`, `member_count`, `members` of
-  `{offset, name, type}`, `truncated`. `name` must be an existing struct type. Analysis
+  `{offset, name, type}`, `truncated`. `name` must be an existing plain struct. Analysis
   records offset accesses only through variables typed as pointers to it, and the tool sees
   only accesses already recorded. It redefines that type in place as a user type, in one
   undoable transaction, so code already using the type shows the members; `registered` is
-  `name`. A name that is not a type raises `type_not_found`, and a type that is not a struct
-  raises `not_a_structure`; neither calls the core. `create_failed` means the core inferred
-  nothing, or nothing beyond the existing width and members (offset, name, type); nothing is
-  written then. Each message names the next step.
+  `name`. An auto type, for example from debug info or a type library, becomes a user type.
+  A name that is not a type raises `type_not_found`. A type that is not a plain struct (a
+  union, a class, an alias, which names its target, or any other type) raises
+  `not_a_structure`. Neither calls the core. Inference keeps the existing members, so
+  `create_failed` means the core inferred nothing, or nothing beyond the existing width and
+  members (offset, name, type); nothing is written then. Each message names the next step.
 - `rex_tag_list`: `total`, `truncated`, and `tags` of `{address, tag_type, data,
   data_truncated}`. `rex_tag_set`: `address`, `tag_type`, `data`, `data_truncated`, `length`.
   A missing `tag_type` is created when `create_missing` is true (the default), and raises

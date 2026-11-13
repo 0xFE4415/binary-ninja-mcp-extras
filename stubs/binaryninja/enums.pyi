@@ -91,6 +91,12 @@ class RelocationType(IntEnum):
     UnhandledRelocation = 5
 
 
+class StructureVariant(IntEnum):
+    ClassStructureType = 0
+    StructStructureType = 1
+    UnionStructureType = 2
+
+
 class TypeClass(IntEnum):
     VoidTypeClass = 0
     BoolTypeClass = 1

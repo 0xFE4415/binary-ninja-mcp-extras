@@ -20,6 +20,7 @@ from helpers_symbol import (
     FakeSymbolType,
     fake_symbol_constructor,
 )
+from helpers_types import FakeStructureVariant
 from helpers_uidf import (
     FakeMediumLevelIL,
     FakePossibleValueSet,
@@ -1147,6 +1148,8 @@ class FakeStructureMember:
 
 
 class FakeStructureType:
+    type = FakeStructureVariant.StructStructureType
+
     def __init__(self, members: list[FakeStructureMember], width: int) -> None:
         self.members = members
         self.width = width

@@ -1,6 +1,6 @@
 from typing import Any
 
-from binaryninja.enums import SymbolBinding, SymbolType, TypeClass
+from binaryninja.enums import StructureVariant, SymbolBinding, SymbolType, TypeClass
 
 
 class Type:
@@ -28,6 +28,7 @@ class StructureMember:
 
 class StructureType(Type):
     members: list[StructureMember]
+    type: StructureVariant
     width: int
 
 
