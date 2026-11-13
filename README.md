@@ -146,6 +146,9 @@ Three searches stop early, so one call stays fast on a large database.
   with Python's `re`, which has no timeout. A pattern like `(a+)+$` can stall the server,
   and it handles calls one at a time. Use substring mode (`regex=false`) for untrusted
   input where the tool has it, and keep `rex_hlil_grep` patterns simple.
+- The server handles one call at a time. A long `rex_analysis_wait` or `rex_function_define`
+  wait (up to 10 minutes), or a `rex_eval_python` script that does not return, blocks every
+  other call, even after the client gives up waiting. Keep waits short and poll.
 - `rx_data_find` beats `rex_data_find` by about 7.5x on a whole-view scan and ties it
   (0.99x) on `.text`; on `.rodata` it was about 30x faster in one diagnostic run.
   `rx_multi_find` won at every scope, up to 12.6x on the full view. Both register
