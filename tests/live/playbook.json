@@ -1092,6 +1092,69 @@
    ]
   },
   {
+   "id": "mlil-uses-parameter-at-function-start",
+   "guards": "A parameter with no MLIL definition is defined at the function start and lists its reads.",
+   "tool": "rex_mlil_uses",
+   "args": {
+    "function": "compare_minus_one",
+    "address": "compare_minus_one",
+    "variable": "arg1"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "variables",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "value": "arg1",
+     "path": "variables.0.variable"
+    },
+    {
+     "kind": "subset",
+     "value": [],
+     "path": "variables.0.definitions"
+    },
+    {
+     "kind": "not_regex",
+     "pattern": "^0$",
+     "path": "variables.0.total"
+    }
+   ]
+  },
+  {
+   "id": "mlil-uses-parameter-at-function-start-without-function",
+   "guards": "Omitting function resolves it from address; the parameter is still defined at the start.",
+   "tool": "rex_mlil_uses",
+   "args": {
+    "address": "compare_minus_one",
+    "variable": "arg1"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "variables",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "value": "arg1",
+     "path": "variables.0.variable"
+    },
+    {
+     "kind": "subset",
+     "value": [],
+     "path": "variables.0.definitions"
+    },
+    {
+     "kind": "not_regex",
+     "pattern": "^0$",
+     "path": "variables.0.total"
+    }
+   ]
+  },
+  {
    "id": "pattern-credits-lowest-start-function",
    "guards": "A match in a block shared by two functions is credited once, to the lowest-start function.",
    "tool": "rex_find_functions_by_pattern",

@@ -238,10 +238,10 @@ some rows.
 - `rex_find_functions_by_pattern`: `total`, `truncated`, and `functions` of `{start, name,
   match_count, addresses, addresses_truncated}`.
 - `rex_function_constraints`: `function`, `total`, `truncated`, and `constraints` of
-  `{address, operator, constant, char, subject, subject_text}`. `operator` is `==` or `!=`.
-  With `operators` `"all"` (default `"equality"`, the rows above only) rows also cover the
-  ordered comparisons, `operator` spelled as in HLIL: `s<`, `s<=`, `s>=`, `s>` (signed) and
-  `u<`, `u<=`, `u>=`, `u>` (unsigned). Rows read subject, operator, constant, so a constant
+  `{address, operator, constant, char, subject, subject_text}`. With `operators`
+  `"equality"` (the default), `operator` is `==` or `!=`. With `"all"`, it can also be an
+  ordered comparison, spelled as in HLIL: `s<`, `s<=`, `s>=`, `s>` (signed) and `u<`, `u<=`,
+  `u>=`, `u>` (unsigned). Rows read subject, operator, constant, so a constant
   on the left mirrors the operator (`5 s< x` is `s>` 5). A signed row adds `signed_constant`,
   the constant as signed two's complement at its width (`x s< -1` in four bytes has
   `constant` `0xffffffff` and `signed_constant` `-0x1`); other rows have no such key.

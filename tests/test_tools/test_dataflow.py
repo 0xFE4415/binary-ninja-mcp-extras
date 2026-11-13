@@ -26,6 +26,7 @@ from helpers_dataflow import (
     set_var,
     sign_extend,
     var,
+    zero_extend,
 )
 from helpers_uidf import FakeVariable, FakeVariableSourceType
 from helpers_view import (
@@ -705,6 +706,20 @@ def test_signed_comparisons_add_the_signed_reading_of_the_constant(
     condition: FakeInstruction, operator: str, constant: str, signed: str | None
 ) -> None:
     assert _range_rows(condition, operators="all") == [_range_row(operator, constant, signed)]
+
+
+@pytest.mark.parametrize(
+    ("extended", "constant", "signed"),
+    [
+        (zero_extend(const(0x80000000, size=4)), "0x80000000", "0x80000000"),
+        (sign_extend(const(0x80000000, size=4)), "0xffffffff80000000", "-0x80000000"),
+    ],
+)
+def test_a_signed_reading_uses_the_width_after_extension(
+    extended: FakeInstruction, constant: str, signed: str
+) -> None:
+    condition = compare("MLIL_CMP_SLT", var(FakeVariable("value")), extended)
+    assert _range_rows(condition, operators="all") == [_range_row("s<", constant, signed)]
 
 
 def test_all_skips_ordered_comparisons_without_exactly_one_constant() -> None:
