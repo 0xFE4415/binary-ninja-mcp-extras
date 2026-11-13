@@ -188,7 +188,7 @@ def test_string_read_at_truncates_and_caps_max_chars() -> None:
     short = FakeBinaryView(strings=[FakeStringReference("hi", 0x1100)])
     assert read(_call(short), 0x1100)["truncated"] is False
     with pytest.raises(FakeToolError) as exc:
-        read(_call(view), 0x2000)
+        read(_call(view), 0x3000)
     assert exc.value.code == "no_string"
 
 
@@ -630,3 +630,24 @@ def test_string_refs_only_referenced_counts_a_capped_string_as_referenced() -> N
     entry = refs(_call(view), only_referenced=True)["strings"][0]
     assert len(entry["refs"]) == 64
     assert entry["refs_truncated"] is True
+
+
+def test_string_read_at_a_mid_string_address_returns_the_whole_detected_string() -> None:
+    view = FakeBinaryView(strings=[FakeStringReference("0123456789", 0x400034)])
+    _, read = get_tool("rex_string_read_at")
+    result = read(_call(view), 0x400037)
+    assert result["address"] == "0x400034"
+    assert result["length"] == 10
+    assert result["value"] == "0123456789"
+    assert result["detected"] is True
+    assert read(_call(view), 0x40003D)["detected"] is True
+    with pytest.raises(FakeToolError) as exc:
+        read(_call(view), 0x40003E)
+    assert exc.value.code == "no_string"
+
+
+def test_string_read_at_fallback_pins_the_ascii_boundary_after_the_bound() -> None:
+    assert _read_fallback(b"abcd\x7f", 4)["truncated"] is True
+    with pytest.raises(FakeToolError) as exc:
+        _read_fallback(b"abcd\x80", 4)
+    assert exc.value.code == "no_string"

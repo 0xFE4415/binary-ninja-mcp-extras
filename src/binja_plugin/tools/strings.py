@@ -148,7 +148,7 @@ def rex_string_refs(
     :param ignore_case: Match case-insensitively.
     :param limit: Maximum strings to return.
     :param offset: Matching strings to skip before collecting results.
-    :param only_referenced: Skip strings with no code ref to their start (data pointers excluded).
+    :param only_referenced: Skip strings without code refs (detected: to their start address).
     """
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
@@ -196,7 +196,7 @@ def rex_string_read_at(
     next_byte = b"" if run is None else bv.read(addr + len(run), 1)
     if run is not None and next_byte == b"\x00":
         return _undetected_string_result(run, truncated=False)
-    if run is not None and len(run) == max_chars and next_byte and next_byte[0] <= 0x7F:
+    if run is not None and next_byte and next_byte[0] <= 0x7F:
         return _undetected_string_result(run, truncated=True)
     raise mcp.ToolError(
         "no_string",

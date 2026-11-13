@@ -786,7 +786,7 @@ class FakeBinaryView:
 
     def get_string_at(self, address: int) -> object:
         for string in self.strings:
-            if string.start == address:
+            if string.start <= address < string.start + len(string):
                 return string
         return None
 
