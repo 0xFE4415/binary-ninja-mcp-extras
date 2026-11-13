@@ -18,7 +18,7 @@ _UNCATEGORIZED_USE_WHEN = "Registered rex_ tools that no category module defines
 
 _CATEGORY_USE_WHEN: dict[str, str] = {
     "decompile": "bn_binary_triage gives the entry point; read its HLIL or disassembly, grep HLIL.",
-    "strings": "Locate detected strings and the code that references them.",
+    "strings": "Find or read strings at an address, and the code that references them.",
     "scanning": "Find a magic constant or byte pattern, and the functions that contain it.",
     "data": "Read mapped bytes, relocations, or list references to an address.",
     "functions": "Define missing functions (code after int3, indirect targets), map call paths.",

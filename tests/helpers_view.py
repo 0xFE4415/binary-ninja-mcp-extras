@@ -20,6 +20,7 @@ from helpers_relocation import (
     RelocationWriteException,
 )
 from helpers_state import FakeStateMixin
+from helpers_string import FakeStringReference, ascii_string_at
 from helpers_symbol import (
     FakeSymbol,
     FakeSymbolBinding,
@@ -42,19 +43,6 @@ class FakeSegment:
         # Mirrors binaryview.Segment.readable (the SegmentFlag readability bit).
         self.readable = readable
 
-
-class FakeStringReference:
-    def __init__(self, value: str, start: int, type_name: str = "AsciiString") -> None:
-        self._value = value
-        self.start = start
-        self._type_name = type_name
-
-    def __len__(self) -> int:
-        return len(self._value)
-
-    @property
-    def value(self) -> str:
-        return self._value
 
     @property
     def type(self) -> types.SimpleNamespace:
@@ -774,9 +762,18 @@ class FakeBinaryView(FakeStateMixin):
 
     def get_string_at(self, address: int) -> object:
         for string in self.strings:
-            if string.start == address:
+            if string.start <= address < string.start + len(string):
                 return string
         return None
+
+    def get_ascii_string_at(
+        self,
+        address: int,
+        min_length: int = 4,
+        max_length: int | None = None,
+        require_cstring: bool = True,
+    ) -> FakeStringReference | None:
+        return ascii_string_at(self, address, min_length, max_length, require_cstring)
 
     def relocations_at(self, addr: int) -> list[FakeRelocation]:
         # Mirrors the observed core lookup: a relocation matches any address in its

@@ -71,7 +71,7 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_parameter_variables` | Map a parameter to its storage, variables, and copies. |
 | `rex_constant_find` | Find functions that use a constant in a disassembly line. |
 | `rex_find_functions_by_pattern` | Map a byte pattern to the functions that contain it. |
-| `rex_string_refs` | List code references to detected strings. |
+| `rex_string_refs` | List code references to detected strings, optionally only referenced ones. |
 | `rex_xrefs_to` | List code and data references to an address. |
 | `rex_disasm_at` | Disassemble the lines around an address. |
 | `rex_disasm_many` | Disassemble up to 64 addresses in one call. |
@@ -81,7 +81,7 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_call_paths` | Find call paths; `from_addr` reaching `to_addr` needs `direction=callees`. |
 | `rex_function_containing` | List every function that contains an address. |
 | `rex_component_get` | Show a component's functions and child components. |
-| `rex_string_read_at` | Read the detected string at an address. |
+| `rex_string_read_at` | Read the string at an address, detected or NUL-terminated ASCII. |
 | `rex_relocation_at` | List the relocations that cover an address. |
 | `rex_tag_list` | List the data, address, and function tags in the view. |
 | `rex_report_show` | Show a markdown report inside Binary Ninja. |
