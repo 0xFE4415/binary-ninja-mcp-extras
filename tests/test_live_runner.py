@@ -490,6 +490,73 @@ def test_core_version_failure_is_a_harness_error(stub: StubServer):
         runner.core_version(client, "h1")
 
 
+def write_included(tmp_path: Path, name: str, document: Any) -> None:
+    (tmp_path / name).write_text(json.dumps(document))
+
+
+def write_including_playbook(tmp_path: Path, fixture_file: Path, include: Any) -> Path:
+    path = write_playbook(tmp_path, fixture_file, [probe_step("main", 1)])
+    playbook = json.loads(path.read_text())
+    playbook["include"] = include
+    path.write_text(json.dumps(playbook))
+    return path
+
+
+def test_include_appends_steps_in_listed_order(tmp_path: Path, fixture_file: Path):
+    write_included(tmp_path, "first.json", {"steps": [probe_step("a", 1), probe_step("b", 2)]})
+    write_included(tmp_path, "second.json", {"steps": [probe_step("c", 3)]})
+    playbook_path = write_including_playbook(tmp_path, fixture_file, ["first.json", "second.json"])
+    playbook = runner.load_playbook(playbook_path)
+    assert [step["id"] for step in playbook["steps"]] == ["main", "a", "b", "c"]
+
+
+def test_include_is_relative_to_the_including_file(tmp_path: Path, fixture_file: Path):
+    (tmp_path / "nested").mkdir()
+    write_included(tmp_path / "nested", "more.json", {"steps": [probe_step("a", 1)]})
+    playbook_path = write_including_playbook(tmp_path, fixture_file, ["nested/more.json"])
+    playbook = runner.load_playbook(playbook_path)
+    assert [step["id"] for step in playbook["steps"]] == ["main", "a"]
+
+
+def test_include_missing_file_is_refused(tmp_path: Path, fixture_file: Path):
+    playbook_path = write_including_playbook(tmp_path, fixture_file, ["absent.json"])
+    with pytest.raises(runner.HarnessError, match="absent.json"):
+        runner.load_playbook(playbook_path)
+
+
+def test_include_that_is_not_a_list_is_refused(tmp_path: Path, fixture_file: Path):
+    playbook_path = write_including_playbook(tmp_path, fixture_file, "more.json")
+    with pytest.raises(runner.HarnessError, match="include must be a list"):
+        runner.load_playbook(playbook_path)
+
+
+def test_included_file_with_other_keys_is_refused(tmp_path: Path, fixture_file: Path):
+    write_included(tmp_path, "more.json", {"steps": [], "fixture": {}})
+    playbook_path = write_including_playbook(tmp_path, fixture_file, ["more.json"])
+    with pytest.raises(runner.HarnessError, match="only steps is allowed.*fixture"):
+        runner.load_playbook(playbook_path)
+
+
+def test_included_file_that_is_not_an_object_is_refused(tmp_path: Path, fixture_file: Path):
+    write_included(tmp_path, "more.json", [])
+    playbook_path = write_including_playbook(tmp_path, fixture_file, ["more.json"])
+    with pytest.raises(runner.HarnessError, match="not a JSON object"):
+        runner.load_playbook(playbook_path)
+
+
+def test_duplicate_step_ids_across_files_are_refused(tmp_path: Path, fixture_file: Path):
+    write_included(tmp_path, "more.json", {"steps": [probe_step("main", 2)]})
+    playbook_path = write_including_playbook(tmp_path, fixture_file, ["more.json"])
+    with pytest.raises(runner.HarnessError, match="duplicate step id 'main'"):
+        runner.load_playbook(playbook_path)
+
+
+def test_run_executes_included_steps(stub: StubServer, tmp_path: Path, fixture_file: Path):
+    write_included(tmp_path, "more.json", {"steps": [probe_step("bad", 2)]})
+    playbook_path = write_including_playbook(tmp_path, fixture_file, ["more.json"])
+    assert runner.run(playbook_path, stub.url) == 1
+
+
 def test_fixture_hash_mismatch_is_refused(tmp_path: Path, fixture_file: Path):
     playbook_path = write_playbook(tmp_path, fixture_file, [])
     fixture_file.write_bytes(b"changed")
