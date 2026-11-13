@@ -100,7 +100,7 @@ def rex_export_disasm(
     window = lines[start:end][:max_lines]
 
     def serialize(selected: list[tuple[int, str]]) -> str:
-        return "".join(f"{hex(address)}  {text}\n" for address, text in selected)
+        return "".join(f"{hex(line_address)}  {text}\n" for line_address, text in selected)
 
     text, dropped = _fit_to_export_cap(serialize, window)
     resolved = _resolve_export_path(filename)
@@ -135,6 +135,7 @@ def rex_export_symbols(
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_EXPORT_SYMBOLS)
     offset = _validate_range("offset", offset, 0)
+    # The core rejects negatives first; this guards direct handler calls.
     _validate_range("start", start, 0)
     if start >= end:
         raise mcp.ToolError("invalid_params", "end must be greater than start")

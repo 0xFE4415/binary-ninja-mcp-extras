@@ -39,7 +39,7 @@ _MAX_ANALYSIS_WAIT_MS = 10000
 
 def _default_export_root() -> Path:
     user_root = user_directory()
-    if user_root is None:
+    if user_root is None or user_root == "":
         return Path.home() / ".binaryninja" / "exports"
     return Path(user_root) / "exports"
 

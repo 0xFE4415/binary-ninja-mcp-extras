@@ -728,7 +728,7 @@ def test_export_symbols_start_and_end_accept_integers_and_address_expressions() 
         assert properties[name]["minimum"] == 0
 
 
-def test_export_symbols_handles_addresses_above_two_to_the_53(
+def test_export_symbols_writes_exact_hex_for_addresses_above_two_to_the_53(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     root = _use_export_root(monkeypatch, tmp_path)
@@ -753,5 +753,18 @@ def test_export_root_falls_back_to_the_home_directory_without_a_user_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(tools, "user_directory", lambda: None)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert tools._default_export_root() == tmp_path / ".binaryninja" / "exports"
+
+
+def test_export_root_is_derived_from_the_fake_user_directory_at_import() -> None:
+    assert tools._default_export_root() == Path.home() / ".bn-fake-user" / "exports"
+    assert tools._EXPORT_ROOT == Path.home() / ".bn-fake-user" / "exports"
+
+
+def test_export_root_falls_back_to_the_home_directory_for_an_empty_user_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(tools, "user_directory", lambda: "")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     assert tools._default_export_root() == tmp_path / ".binaryninja" / "exports"

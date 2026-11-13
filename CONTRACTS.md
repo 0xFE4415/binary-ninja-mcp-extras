@@ -241,8 +241,12 @@ some rows.
   string (`0x` hex included), like the built-in `IntegerExpression` type. Send a string for
   values above 2^53, which clients that read JSON numbers as doubles would round. `end` must
   be greater than `start`.
+  A negative or 2^64-or-larger `start` or `end` is rejected by the core's unsigned integer
+  parse (`Invalid unsigned integer parameter ...`).
 - The export root is the `exports` directory inside `binaryninja.user_directory()`, resolved
-  once at import. When that returns `None`, it is `~/.binaryninja/exports`.
+  once at import. When that returns `None` or an empty string, it is `~/.binaryninja/exports`.
+  The root follows `user_directory()`, so exports can sit at a different path than before on
+  macOS, Windows, and portable installs.
 - `rex_find_functions_by_pattern`: `total`, `truncated`, and `functions` of `{start, name,
   match_count, addresses, addresses_truncated}`.
 - `rex_function_constraints`: `function`, `total`, `truncated`, and `constraints` of
