@@ -585,3 +585,18 @@ def test_tag_list_pages_across_scopes_with_exact_total() -> None:
     assert page["total"] == 3
     assert page["truncated"] is True
     assert [row["scope"] for row in page["tags"]] == ["function"]
+
+
+def test_kv_delete_removes_a_value_whose_stored_type_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = FakeBinaryView()
+    view.store_metadata("rex/odd", object())
+
+    def unreadable(key: str) -> object:
+        raise TypeError(key)
+
+    monkeypatch.setattr(view, "query_metadata", unreadable)
+    _, kv_delete = get_tool("rex_kv_delete")
+    assert kv_delete(_call(view), "odd") == {"key": "odd", "existed": True}
+    assert view.metadata == {}

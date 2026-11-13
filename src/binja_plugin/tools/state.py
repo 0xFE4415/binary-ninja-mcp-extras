@@ -140,12 +140,13 @@ def rex_kv_delete(call: mcp.ToolCall, key: str) -> _KvDeleteResult:
     """
     _require_key(key)
     bv = call.binary_view
+    existed = True
     try:
         bv.query_metadata(_METADATA_PREFIX + key)
     except KeyError:
         existed = False
-    else:
-        existed = True
+    except Exception:
+        pass
     bv.remove_metadata(_METADATA_PREFIX + key)
     return {"key": _truncate(key), "existed": existed}
 

@@ -12,8 +12,7 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
   `rex_*` listings return structured data.
 - Paged tools accept but do not echo `limit`/`offset`. `rex_string_search`, `rex_data_find`,
   `rx_data_find`, `rex_string_refs`, `rex_xrefs_to`, `rex_tag_list`, `rex_kv_list`,
-  `rex_uidf_list`, and
-  `rex_export_symbols` return `total`/`truncated`, with results inline.
+  `rex_uidf_list`, and `rex_export_symbols` return `total`/`truncated`, with results inline.
   `rex_export_symbols` instead writes the selected rows to a file and returns `path`,
   `bytes_written`, `rows` written, `total`, and `truncated`; the flag also covers rows dropped
   by its 4 MiB file cap. `rex_component_get` pages functions and returns exact
@@ -263,7 +262,8 @@ some rows.
 - `rex_hlil_statements`: `function`, `total`, `truncated`, and `statements` of `{address,
   index, text}`.
 - `rex_kv_delete`: `key`, `existed` (true when a value was stored under the key before the
-  delete; a missing key is not an error and reports false). `rex_kv_get`: `key`, `value`,
+  delete; a missing key is not an error and reports false; a stored value the core cannot
+  read back still counts as existing and is deleted). `rex_kv_get`: `key`, `value`,
   `truncated`. `rex_kv_set`: `key`,
   `length`, `value` (preview), `truncated`. `rex_kv_set` stores under the `rex/` metadata
   prefix with the core's persistent-flag default, so values serialize into the BNDB snapshot
@@ -275,7 +275,11 @@ some rows.
   count of the full stored value; a non-string value stored by other code reports the length
   of its `str()` text, the same text `rex_kv_get` returns. Reading `bv.metadata` copies every
   entry of the view, so the cost grows with all stored metadata, not just `rex/` keys. A key
-  over 512 characters is clipped with the usual suffix.
+  over 512 characters is clipped with the usual suffix and cannot be used with the other kv
+  tools; a key that foreign code stored with a NUL byte is listed but `rex_kv_get` and
+  `rex_kv_delete` reject it. The core converts every entry of `bv.metadata` at once, so one
+  `rex/` or other entry of an unrecognised type makes `rex_kv_list` fail for the whole view
+  (the core raises `TypeError`); the tool does not work around it.
 - `rex_memory_write`: `address`, `bytes_written`, `analysis_complete`.
 - `rex_mlil_uses`: `function`, `definition_site` (the queried address), and `variables`, each
   `variable`, `storage`, `type`, `definitions` (addresses of every definition the core records
@@ -308,7 +312,9 @@ some rows.
   address, then scope name (`address`, `data`, `function`), then tag type name, then tag data, so
   the order is stable between calls and `total` counts every row. The scopes come from three
   separate core calls and are not deduplicated; a tag attached in two scopes appears once per
-  scope.
+  scope. For scope `function` the address is the function's start. There is no auto/user
+  filter: tags that analysis creates itself are listed in the `address` and `function` scopes,
+  so a real binary can return many more rows than the data scope alone.
 - `rex_tag_set`: `address`, `tag_type`, `data`, `data_truncated`, `length`.
   A missing `tag_type` is created when `create_missing` is true (the default), and raises
   `tag_type_not_found` otherwise.
