@@ -214,7 +214,10 @@ def test_export_disasm_rejects_a_single_line_over_the_cap(
     assert not root.exists()
 
 
-def test_export_disasm_rejects_out_of_function_addresses_and_ranges() -> None:
+def test_export_disasm_rejects_out_of_function_addresses_and_ranges(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
     view = _disasm_view()
     _, export = get_tool("rex_export_disasm")
     # Same rejection as rex_disasm_at: never snapped to a neighboring function.
@@ -621,7 +624,10 @@ def test_export_symbols_writes_a_header_only_file_for_an_empty_range(
     assert (root / "none.csv").read_bytes() == b"symbol_address,symbol_type,name\n"
 
 
-def test_export_symbols_rejects_invalid_ranges_limits_and_format() -> None:
+def test_export_symbols_rejects_invalid_ranges_limits_and_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_export_root(monkeypatch, tmp_path)
     view = _symbol_view()
     _, export = get_tool("rex_export_symbols")
     for kwargs, message in (

@@ -596,12 +596,14 @@ def test_string_read_at_fallback_with_one_char_needs_an_ascii_follower() -> None
 
 
 class _CountingDerivedView(FakeBinaryView):
-    derived_reads = 0
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.derived_reads = 0
 
     @property
     @override
     def derived_strings(self) -> list[FakeDerivedString]:
-        type(self).derived_reads += 1
+        self.derived_reads += 1
         return []
 
     @derived_strings.setter
@@ -615,9 +617,9 @@ def test_string_refs_reads_derived_strings_only_after_detected_ones() -> None:
     view = _CountingDerivedView(strings=strings)
     _, refs = get_tool("rex_string_refs")
     refs(_call(view), limit=2)
-    assert _CountingDerivedView.derived_reads == 0
+    assert view.derived_reads == 0
     refs(_call(view), limit=3)
-    assert _CountingDerivedView.derived_reads == 1
+    assert view.derived_reads == 1
 
 
 def test_string_refs_only_referenced_counts_a_capped_string_as_referenced() -> None:
