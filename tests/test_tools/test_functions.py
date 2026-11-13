@@ -400,6 +400,7 @@ def test_call_paths_depth_shortcut_and_errors() -> None:
         "reachable": True,
         "paths": [[{"start": "0x1100", "name": "main"}]],
         "truncated": False,
+        "depth_limited": False,
         "explored": 1,
     }
     with pytest.raises(FakeToolError) as exc:
@@ -470,6 +471,7 @@ def test_call_paths_reports_one_path_per_intermediate_and_sorts_neighbors() -> N
             ]
         ],
         "truncated": False,
+        "depth_limited": False,
         "explored": 4,
     }
     # Neighbors are ordered by start address, not insertion order, in both directions.
@@ -606,3 +608,57 @@ def test_function_undefine_misses_keep_the_diagnosis_without_define_advice() -> 
         "function at 0x4000 exists but has not been analyzed yet; wait for analysis "
         "(rex_analysis_wait) or run bn_analysis_update"
     )
+
+
+def _callee_chain() -> FakeBinaryView:
+    root = FakeFunction("root", 0x1000, 0x1010)
+    mid = FakeFunction("mid", 0x2000, 0x2010)
+    leaf = FakeFunction("leaf", 0x3000, 0x3010)
+    far = FakeFunction("far", 0x4000, 0x4010)
+    root.callees = [mid]
+    mid.callees = [leaf]
+    leaf.callees = [far]
+    return FakeBinaryView(functions=[root, mid, leaf, far])
+
+
+def test_call_paths_flags_a_miss_caused_by_max_depth() -> None:
+    _, paths = get_tool("rex_call_paths")
+    limited = paths(_call(_callee_chain()), 0x1000, 0x4000, direction="callees", max_depth=2)
+    assert limited["reachable"] is False
+    assert limited["paths"] == []
+    assert limited["truncated"] is False
+    assert limited["depth_limited"] is True
+    deep_enough = paths(_call(_callee_chain()), 0x1000, 0x4000, direction="callees", max_depth=3)
+    assert deep_enough["reachable"] is True
+    assert deep_enough["depth_limited"] is False
+
+
+def test_call_paths_clean_miss_is_not_depth_limited() -> None:
+    root = FakeFunction("root", 0x1000, 0x1010)
+    mid = FakeFunction("mid", 0x2000, 0x2010)
+    island = FakeFunction("island", 0x5000, 0x5010)
+    root.callees = [mid]
+    view = FakeBinaryView(functions=[root, mid, island])
+    _, paths = get_tool("rex_call_paths")
+    result = paths(_call(view), 0x1000, 0x5000, direction="callees", max_depth=2)
+    assert result["reachable"] is False
+    assert result["depth_limited"] is False
+    shallow = paths(_call(view), 0x1000, 0x5000, direction="callees", max_depth=1)
+    assert shallow["reachable"] is False
+    assert shallow["depth_limited"] is True
+
+
+def test_call_paths_flags_depth_limit_even_when_a_path_was_found() -> None:
+    root = FakeFunction("root", 0x1000, 0x1010)
+    mid = FakeFunction("mid", 0x2000, 0x2010)
+    leaf = FakeFunction("leaf", 0x3000, 0x3010)
+    root.callees = [leaf, mid]
+    mid.callees = [leaf]
+    view = FakeBinaryView(functions=[root, mid, leaf])
+    _, paths = get_tool("rex_call_paths")
+    shallow = paths(_call(view), 0x1000, 0x3000, direction="callees", max_depth=1, max_paths=5)
+    assert [[step["name"] for step in path] for path in shallow["paths"]] == [["root", "leaf"]]
+    assert shallow["depth_limited"] is True
+    full = paths(_call(view), 0x1000, 0x3000, direction="callees", max_depth=2, max_paths=5)
+    assert len(full["paths"]) == 2
+    assert full["depth_limited"] is False

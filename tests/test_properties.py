@@ -435,6 +435,7 @@ def test_call_paths_reports_real_edges_within_the_depth_cap(
             "reachable": True,
             "paths": [[{"start": hex(_STARTS[from_index]), "name": f"f{from_index}"}]],
             "truncated": False,
+            "depth_limited": False,
             "explored": 1,
         }
         return

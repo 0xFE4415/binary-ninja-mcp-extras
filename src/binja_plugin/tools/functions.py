@@ -36,6 +36,7 @@ class _CallPathsResult(TypedDict):
     reachable: bool
     paths: list[list[_FunctionEntry]]
     truncated: bool
+    depth_limited: bool
     explored: int
 
 
@@ -112,6 +113,7 @@ def rex_call_paths(
             "reachable": True,
             "paths": [[_function_entry(source)]],
             "truncated": False,
+            "depth_limited": False,
             "explored": 1,
         }
     paths: list[list[_FunctionEntry]] = []
@@ -119,9 +121,11 @@ def rex_call_paths(
     visited = {source.start}
     explored = 0
     hit_path_cap = False
+    depth_limited = False
     while queue and len(paths) < max_paths:
         function, path = queue.popleft()
         if len(path) > max_depth:
+            depth_limited = True
             continue
         explored += 1
         edges = function.callers if direction == "callers" else function.callees
@@ -142,6 +146,7 @@ def rex_call_paths(
         "reachable": bool(paths),
         "paths": paths,
         "truncated": hit_path_cap,
+        "depth_limited": depth_limited,
         "explored": explored,
     }
 

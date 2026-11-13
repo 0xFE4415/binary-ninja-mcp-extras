@@ -84,7 +84,7 @@ def _analysis_snapshot(bv: BinaryView) -> _AnalysisSnapshot:
 @mcp.tool(read_only=True)
 def rex_analysis_wait(
     call: mcp.ToolCall,
-    timeout_ms: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_ANALYSIS_WAIT_MS)],
+    timeout_ms: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_ANALYSIS_WAIT_MS)] = 10000,
 ) -> _AnalysisWaitResult:
     """Bounded wait for background analysis with a progress snapshot at expiry.
 
