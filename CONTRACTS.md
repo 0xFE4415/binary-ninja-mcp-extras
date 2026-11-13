@@ -283,7 +283,16 @@ some rows.
   relocation has none).
 - `rex_report_show`: `title`, `length`, `preview`, `truncated`. The markdown can link into
   the view with `binaryninja://?expr=...`.
-- `rex_string_read_at`: `address`, `length`, `type`, `value`, `truncated`.
+- `rex_string_read_at`: `address`, `length`, `type`, `value`, `truncated`, `detected`.
+  `detected` is true for a string analysis found. Otherwise the tool reads NUL-terminated
+  ASCII starting exactly at `addr` (`detected` false, `type` `AsciiString`), reading at most
+  `max_chars` characters. A longer run returns its first `max_chars` characters with
+  `truncated` true and `length` equal to `max_chars` (a lower bound). No string either way
+  fails with `no_string`.
+  `rex_string_refs` takes `only_referenced` (default false). When true it skips strings
+  with no code reference, and they take no slot in `total`, paging, or `truncated`. Only
+  code references to a string's start address count; a string reached only through data
+  pointers shows none.
   `rex_string_search`: `total`, `truncated`, and `strings` of `{address, length, type,
   value}`. `rex_string_refs`: `total`, `truncated`, and `strings` of `{value, location,
   derived, refs, refs_truncated}`, `location` being `{type, address, length}` or null and each

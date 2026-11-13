@@ -81,7 +81,7 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_call_paths` | Find call paths; `from_addr` reaching `to_addr` needs `direction=callees`. |
 | `rex_function_containing` | List every function that contains an address. |
 | `rex_component_get` | Show a component's functions and child components. |
-| `rex_string_read_at` | Read the detected string at an address. |
+| `rex_string_read_at` | Read the string at an address, detected or NUL-terminated ASCII. |
 | `rex_relocation_at` | List the relocations that cover an address. |
 | `rex_tag_list` | List the tags in the view. |
 | `rex_report_show` | Show a markdown report inside Binary Ninja. |
