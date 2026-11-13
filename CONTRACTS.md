@@ -189,18 +189,18 @@ some rows.
 - `rex_analysis_wait`: `completed`, `elapsed_ms`, `progress` (`{state, count, total}`),
   `function_count`, `in_flight` (`{start, name, analysis_time_ms}`, at most 10), and
   `truncated` (more in-flight functions than listed).
-- `rex_annotate_many`: `applied`, `failed_count`, `total`, `analysis_complete`, and
-  `results` rows `{addr, ok, function?, error?}`; `function` is the resolved function entry
-  read after the batch applies, so it carries the new name and its `same_name`, present on
-  every row that passed validation. A `comment` lands at the exact `addr` the item named; `name`
-  and `prototype` apply to the whole function. A rename keeps the symbol's type, binding,
-  namespace, and ordinal; only the name changes. An item must carry at least one of `name`,
-  `comment`, `prototype` (an empty `comment` counts: it clears the comment); an item with none is
-  an error row. A `prototype` that does not parse to a function type (for example `int`) is an
-  error row naming the type class and showing an example; nothing is applied for it. A name
-  inside a valid `prototype` is never applied. When the item has no `name` and the prototype
-  named something, the row carries `prototype_name_ignored` with that name; it is absent for an
-  unnamed prototype such as `int(int a)` and when the item gave a `name`.
+- `rex_annotate_many`: `applied`, `failed_count`, `total`, `analysis_complete`, and `results` rows
+  `{addr, ok, function?, error?, prototype_name_ignored?}`; `function` is the resolved function
+  entry read after the batch applies, so it carries the new name and its `same_name`, present on
+  every row that passed validation. A `comment` lands at the exact `addr` the item named; `name` and
+  `prototype` apply to the whole function. A rename keeps the symbol's type, binding, namespace, and
+  ordinal; only the name changes. An item must carry at least one of `name`, `comment`, `prototype`
+  (an empty `comment` counts: it clears the comment); an item with none is an error row. A
+  `prototype` that does not parse to a function type (for example `int`) is an error row naming the
+  type class and showing an example (a typedef name also gets a hint to spell out the signature);
+  nothing is applied for it. A name inside a valid `prototype` is never applied. When the item has
+  no `name` and the prototype named something, the row carries `prototype_name_ignored` with that
+  name; it is absent for an unnamed prototype such as `int(int a)` and when the item gave a `name`.
 - `rex_binary_close`: `closed` (always true; a failed close raises `close_failed`) and
   `path`, the closed file's full filename as the core reports it (truncated).
 - `rex_call_paths`: `from_function` and `to_function` (resolved function entries for

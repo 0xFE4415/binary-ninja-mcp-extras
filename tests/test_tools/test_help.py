@@ -261,7 +261,10 @@ def test_help_details_the_annotate_items_schema() -> None:
     assert properties["comment"]["description"] == (
         "comment at exactly addr; an empty string clears it"
     )
-    assert "function prototype" in properties["prototype"]["description"]
+    assert properties["prototype"]["description"] == (
+        "function prototype such as 'int name(int a, int b)'; a name inside it is not applied,"
+        " use name"
+    )
 
 
 def test_help_details_the_uidf_batch_items_schema() -> None:

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, override
 
 from helpers_dataflow import FakeMLILInstructions
+from helpers_qualified_name import FakeQualifiedName, ParseOutcome, prototype_name
 from helpers_symbol import (
     FakeSymbol,
     FakeSymbolBinding,
@@ -665,9 +666,8 @@ class FakeBinaryView:
         self.file = file if file is not None else FakeFileMetadata()
         # rex_annotate_many: transaction lifecycle markers in application order.
         self.transactions: list[str] = []
-        # Injected into parse_type_string to model a type string the core rejects.
         # Per-text parse outcome: a raised error or a (type, name); else an unnamed function type.
-        self.parse_type_results: dict[str, tuple[FakeType, str] | Exception] = {}
+        self.parse_type_results: dict[str, ParseOutcome] = {}
         # Type-system state for the type-library and struct-inference tools: ``arch`` is
         # Optional to model views without a default architecture; ``library_types`` maps a
         # requested name to the deconflicted name the core would insert (None fails the
@@ -847,13 +847,14 @@ class FakeBinaryView:
     def redo(self) -> None:
         self.file.redo()
 
-    def parse_type_string(self, text: str) -> tuple[FakeType, str]:
+    def parse_type_string(self, text: str) -> tuple[Any, FakeQualifiedName]:
         outcome = self.parse_type_results.get(text)
         if isinstance(outcome, Exception):
             raise outcome
         if outcome is not None:
             return outcome
-        return FakeType("", text, type_class=FakeTypeClass.FunctionTypeClass), ""
+        function_type = FakeType("", text, type_class=FakeTypeClass.FunctionTypeClass)
+        return function_type, prototype_name(text)
 
     def parse_possiblevalueset(
         self, value: str, state: FakeRegisterValueType, here: int = 0

@@ -9,6 +9,7 @@ from helpers import (
     get_tool,
     plain_gap_message,
 )
+from helpers_qualified_name import FakeQualifiedName
 from helpers_symbol import FakeSymbolBinding, FakeSymbolType
 from helpers_view import (
     FakeBinaryView,
@@ -75,6 +76,7 @@ def test_annotate_many_applies_name_comment_and_prototype_in_one_transaction() -
                 "addr": "0x2000",
                 "ok": True,
                 "function": {"start": "0x2000", "name": "helper", **NO_ALTERNATIVES},
+                "prototype_name_ignored": "helper",
             },
         ],
         "analysis_complete": True,
@@ -405,6 +407,7 @@ def test_annotate_many_echoes_the_function_start_for_function_level_fields() -> 
             "addr": "0x1100",
             "ok": True,
             "function": {"start": "0x1100", "name": "renamed", **NO_ALTERNATIVES},
+            "prototype_name_ignored": "main",
         },
     ]
     assert main.name == "renamed"
@@ -532,7 +535,7 @@ def test_annotate_many_rejects_a_prototype_that_is_not_a_function_type() -> None
     main, helper = view.functions
     view.parse_type_results["int"] = (
         FakeType("", "int", type_class=FakeTypeClass.IntegerTypeClass),
-        "",
+        FakeQualifiedName(),
     )
     _, annotate = get_tool("rex_annotate_many")
     result = annotate(
@@ -576,7 +579,7 @@ def test_annotate_many_reports_a_name_the_prototype_carried_but_did_not_apply() 
     view = _annotate_view()
     main, helper = view.functions
     named = FakeType("", "int proto_name(int a)", type_class=FakeTypeClass.FunctionTypeClass)
-    view.parse_type_results["int proto_name(int a)"] = (named, "proto_name")
+    view.parse_type_results["int proto_name(int a)"] = (named, FakeQualifiedName("proto_name"))
     _, annotate = get_tool("rex_annotate_many")
     result = annotate(
         FakeParsingToolCall(view),
@@ -591,3 +594,48 @@ def test_annotate_many_reports_a_name_the_prototype_carried_but_did_not_apply() 
     assert "prototype_name_ignored" not in result["results"][2]
     assert main.name == "main"
     assert helper.name == "chosen"
+
+
+def test_annotate_many_rejects_pointer_and_typedef_prototypes_with_a_helpful_message() -> None:
+    view = _annotate_view()
+    main, helper = view.functions
+    view.parse_type_results["int (*)(int)"] = (
+        FakeType("", "int (*)(int)", type_class=FakeTypeClass.PointerTypeClass),
+        FakeQualifiedName(),
+    )
+    view.parse_type_results["handler_t"] = (
+        FakeType("", "handler_t", type_class=FakeTypeClass.NamedTypeReferenceClass),
+        FakeQualifiedName(),
+    )
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view),
+        [
+            {"addr": "0x1100", "prototype": "int (*)(int)"},
+            {"addr": "0x2000", "prototype": "handler_t"},
+        ],
+    )
+    base = "prototype must be a function prototype such as 'int name(int a, int b)', got "
+    assert result["results"] == [
+        {"addr": "0x1100", "ok": False, "error": f"{base}PointerTypeClass"},
+        {
+            "addr": "0x2000",
+            "ok": False,
+            "error": f"{base}NamedTypeReferenceClass;"
+            " spell out the function signature instead of a typedef name",
+        },
+    ]
+    assert main.user_type is None
+    assert helper.user_type is None
+    assert view.transactions == []
+
+
+def test_annotate_many_reports_the_prototype_name_as_a_plain_string() -> None:
+    view = _annotate_view()
+    _, annotate = get_tool("rex_annotate_many")
+    result = annotate(
+        FakeParsingToolCall(view), [{"addr": "0x2000", "prototype": "int helper(int fd)"}]
+    )
+    ignored = result["results"][0]["prototype_name_ignored"]
+    assert ignored == "helper"
+    assert type(ignored) is str

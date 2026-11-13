@@ -205,21 +205,27 @@ def _annotate_apply_plans(bv: BinaryView, staged: list[_AnnotationPlan]) -> None
         raise mcp.ToolError("annotate_failed", f"batch rolled back: {error}") from None
 
 
+def _not_a_function_message(type_class: TypeClass) -> str:
+    message = (
+        "prototype must be a function prototype such as 'int name(int a, int b)',"
+        f" got {type_class.name}"
+    )
+    if type_class == TypeClass.NamedTypeReferenceClass:
+        return f"{message}; spell out the function signature instead of a typedef name"
+    return message
+
+
 def _annotate_parse_prototype(
-    bv: BinaryView, address: int, fields: _AnnotationFields
+    bv: BinaryView, address: int, prototype: str, explicit_name: str | None
 ) -> tuple[Type, str | None] | _AnnotationRow:
     """The function type of the item's prototype and the name it carried but did not apply."""
     try:
-        parsed_type, parsed_name = bv.parse_type_string(str(fields.prototype))
+        parsed_type, parsed_name = bv.parse_type_string(prototype)
     except Exception as error:
         return _annotate_function_error(address, f"bad type: {_truncate(str(error))}")
     if parsed_type.type_class != TypeClass.FunctionTypeClass:
-        return _annotate_function_error(
-            address,
-            "prototype must be a function prototype such as 'int name(int a, int b)',"
-            f" got {parsed_type.type_class.name}",
-        )
-    return parsed_type, str(parsed_name) if fields.name is None and parsed_name else None
+        return _annotate_function_error(address, _not_a_function_message(parsed_type.type_class))
+    return parsed_type, str(parsed_name) if explicit_name is None and parsed_name else None
 
 
 def _annotate_resolve(
@@ -251,7 +257,7 @@ def _annotate_resolve(
     parsed_type: Type | None = None
     ignored_name: str | None = None
     if fields.prototype is not None:
-        parsed = _annotate_parse_prototype(bv, address, fields)
+        parsed = _annotate_parse_prototype(bv, address, fields.prototype, fields.name)
         if not isinstance(parsed, tuple):
             return parsed
         parsed_type, ignored_name = parsed
