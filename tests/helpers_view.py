@@ -45,11 +45,6 @@ class FakeSegment:
         self.readable = readable
 
 
-    @property
-    def type(self) -> types.SimpleNamespace:
-        return types.SimpleNamespace(name=self._type_name)
-
-
 class RenderableText:
     def __init__(self, text: str) -> None:
         self._text = text
