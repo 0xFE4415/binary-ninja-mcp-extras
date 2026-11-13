@@ -1426,6 +1426,117 @@
    ]
   },
   {
+   "id": "kv-set-for-list",
+   "guards": "rex_kv_set stores a value that rex_kv_list then reports.",
+   "tool": "rex_kv_set",
+   "args": {
+    "key": "playbook/list",
+    "value": "abcde"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "length",
+     "value": 5
+    }
+   ]
+  },
+  {
+   "id": "kv-list-shows-stored-key-with-length",
+   "guards": "rex_kv_list returns a stored key with the prefix stripped and the value's length.",
+   "tool": "rex_kv_list",
+   "args": {
+    "prefix": "playbook/"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "total",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "path": "truncated",
+     "value": false
+    },
+    {
+     "kind": "includes",
+     "path": "keys",
+     "item": {
+      "key": "playbook/list",
+      "length": 5
+     }
+    }
+   ]
+  },
+  {
+   "id": "kv-delete-reports-existed-true",
+   "guards": "rex_kv_delete reports existed true when a value was stored under the key.",
+   "tool": "rex_kv_delete",
+   "args": {
+    "key": "playbook/list"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "existed",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": "kv-delete-reports-existed-false",
+   "guards": "rex_kv_delete reports existed false for a key that is already gone, without an error.",
+   "tool": "rex_kv_delete",
+   "args": {
+    "key": "playbook/list"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "existed",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": "tag-set-for-list",
+   "guards": "rex_tag_set adds a data tag that rex_tag_list then reports.",
+   "tool": "rex_tag_set",
+   "args": {
+    "addr": "0x400160",
+    "tag_type": "Finding",
+    "data": "playbook tag"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "address",
+     "value": "0x400160"
+    }
+   ]
+  },
+  {
+   "id": "tag-list-reports-data-scope",
+   "guards": "rex_tag_list rows carry a scope; a tag added with rex_tag_set is scope data.",
+   "tool": "rex_tag_list",
+   "args": {
+    "limit": 1000
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "tags",
+     "item": {
+      "address": "0x400160",
+      "scope": "data",
+      "tag_type": "Finding",
+      "data": "playbook tag"
+     }
+    }
+   ]
+  },
+  {
    "id": "annotate-name-with-nul-rejected",
    "guards": "A NUL byte in an annotation name fails that row with a name error and applies nothing in the batch.",
    "tool": "rex_annotate_many",

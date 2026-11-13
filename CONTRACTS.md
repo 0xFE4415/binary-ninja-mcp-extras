@@ -11,8 +11,8 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
 - Stock `bn_*` listings return a Markdown table in `content`, not `structuredContent`;
   `rex_*` listings return structured data.
 - Paged tools accept but do not echo `limit`/`offset`. `rex_string_search`, `rex_data_find`,
-  `rx_data_find`, `rex_string_refs`, `rex_xrefs_to`, `rex_tag_list`, `rex_uidf_list`, and
-  `rex_export_symbols` return `total`/`truncated`, with results inline.
+  `rx_data_find`, `rex_string_refs`, `rex_xrefs_to`, `rex_tag_list`, `rex_kv_list`,
+  `rex_uidf_list`, and `rex_export_symbols` return `total`/`truncated`, with results inline.
   `rex_export_symbols` instead writes the selected rows to a file and returns `path`,
   `bytes_written`, `rows` written, `total`, and `truncated`; the flag also covers rows dropped
   by its 4 MiB file cap. `rex_component_get` pages functions and returns exact
@@ -22,7 +22,7 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
   `rex_string_search`, `rex_data_find`, `rx_data_find`, `rex_string_refs`, `rex_uidf_list`,
   and the fetched refs of `rex_xrefs_to`. `rx_multi_find` applies it per pattern, sums those
   totals, and sets top-level `truncated` if any pattern is truncated. `rex_tag_list`,
-  `rex_export_symbols`, and `rex_component_get` return exact totals.
+  `rex_kv_list`, `rex_export_symbols`, and `rex_component_get` return exact totals.
 - `rex_xrefs_to` fetches at most 501 code and 501 data refs, sorts each fetched list by
   address, then pages the combined list with code refs first. Counts cover only fetched refs;
   omitted refs are not necessarily higher addresses, and `truncated` can be false.
@@ -295,10 +295,25 @@ some rows.
   reached the end of the view.
 - `rex_hlil_statements`: `function`, `total`, `truncated`, and `statements` of `{address,
   index, text}`.
-- `rex_kv_delete`: `key`. `rex_kv_get`: `key`, `value`, `truncated`. `rex_kv_set`: `key`,
+- `rex_kv_delete`: `key`, `existed` (true when a value was stored under the key before the
+  delete; a missing key is not an error and reports false; a stored value the core cannot
+  read back still counts as existing and is deleted). `rex_kv_get`: `key`, `value`,
+  `truncated`. `rex_kv_set`: `key`,
   `length`, `value` (preview), `truncated`. `rex_kv_set` stores under the `rex/` metadata
   prefix with the core's persistent-flag default, so values serialize into the BNDB snapshot
   and survive reload.
+- `rex_kv_list`: `total`, `truncated`, and `keys` of `{key, length}`, sorted by key (code
+  point order) and paged by `limit`/`offset`. It lists the `bv.metadata` entries under the
+  `rex/` prefix with the prefix stripped, skipping an empty stripped key, and `prefix` keeps
+  only keys that start with that text (it must not contain NUL). `length` is the character
+  count of the full stored value; a non-string value stored by other code reports the length
+  of its `str()` text, the same text `rex_kv_get` returns. Reading `bv.metadata` copies every
+  entry of the view, so the cost grows with all stored metadata, not just `rex/` keys. A key
+  over 512 characters is clipped with the usual suffix and cannot be used with the other kv
+  tools; a key that foreign code stored with a NUL byte is listed but `rex_kv_get` and
+  `rex_kv_delete` reject it. The core converts every entry of `bv.metadata` at once, so one
+  `rex/` or other entry of an unrecognised type makes `rex_kv_list` fail for the whole view
+  (the core raises `TypeError`); the tool does not work around it.
 - `rex_memory_write`: `address`, `bytes_written`, `analysis_complete`. `bytes_written` always
   equals the length of `hex_data`: a write that stores fewer bytes raises `write_failed`
   instead (see Errors), and no reanalysis runs.
@@ -327,8 +342,16 @@ some rows.
 - `rex_struct_from_access`: `name`, `registered`, `width`, `member_count`, `members` of
   `{offset, name, type}`, `truncated`. It sees only offset accesses analysis has already
   recorded, and it registers the inferred struct under an auto type id.
-- `rex_tag_list`: `total`, `truncated`, and `tags` of `{address, tag_type, data,
-  data_truncated}`. `rex_tag_set`: `address`, `tag_type`, `data`, `data_truncated`, `length`.
+- `rex_tag_list`: `total`, `truncated`, and `tags` of `{address, scope, tag_type, data,
+  data_truncated}`. It lists every scope: `data` (a tag on a data address), `address` (a tag on
+  one address inside a function), and `function` (a tag on a whole function). Rows sort by
+  address, then scope name (`address`, `data`, `function`), then tag type name, then tag data, so
+  the order is stable between calls and `total` counts every row. The scopes come from three
+  separate core calls and are not deduplicated; a tag attached in two scopes appears once per
+  scope. For scope `function` the address is the function's start. There is no auto/user
+  filter: tags that analysis creates itself are listed in the `address` and `function` scopes,
+  so a real binary can return many more rows than the data scope alone.
+- `rex_tag_set`: `address`, `tag_type`, `data`, `data_truncated`, `length`.
   A missing `tag_type` is created when `create_missing` is true (the default), and raises
   `tag_type_not_found` otherwise.
 - `rex_type_library_export`: `path` (the resolved file), `bytes_written`, `library`

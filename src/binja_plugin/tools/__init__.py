@@ -587,6 +587,7 @@ from .scanning import (
 from .state import (
     rex_kv_delete,
     rex_kv_get,
+    rex_kv_list,
     rex_kv_set,
     rex_redo,
     rex_report_show,
