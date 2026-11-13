@@ -123,6 +123,18 @@ def test_uidf_set_informs_a_constant_and_renders_hlil(monkeypatch: pytest.Monkey
     assert clipped["truncated"] is True
 
 
+def test_uidf_set_renders_no_lines_for_a_function_without_hlil(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_time(monkeypatch, FakeClock())
+    view, main = _uidf_view()
+    main.hlil = None
+    _, uidf_set = get_tool("rex_uidf_set")
+    result = uidf_set(_call(view), 0x1100, "rax_1", "0x10")
+    assert result["lines"] == []
+    assert result["truncated"] is False
+
+
 def test_uidf_set_many_applies_valid_items_and_reanalyzes_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

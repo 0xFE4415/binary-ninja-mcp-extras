@@ -282,7 +282,6 @@ def rex_eval_result(
 
 class _ShortWriteError(Exception):
     def __init__(self, written: int) -> None:
-        super().__init__(written)
         self.written = written
 
 

@@ -77,10 +77,8 @@ def _derived_string_refs(view: BinaryView, string: DerivedString) -> list[Refere
 
 
 def _detected_string_entry(
-    view: BinaryView, string: StringReference, refs: list[ReferenceSource] | None = None
+    string: StringReference, refs: list[ReferenceSource]
 ) -> dict[str, object]:
-    if refs is None:
-        refs = _detected_string_refs(view, string)
     location: dict[str, object] = {
         "type": string.type.name,
         "address": hex(string.start),
@@ -89,11 +87,7 @@ def _detected_string_entry(
     return _string_reference_entry(str(string.value), location, False, refs)
 
 
-def _derived_string_entry(
-    view: BinaryView, string: DerivedString, refs: list[ReferenceSource] | None = None
-) -> dict[str, object]:
-    if refs is None:
-        refs = _derived_string_refs(view, string)
+def _derived_string_entry(string: DerivedString, refs: list[ReferenceSource]) -> dict[str, object]:
     string_location = string.location
     location: dict[str, object] | None = (
         None
@@ -107,16 +101,24 @@ def _derived_string_entry(
     return _string_reference_entry(str(string.value), location, True, refs)
 
 
+def _detected_entry_with_refs(view: BinaryView, string: StringReference) -> dict[str, object]:
+    return _detected_string_entry(string, _detected_string_refs(view, string))
+
+
+def _derived_entry_with_refs(view: BinaryView, string: DerivedString) -> dict[str, object]:
+    return _derived_string_entry(string, _derived_string_refs(view, string))
+
+
 def _detected_entry_builders(
     view: BinaryView, strings: Iterable[StringReference], only_referenced: bool
 ) -> Iterator[Callable[[], dict[str, object]]]:
     for string in strings:
         if not only_referenced:
-            yield partial(_detected_string_entry, view, string)
+            yield partial(_detected_entry_with_refs, view, string)
             continue
         refs = _detected_string_refs(view, string)
         if refs:
-            yield partial(_detected_string_entry, view, string, refs)
+            yield partial(_detected_string_entry, string, refs)
 
 
 def _derived_entry_builders(
@@ -124,11 +126,11 @@ def _derived_entry_builders(
 ) -> Iterator[Callable[[], dict[str, object]]]:
     for string in filter(keep, view.derived_strings):
         if not only_referenced:
-            yield partial(_derived_string_entry, view, string)
+            yield partial(_derived_entry_with_refs, view, string)
             continue
         refs = _derived_string_refs(view, string)
         if refs:
-            yield partial(_derived_string_entry, view, string, refs)
+            yield partial(_derived_string_entry, string, refs)
 
 
 @mcp.tool(read_only=True)
