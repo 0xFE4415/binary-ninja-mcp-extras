@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import contextlib
 import enum
-from typing import Literal, NamedTuple, TypedDict
+from typing import Literal, NamedTuple, NoReturn, TypedDict
 
 from binaryninja import Type, TypeLibrary, mcp
 from binaryninja.binaryview import BinaryView
-from binaryninja.enums import SymbolType, TypeClass
+from binaryninja.enums import StructureVariant, SymbolType, TypeClass
+from binaryninja.types import NamedTypeReferenceType, StructureType
 
 from binja_plugin.tools import (
     _MAX_EXPORT_FILE_BYTES,
@@ -25,9 +26,8 @@ from binja_plugin.tools import (
 _MAX_TYPE_LIBRARY_NAMES = 128
 _MAX_TYPE_NAME_CHARS = 255
 ExportKind = Literal["types", "objects"]
+ImportKind = Literal["types", "objects"]
 _MAX_STRUCT_MEMBERS = 128
-# Marks the auto types this tool defines as originating here.
-_STRUCT_TYPE_SOURCE = "rex_struct"
 
 
 class _StructMember(TypedDict):
@@ -72,6 +72,11 @@ class _ImportedType(TypedDict):
     resolved: str
 
 
+class _ImportedObject(TypedDict):
+    requested: str
+    type: str
+
+
 class _TypeLibraryExportResult(TypedDict):
     path: str
     bytes_written: int
@@ -85,7 +90,7 @@ class _TypeLibraryExportResult(TypedDict):
 
 class _TypeLibraryImportResult(TypedDict):
     library: str | None
-    imported: list[_ImportedType]
+    imported: list[_ImportedType | _ImportedObject]
     failed: list[_UnresolvedName]
     applied: int
     failed_count: int
@@ -108,28 +113,116 @@ def _validate_type_names(names: list[str]) -> list[str]:
     return names
 
 
+def _validate_library_kind(kind: str) -> None:
+    if kind not in ("types", "objects"):
+        raise mcp.ToolError(
+            "invalid_params", f"kind must be 'types' or 'objects', not '{_show_nul(kind)}'"
+        )
+
+
+def _access_next_step(name: str) -> str:
+    return (
+        f"apply 'struct {name}*' to a variable that is dereferenced with bn_variable_set_type, "
+        "run rex_analysis_wait, then retry"
+    )
+
+
+def _member_layout(structure: StructureType) -> list[tuple[int, str, str]]:
+    layout: list[tuple[int, str, str]] = []
+    for member in structure.members:
+        layout.append((member.offset, member.name, str(member.type)))
+    return layout
+
+
+def _reject_alias(bv: BinaryView, name: str, alias: NamedTypeReferenceType) -> NoReturn:
+    shown = _truncate(name)
+    target_name = str(alias.name)
+    target_shown = _truncate(target_name)
+    if target_name == name:
+        raise mcp.ToolError(
+            "not_a_structure",
+            f"type '{shown}' is a named reference to itself, not a struct definition; "
+            f"define it with bn_type_struct_create, then {_access_next_step(shown)}",
+        )
+    target = bv.get_type_by_name(target_name)
+    if isinstance(target, StructureType) and target.type == StructureVariant.StructStructureType:
+        raise mcp.ToolError(
+            "not_a_structure",
+            f"type '{shown}' is an alias of struct '{target_shown}'; "
+            f"pass '{target_shown}' as name instead",
+        )
+    raise mcp.ToolError(
+        "not_a_structure",
+        f"type '{shown}' is an alias of '{target_shown}', which is not a plain struct; "
+        "pass the name of a plain struct type",
+    )
+
+
+def _require_plain_struct(bv: BinaryView, name: str) -> StructureType:
+    shown = _truncate(name)
+    existing = bv.get_type_by_name(name)
+    if existing is None:
+        raise mcp.ToolError(
+            "type_not_found",
+            f"no type named '{shown}' in the view; create it as an empty struct with "
+            f"bn_type_struct_create, then {_access_next_step(shown)}",
+        )
+    if isinstance(existing, NamedTypeReferenceType):
+        _reject_alias(bv, name, existing)
+    if not isinstance(existing, StructureType):
+        raise mcp.ToolError(
+            "not_a_structure", f"type '{shown}' is not a structure; pass the name of a struct type"
+        )
+    if existing.type == StructureVariant.UnionStructureType:
+        raise mcp.ToolError(
+            "not_a_structure",
+            f"type '{shown}' is a union, and this tool fills plain structs only; "
+            "edit the union's members with bn_type_union_modify",
+        )
+    if existing.type != StructureVariant.StructStructureType:
+        raise mcp.ToolError(
+            "not_a_structure",
+            f"type '{shown}' is a class, and this tool fills plain structs only; "
+            "edit the class's members with bn_type_struct_modify",
+        )
+    return existing
+
+
 @mcp.tool(destructive=True)
 def rex_struct_from_access(call: mcp.ToolCall, name: str) -> _StructFromAccessResult:
-    """Infer a struct from recorded offset accesses; analyze the derefs first. Writes; not undoable.
+    """Fill an existing struct from offset accesses; it becomes a user type. Writes; undoable.
 
-    :param name: Name for the new structure.
+    :param name: Existing plain struct that dereferenced variables point to; members are kept.
     """
     bv = call.binary_view
     # The plugin's per-parameter *_too_large string-cap code family.
     _validate_text("name", name, _MAX_TYPE_NAME_CHARS, "name_too_large")
+    shown = _truncate(name)
+    existing = _require_plain_struct(bv, name)
     try:
         structure = bv.create_structure_from_offset_access(name)
     except Exception as error:
         raise mcp.ToolError(
-            "create_failed", f"could not create a structure from offset accesses: {error}"
+            "create_failed",
+            f"analysis has recorded no offset accesses for struct '{shown}' ({error}); "
+            f"{_access_next_step(shown)}",
         ) from None
+    # Inference keeps the existing members, so an equal layout means nothing new was recorded.
+    same_width = structure.width == existing.width
+    if same_width and _member_layout(structure) == _member_layout(existing):
+        raise mcp.ToolError(
+            "create_failed",
+            f"analysis has recorded no offset accesses for struct '{shown}' beyond its existing "
+            f"members; {_access_next_step(shown)}",
+        )
+    # A user type replaces the definition under the same name, so code already typed with
+    # it sees the members, and the write lands on the undo stack.
+    with bv.undoable_transaction():
+        bv.define_user_type(name, structure)
     members = structure.members
-    registered = bv.define_type(
-        Type.generate_auto_type_id(_STRUCT_TYPE_SOURCE, name), name, structure
-    )
     return {
-        "name": _truncate(name),
-        "registered": _truncate(str(registered)),
+        "name": shown,
+        "registered": shown,
         "width": structure.width,
         "member_count": len(members),
         "members": [
@@ -206,10 +299,7 @@ def rex_type_library_export(
     _reject_unusable_export_target(filename)
     # Widened to str so the body check stays reachable by direct calls; match the Literal.
     requested: str = kind
-    if requested not in ("types", "objects"):
-        raise mcp.ToolError(
-            "invalid_params", f"kind must be 'types' or 'objects', not '{_show_nul(requested)}'"
-        )
+    _validate_library_kind(requested)
     arch = bv.arch
     if arch is None:
         raise mcp.ToolError(
@@ -282,16 +372,20 @@ def rex_type_library_export(
 
 @mcp.tool(destructive=True)
 def rex_type_library_import(
-    call: mcp.ToolCall, path: str, names: list[str]
+    call: mcp.ToolCall, path: str, names: list[str], kind: ImportKind = "types"
 ) -> _TypeLibraryImportResult:
-    """Import types from a .bntl into the current binary view. Writes; not undoable.
+    """Import types or objects from a .bntl into the current binary view. Writes; not undoable.
 
     :param path: Filesystem path of the .bntl file to load.
-    :param names: 1 to 128 type names to import from the library.
+    :param names: 1 to 128 type or object names to import from the library.
+    :param kind: "types" (named types) or "objects" (function and data variable types).
     """
     bv = call.binary_view
     _reject_nul("path", path)
     _validate_type_names(names)
+    # Widened to str so the body check stays reachable by direct calls; match the Literal.
+    requested_kind: str = kind
+    _validate_library_kind(requested_kind)
     library = TypeLibrary.load_from_file(path)
     if library is None:
         raise mcp.ToolError(
@@ -300,9 +394,21 @@ def rex_type_library_import(
             "pass the path of a .bntl file, such as one rex_type_library_export wrote",
         )
     bv.add_type_library(library)
-    imported: list[_ImportedType] = []
+    imported: list[_ImportedType | _ImportedObject] = []
     failed: list[_UnresolvedName] = []
     for name in names:
+        if requested_kind == "objects":
+            if library.get_named_object(name) is None:
+                failed.append({"requested": name, "reason": "not provided by this type library"})
+                continue
+            object_type = bv.import_library_object(name, library)
+            if object_type is None:
+                failed.append(
+                    {"requested": name, "reason": "the core could not import this object"}
+                )
+                continue
+            imported.append({"requested": name, "type": _truncate(str(object_type))})
+            continue
         if library.get_named_type(name) is None:
             failed.append({"requested": name, "reason": "not provided by this type library"})
             continue

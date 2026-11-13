@@ -27,6 +27,7 @@ from helpers_symbol import (
     FakeSymbolType,
     fake_symbol_constructor,
 )
+from helpers_types import FakeStructureVariant
 from helpers_uidf import (
     FakeMediumLevelIL,
     FakePossibleValueSet,
@@ -540,6 +541,8 @@ class FakeDataVariable:
 
 class FakeBinaryView(FakeStateMixin):
     data_variable_types: Mapping[int, FakeType] = types.MappingProxyType({})
+    # Object names whose import returns no handle.
+    refused_library_objects: frozenset[str] = frozenset()
 
     def __init__(
         self,
@@ -561,9 +564,8 @@ class FakeBinaryView(FakeStateMixin):
         library_types: dict[str, str | None] | None = None,
         code_refs: dict[int, list[FakeReferenceSource]] | None = None,
         data_refs: dict[int, list[int]] | None = None,
-        types: dict[str, FakeType] | None = None,
+        types: dict[str, FakeType | FakeStructureType] | None = None,
         structure: FakeStructureType | None = None,
-        defined_type_name: str | None = None,
         derived_strings: list[FakeDerivedString] | None = None,
         component_root: FakeComponent | None = None,
         relocations: list[FakeRelocation] | None = None,
@@ -609,11 +611,10 @@ class FakeBinaryView(FakeStateMixin):
         self.transactions: list[str] = []
         # Per-text parse outcome: a raised error or a (type, name); else an unnamed function type.
         self.parse_type_results: dict[str, ParseOutcome] = {}
-        # Type-system state for the type-library and struct-inference tools: ``arch`` is
-        # Optional to model views without a default architecture; ``library_types`` maps a
-        # requested name to the deconflicted name the core would insert (None fails the
-        # import); ``structure`` is what create_structure_from_offset_access hands back
-        # (None models the core refusing to build anything).
+        # Type-system state: ``arch`` is Optional to model views without a default
+        # architecture; ``library_types`` maps a requested name to the deconflicted name
+        # the core would insert (None fails the import); ``structure`` is what
+        # create_structure_from_offset_access hands back (None: the core refuses).
         self.arch = arch
         self._library_types = library_types or {}
         # Address -> code refs pointing at it, answered by get_code_refs.
@@ -624,12 +625,12 @@ class FakeBinaryView(FakeStateMixin):
         self.data_ref_requests: list[tuple[int, int | None]] = []
         self._types = types or {}
         self._structure = structure
-        self._defined_type_name = defined_type_name
         self.type_libraries: list[FakeTypeLibrary] = []
         self.imported_library_types: list[tuple[FakeTypeLibrary | None, str]] = []
+        self.imported_library_objects: list[tuple[FakeTypeLibrary, str]] = []
         self.exported_types: list[tuple[FakeTypeLibrary, str, FakeType]] = []
         self.exported_objects: list[tuple[FakeTypeLibrary, str, FakeType]] = []
-        self.defined_types: list[tuple[str, str, FakeStructureType]] = []
+        self.defined_types: list[tuple[str, FakeStructureType]] = []
         self.derived_strings = derived_strings if derived_strings is not None else []
         # max_items values the tool sent with each derived-string code-ref request, in
         # order, so tests can pin the bounding contract without parsing responses.
@@ -884,6 +885,12 @@ class FakeBinaryView(FakeStateMixin):
         self._types[resolved] = FakeType(name=resolved)
         return FakeType(name=resolved)
 
+    def import_library_object(self, name: str, library: FakeTypeLibrary) -> FakeType | None:
+        self.imported_library_objects.append((library, name))
+        if name in self.refused_library_objects:
+            return None
+        return library.get_named_object(name)
+
     def get_symbols_by_name(self, name: str) -> list[FakeSymbol]:
         return [symbol for symbol in self._symbols if symbol.name == name]
 
@@ -893,7 +900,7 @@ class FakeBinaryView(FakeStateMixin):
             return None
         return FakeDataVariable(address, self.data_variable_types[address])
 
-    def get_type_by_name(self, name: str) -> FakeType | None:
+    def get_type_by_name(self, name: str) -> FakeType | FakeStructureType | None:
         return self._types.get(name)
 
     def export_type_to_library(
@@ -906,13 +913,12 @@ class FakeBinaryView(FakeStateMixin):
     ) -> None:
         self.exported_objects.append((library, name, type_obj))
 
-    def define_type(self, type_id: str, default_name: str, type_obj: FakeStructureType) -> str:
-        self.defined_types.append((type_id, default_name, type_obj))
-        return self._defined_type_name if self._defined_type_name is not None else default_name
+    def define_user_type(self, name: str, type_obj: FakeStructureType) -> None:
+        self.defined_types.append((name, type_obj))
+        self._types[name] = type_obj
 
     def create_structure_from_offset_access(self, name: str) -> FakeStructureType:
-        # Mirrors the real wrapper's refusal (binaryview.py raises when the core hands
-        # back no structure), so the failure path is exercised at the same layer.
+        # Mirrors the real wrapper, which raises when the core returns no structure.
         if self._structure is None:
             raise Exception(
                 "BNCreateStructureFromOffsetAccess failed to create struct from offsets"
@@ -1090,10 +1096,6 @@ class FakeType:
         """Mirrors Type.__len__, the width: void and function types are falsy on the real core."""
         return self._width
 
-    @staticmethod
-    def generate_auto_type_id(source: str, name: str) -> str:
-        return f"auto:{source}:{name}"
-
 
 class FakeStructureMember:
     def __init__(self, name: str, offset: int, type_obj: FakeType) -> None:
@@ -1103,6 +1105,8 @@ class FakeStructureMember:
 
 
 class FakeStructureType:
+    type = FakeStructureVariant.StructStructureType
+
     def __init__(self, members: list[FakeStructureMember], width: int) -> None:
         self.members = members
         self.width = width
@@ -1123,6 +1127,7 @@ class FakeTypeLibrary:
         write_error: OSError | None = None,
         writes_file: bool = True,
         named_types: dict[str, FakeType] | None = None,
+        named_objects: dict[str, FakeType] | None = None,
     ) -> None:
         self.name = name
         self.arch = arch
@@ -1133,11 +1138,15 @@ class FakeTypeLibrary:
         # Names the library provides, answered by get_named_type; everything else is
         # absent from the library even though the view-level import still returns an NTR.
         self.named_types = named_types or {}
+        self.named_objects = named_objects or {}
         self.finalized = False
         self.written_paths: list[str] = []
 
     def get_named_type(self, name: str) -> FakeType | None:
         return self.named_types.get(name)
+
+    def get_named_object(self, name: str) -> FakeType | None:
+        return self.named_objects.get(name)
 
     @staticmethod
     def load_from_file(path: str) -> FakeTypeLibrary | None:

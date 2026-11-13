@@ -1,13 +1,11 @@
 from typing import Any
 
-from binaryninja.enums import SymbolBinding, SymbolType, TypeClass
+from binaryninja.enums import StructureVariant, SymbolBinding, SymbolType, TypeClass
 
 
 class Type:
     @property
     def type_class(self) -> TypeClass: ...
-    @staticmethod
-    def generate_auto_type_id(source: str, name: Any) -> str: ...
 
 
 class TypeBuilder: ...
@@ -30,6 +28,7 @@ class StructureMember:
 
 class StructureType(Type):
     members: list[StructureMember]
+    type: StructureVariant
     width: int
 
 
