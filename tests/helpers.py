@@ -16,6 +16,7 @@ import pytest
 
 # These fake modules never import helpers, so importing them here cannot cycle.
 from helpers_dataflow import FakeInstruction, FakeMLILInstructions
+from helpers_relocation import RelocationWriteException
 from helpers_symbol import FakeSymbolBinding, FakeSymbolType, fake_symbol_constructor
 from helpers_uidf import FakeRegisterValueType, FakeVariable, FakeVariableSourceType
 from helpers_view import (
@@ -370,6 +371,9 @@ def install_fake_binaryninja() -> None:
 
     types_module = _fake_types_module()
 
+    exceptions_module = types.ModuleType("binaryninja.exceptions")
+    setattr(exceptions_module, "RelocationWriteException", RelocationWriteException)
+
     package = types.ModuleType("binaryninja")
     for attribute, module in (
         ("mcp", mcp_module),
@@ -380,6 +384,7 @@ def install_fake_binaryninja() -> None:
         ("variable", variable_module),
         ("mediumlevelil", mlil_module),
         ("highlevelil", hlil_module),
+        ("exceptions", exceptions_module),
     ):
         setattr(package, attribute, module)
     setattr(package, "Type", FakeType)
@@ -395,6 +400,7 @@ def install_fake_binaryninja() -> None:
         ("binaryninja.variable", variable_module),
         ("binaryninja.mediumlevelil", mlil_module),
         ("binaryninja.highlevelil", hlil_module),
+        ("binaryninja.exceptions", exceptions_module),
     ):
         sys.modules[name] = module
     REGISTERED_TOOLS.clear()

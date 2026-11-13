@@ -272,7 +272,9 @@ some rows.
   `length`, `value` (preview), `truncated`. `rex_kv_set` stores under the `rex/` metadata
   prefix with the core's persistent-flag default, so values serialize into the BNDB snapshot
   and survive reload.
-- `rex_memory_write`: `address`, `bytes_written`, `analysis_complete`.
+- `rex_memory_write`: `address`, `bytes_written`, `analysis_complete`. `bytes_written` always
+  equals the length of `hex_data`: a write that stores fewer bytes raises `write_failed`
+  instead (see Errors), and no reanalysis runs.
 - `rex_mlil_uses`: `function`, `definition_site` (the queried address), and `variables`, each
   `variable`, `storage`, `type`, `definitions` (addresses of every definition the core records
   for it, ascending), `total`, `truncated`, and `uses` of `{address, operation, text}`.
@@ -366,6 +368,13 @@ some rows.
   `function` or the item list is invalid. Each item can fail in its `results` row with
   `invalid_params`, `no_mlil`, `no_variable`, `ambiguous_definition`, `definition_not_found`,
   or `set_failed`.
+- `rex_memory_write` raises `write_failed` when the core writes fewer bytes than requested,
+  usually because the address is unmapped or not backed by the file. The message gives the
+  address and the requested and written byte counts, and says nothing was written: the write
+  runs in one undoable transaction that reverts, so a short write is reverted as a whole and
+  leaves no bytes behind.
+  It raises `relocation_overlap` when the range overlaps a relocation, pointing to
+  `rex_relocation_at`; there is no way to force such a write.
 - A regular expression that does not compile returns `invalid_regex`; the message is
   `Invalid regular expression parameter '<name>': <reason>` and names the bad parameter:
   `pattern` (`rex_string_search` and `rex_string_refs` with `regex=true`), `regex`

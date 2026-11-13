@@ -7,13 +7,12 @@ from helpers import (
     _call,
     get_tool,
 )
+from helpers_relocation import FakeRelocation, FakeRelocationInfo
 from helpers_view import (
     FakeBinaryView,
     FakeCoreSymbol,
     FakeFunction,
     FakeReferenceSource,
-    FakeRelocation,
-    FakeRelocationInfo,
     FakeSegment,
 )
 
