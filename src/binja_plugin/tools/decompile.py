@@ -135,7 +135,7 @@ def rex_decompile_many(
     functions: list[str],
     max_lines: Annotated[int, mcp.Minimum(1), mcp.Maximum(_MAX_DECOMPILE_LINES)] = 200,
 ) -> _DecompileManyResult:
-    """Return each function's signature then HLIL lines; a bad address is a per-item error.
+    """Return each function's signature then HLIL; a bad address or no HLIL is a per-item error.
 
     :param functions: 1 to 1024 address expressions; each result carries its input index.
     :param max_lines: Lines per function, counting the signature line.
@@ -159,7 +159,8 @@ def rex_decompile_many(
             )
             continue
         function = resolution.function
-        if function.hlil is None:
+        hlil = function.hlil
+        if hlil is None:
             missing = _missing_il_error(function, "HLIL", "no_hlil")
             errors.append(
                 {
@@ -169,7 +170,7 @@ def rex_decompile_many(
                 }
             )
             continue
-        body, truncated = _render_hlil_lines(function.hlil, max_lines - 1)
+        body, truncated = _render_hlil_lines(hlil, max_lines - 1)
         lines = [_truncate(str(function)), *body]
         rendered.append(
             {**resolution.entry, "index": index, "lines": lines, "truncated": truncated}

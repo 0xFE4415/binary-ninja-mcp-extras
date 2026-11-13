@@ -674,6 +674,48 @@ def test_decompile_many_reports_a_skipped_function_without_hlil_as_an_error() ->
     ]
 
 
+class _FlakyHlilFunction(FakeFunction):
+    @property
+    @override
+    def hlil(self) -> object:
+        reads = self.__dict__.setdefault("reads", 0)
+        self.__dict__["reads"] = reads + 1
+        return RenderableText("return 0") if reads == 0 else None
+
+    @hlil.setter
+    @override
+    def hlil(self, value: object) -> None:
+        pass
+
+
+def test_decompile_many_reads_hlil_once_per_function() -> None:
+    flaky = _FlakyHlilFunction("flaky", 0x5000, 0x5010)
+    _, decompile = get_tool("rex_decompile_many")
+    result = decompile(FakeParsingToolCall(FakeBinaryView(functions=[flaky])), ["0x5000"])
+    assert result["errors"] == []
+    assert result["functions"][0]["lines"] == ["int32_t flaky()", "return 0"]
+
+
+def test_decompile_many_keeps_indices_across_error_kinds() -> None:
+    view = _decompile_view()
+    _, decompile = get_tool("rex_decompile_many")
+    result = decompile(FakeParsingToolCall(view), ["0x9999", "0x3000", "0x1100"])
+    assert [(entry["index"], entry["error"]["code"]) for entry in result["errors"]] == [
+        (0, "invalid_params"),
+        (1, "no_hlil"),
+    ]
+    assert [entry["index"] for entry in result["functions"]] == [2]
+
+
+def test_hlil_grep_zero_scan_budget_next_offset_follows_offset() -> None:
+    view = _view_with_functions()
+    _, grep = get_tool("rex_hlil_grep")
+    inside = grep(_call(view), ".", max_functions=0, offset=1)
+    assert (inside["scan_incomplete"], inside["next_offset"]) == (True, 1)
+    past_end = grep(_call(view), ".", max_functions=0, offset=len(view.functions))
+    assert (past_end["scan_incomplete"], past_end["next_offset"]) == (False, None)
+
+
 def test_decompile_many_reports_a_bad_entry_per_item_and_renders_the_rest() -> None:
     view = _decompile_view()
     _, decompile = get_tool("rex_decompile_many")
