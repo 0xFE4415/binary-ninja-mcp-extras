@@ -3,7 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from helpers import NO_ALTERNATIVES, FakeToolError, _call, _run_uses, _uses_view, get_tool
+from helpers import (
+    NO_ALTERNATIVES,
+    FakeTool,
+    FakeToolError,
+    _call,
+    _run_uses,
+    _uses_view,
+    get_tool,
+)
 from helpers_dataflow import (
     FakeHLIL,
     FakeInstruction,
@@ -552,3 +560,185 @@ def test_parameter_carriers_scan_the_whole_function_and_sort_by_address() -> Non
         {"variable": "r15", "address": "0x1040", "text": "r15 = arg4"},
         {"variable": "r14", "address": "0x1400", "text": "r14 = arg4"},
     ]
+
+
+# (operation, operator with the subject on the left, operator mirrored, signed)
+_ORDERED = [
+    ("MLIL_CMP_SLT", "s<", "s>", True),
+    ("MLIL_CMP_ULT", "u<", "u>", False),
+    ("MLIL_CMP_SLE", "s<=", "s>=", True),
+    ("MLIL_CMP_ULE", "u<=", "u>=", False),
+    ("MLIL_CMP_SGE", "s>=", "s<=", True),
+    ("MLIL_CMP_UGE", "u>=", "u<=", False),
+    ("MLIL_CMP_SGT", "s>", "s<", True),
+    ("MLIL_CMP_UGT", "u>", "u<", False),
+]
+
+
+def _range_rows(*conditions: FakeInstruction, **arguments: Any) -> list[dict[str, Any]]:
+    branches = [
+        branch(0x6010 + 0x10 * position, condition) for position, condition in enumerate(conditions)
+    ]
+    function = FakeFunction("range", 0x6000, 0x6100, mlil=FakeMLILInstructions(branches))
+    _, constraints = get_tool("rex_function_constraints")
+    result = constraints(_call(FakeBinaryView(functions=[function])), function=0x6000, **arguments)
+    return result["constraints"]
+
+
+def _range_row(operator: str, constant: str, signed: str | None) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "address": "0x6010",
+        "operator": operator,
+        "constant": constant,
+        "char": None,
+        "subject": {"kind": "variable", "variable": "value"},
+        "subject_text": "value",
+    }
+    if signed is not None:
+        row["signed_constant"] = signed
+    return row
+
+
+@pytest.mark.parametrize(("operation", "operator", "mirrored", "signed"), _ORDERED)
+def test_all_reports_an_ordered_comparison_with_the_subject_on_the_left(
+    operation: str, operator: str, mirrored: str, signed: bool
+) -> None:
+    del mirrored
+    condition = compare(operation, var(FakeVariable("value")), const(9))
+    assert _range_rows(condition, operators="all") == [
+        _range_row(operator, "0x9", "0x9" if signed else None)
+    ]
+
+
+@pytest.mark.parametrize(("operation", "operator", "mirrored", "signed"), _ORDERED)
+def test_all_mirrors_an_ordered_comparison_with_the_constant_on_the_left(
+    operation: str, operator: str, mirrored: str, signed: bool
+) -> None:
+    del operator
+    condition = compare(operation, const(9), var(FakeVariable("value")))
+    assert _range_rows(condition, operators="all") == [
+        _range_row(mirrored, "0x9", "0x9" if signed else None)
+    ]
+
+
+@pytest.mark.parametrize("operation", [entry[0] for entry in _ORDERED])
+@pytest.mark.parametrize("arguments", [{}, {"operators": "equality"}])
+def test_equality_mode_omits_ordered_comparisons(operation: str, arguments: dict[str, Any]) -> None:
+    value = FakeVariable("value")
+    conditions = (
+        compare(operation, var(value), const(9)),
+        compare("MLIL_CMP_E", var(value), const(0x41)),
+    )
+    assert _range_rows(*conditions, **arguments) == [
+        {
+            "address": "0x6020",
+            "operator": "==",
+            "constant": "0x41",
+            "char": "A",
+            "subject": {"kind": "variable", "variable": "value"},
+            "subject_text": "value",
+        }
+    ]
+
+
+def test_all_keeps_equality_rows_exactly_as_equality_mode_reports_them() -> None:
+    value = FakeVariable("value")
+    conditions = (
+        compare("MLIL_CMP_NE", const(-1, size=4), var(value)),
+        compare("MLIL_CMP_SLT", var(value), const(0x40)),
+        compare("MLIL_CMP_E", var(value), const(0x41)),
+    )
+    everything = _range_rows(*conditions, operators="all")
+    assert [row["operator"] for row in everything] == ["!=", "s<", "=="]
+    assert [everything[0], everything[2]] == _range_rows(*conditions)
+
+
+@pytest.mark.parametrize(
+    ("condition", "operator", "constant", "signed"),
+    [
+        (
+            compare("MLIL_CMP_SLT", var(FakeVariable("value")), const(-1, size=4)),
+            "s<",
+            "0xffffffff",
+            "-0x1",
+        ),
+        (
+            compare("MLIL_CMP_SLT", const(-1, size=4), var(FakeVariable("value"))),
+            "s>",
+            "0xffffffff",
+            "-0x1",
+        ),
+        (
+            compare("MLIL_CMP_SGE", var(FakeVariable("value")), const(-0x80, size=1)),
+            "s>=",
+            "0x80",
+            "-0x80",
+        ),
+        (
+            compare("MLIL_CMP_SLE", var(FakeVariable("value")), const(0x7F, size=1)),
+            "s<=",
+            "0x7f",
+            "0x7f",
+        ),
+        (
+            compare("MLIL_CMP_SGT", var(FakeVariable("value")), sign_extend(const(-1, size=4))),
+            "s>",
+            "0xffffffffffffffff",
+            "-0x1",
+        ),
+        (compare("MLIL_CMP_SGT", var(FakeVariable("value")), const(1, size=0)), "s>", "0x1", "0x1"),
+        (
+            compare("MLIL_CMP_ULT", var(FakeVariable("value")), const(-1, size=4)),
+            "u<",
+            "0xffffffff",
+            None,
+        ),
+        (
+            compare("MLIL_CMP_UGE", const(-1, size=4), var(FakeVariable("value"))),
+            "u<=",
+            "0xffffffff",
+            None,
+        ),
+    ],
+)
+def test_signed_comparisons_add_the_signed_reading_of_the_constant(
+    condition: FakeInstruction, operator: str, constant: str, signed: str | None
+) -> None:
+    assert _range_rows(condition, operators="all") == [_range_row(operator, constant, signed)]
+
+
+def test_all_skips_ordered_comparisons_without_exactly_one_constant() -> None:
+    value, other = FakeVariable("value"), FakeVariable("other")
+    conditions = (
+        compare("MLIL_CMP_ULT", const(1), const(2)),
+        compare("MLIL_CMP_SGT", var(value), var(other)),
+    )
+    assert _range_rows(*conditions, operators="all") == []
+
+
+@pytest.mark.parametrize(
+    ("operators", "shown"),
+    [
+        ("ordered", "ordered"),
+        ("", ""),
+        ("a\x00ll", "a\N{REPLACEMENT CHARACTER}ll"),
+        ("x" * 513, "x" * 512 + "... [1 chars truncated]"),
+    ],
+)
+def test_constraints_reject_an_unknown_operator_set(operators: str, shown: str) -> None:
+    with pytest.raises(FakeToolError) as error:
+        _range_rows(operators=operators)
+    assert error.value.code == "invalid_params"
+    assert error.value.message == f"operators must be 'equality' or 'all', not '{shown}'"
+
+
+def test_constraints_schema_offers_the_operator_sets_with_equality_by_default() -> None:
+    options, function = get_tool("rex_function_constraints")
+    schema = FakeTool("rex_function_constraints", options, function).input_schema
+    assert schema["required"] == ["function"]
+    assert schema["properties"]["operators"] == {
+        "type": "string",
+        "enum": ["equality", "all"],
+        "default": "equality",
+        "description": "Comparisons to report: equality (== and !=) or all (adds s<, u>=, ...).",
+    }

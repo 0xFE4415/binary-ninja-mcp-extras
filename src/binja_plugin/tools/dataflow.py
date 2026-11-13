@@ -31,6 +31,19 @@ if TYPE_CHECKING:
 _MAX_STATEMENT_LIMIT = 1000
 _MAX_DEFINITION_SITES = 10
 _COMPARISON_OPERATORS = {"MLIL_CMP_E": "==", "MLIL_CMP_NE": "!="}
+# Each ordered comparison as (operator, operator with the operands swapped).
+_ORDERED_OPERATORS = {
+    "MLIL_CMP_SLT": ("s<", "s>"),
+    "MLIL_CMP_ULT": ("u<", "u>"),
+    "MLIL_CMP_SLE": ("s<=", "s>="),
+    "MLIL_CMP_ULE": ("u<=", "u>="),
+    "MLIL_CMP_SGE": ("s>=", "s<="),
+    "MLIL_CMP_UGE": ("u>=", "u<="),
+    "MLIL_CMP_SGT": ("s>", "s<"),
+    "MLIL_CMP_UGT": ("u>", "u<"),
+}
+_SIGNED_OPERATORS = ("MLIL_CMP_SLT", "MLIL_CMP_SLE", "MLIL_CMP_SGE", "MLIL_CMP_SGT")
+_OPERATOR_SETS = ("equality", "all")
 _EXTENSIONS = ("MLIL_SX", "MLIL_ZX")
 _CONSTANTS = ("MLIL_CONST", "MLIL_CONST_PTR")
 _DEFINITIONS = ("MLIL_SET_VAR", "MLIL_SET_VAR_SSA")
@@ -126,13 +139,6 @@ def _constant_bits(expression: Any) -> tuple[int, int] | None:
     return value & ((1 << width) - 1), width
 
 
-def _unsigned_constant(expression: Any) -> int | None:
-    computed = _extended_constant(expression)
-    if computed is None:
-        return None
-    return computed[0]
-
-
 def _as_signed(value: int, width: int) -> int:
     if width == 0 or not value >> (width - 1):
         return value
@@ -206,34 +212,49 @@ def _describe_subject(target_mlil: MediumLevelILFunction, expression: Any) -> di
     return {"kind": "expression", "text": _truncate(str(expression))}
 
 
-def _iter_branch_constraints(target_mlil: MediumLevelILFunction) -> list[dict[str, object]]:
+def _comparison_operators(operation: str, include_ordered: bool) -> tuple[str, str] | None:
+    """The operator as (subject on the left, constant on the left), or None if not reported."""
+    equality = _COMPARISON_OPERATORS.get(operation)
+    if equality is not None:
+        return equality, equality
+    if not include_ordered:
+        return None
+    return _ORDERED_OPERATORS.get(operation)
+
+
+def _iter_branch_constraints(
+    target_mlil: MediumLevelILFunction, include_ordered: bool
+) -> list[dict[str, object]]:
     """Every conditional that compares an expression against a constant, in address order."""
     rows: list[dict[str, object]] = []
     for instruction in target_mlil.instructions:
         if _operation(instruction) != "MLIL_IF":
             continue
         condition = instruction.condition
-        operator = _COMPARISON_OPERATORS.get(_operation(condition))
-        if operator is None:
+        operation = _operation(condition)
+        operators = _comparison_operators(operation, include_ordered)
+        if operators is None:
             continue
-        left, right = _unsigned_constant(condition.left), _unsigned_constant(condition.right)
+        left = _extended_constant(condition.left)
+        right = _extended_constant(condition.right)
         if left is not None and right is None:
-            constant, subject = left, condition.right
+            (constant, width), subject, operator = left, condition.right, operators[1]
         elif right is not None and left is None:
-            constant, subject = right, condition.left
+            (constant, width), subject, operator = right, condition.left, operators[0]
         else:
             # Both sides constant folds away, and neither constant is a comparison.
             continue
-        rows.append(
-            {
-                "address": hex(instruction.address),
-                "operator": operator,
-                "constant": hex(constant),
-                "char": chr(constant) if 0x20 <= constant < 0x7F else None,
-                "subject": _describe_subject(target_mlil, subject),
-                "subject_text": _truncate(str(subject)),
-            }
-        )
+        row: dict[str, object] = {
+            "address": hex(instruction.address),
+            "operator": operator,
+            "constant": hex(constant),
+            "char": chr(constant) if 0x20 <= constant < 0x7F else None,
+            "subject": _describe_subject(target_mlil, subject),
+            "subject_text": _truncate(str(subject)),
+        }
+        if operation in _SIGNED_OPERATORS:
+            row["signed_constant"] = hex(_as_signed(constant, width))
+        rows.append(row)
     rows.sort(key=lambda row: int(str(row["address"]), 16))
     return rows
 
@@ -244,22 +265,30 @@ def rex_function_constraints(
     function: mcp.Address,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
+    operators: Literal["equality", "all"] = "equality",
 ) -> dict[str, object]:
     """List constant branch comparisons; inform their variable with rex_uidf_set to fold them.
 
     :param function: Address expression inside the target function.
     :param limit: Maximum constraints to return.
     :param offset: Constraints to skip before collecting results.
+    :param operators: Comparisons to report: equality (== and !=) or all (adds s<, u>=, ...).
     """
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
+    requested: str = operators
+    if requested not in _OPERATOR_SETS:
+        raise mcp.ToolError(
+            "invalid_params",
+            f"operators must be 'equality' or 'all', not '{_show_nul(_truncate(requested))}'",
+        )
     resolution = _require_analyzed_function(bv, function)
     target = resolution.function
     target_mlil = target.mlil
     if target_mlil is None:
         raise _missing_il_error(target, "MediumLevelIL", "no_mlil")
-    rows = _iter_branch_constraints(target_mlil)
+    rows = _iter_branch_constraints(target_mlil, include_ordered=requested == "all")
     return {
         "function": resolution.entry,
         "total": len(rows),
@@ -372,16 +401,16 @@ def _variable_report(
 @mcp.tool(read_only=True)
 def rex_mlil_uses(
     call: mcp.ToolCall,
-    function: mcp.Address,
+    function: mcp.Address | None,
     address: mcp.Address,
     variable: Annotated[str, mcp.NonEmpty()] | None = None,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 100,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> dict[str, object]:
-    """List every read of each MLIL variable the core defines at an address; entries show storage.
+    """List every read of each MLIL variable defined at an address; entries show storage.
 
-    :param function: Address expression inside the target function.
-    :param address: Address of an MLIL instruction that defines variables.
+    :param function: Address expression inside the target function; omit to use address.
+    :param address: Address of an MLIL instruction that defines variables, or the function start.
     :param variable: Report only defined variables with this name (all same-named ones).
     :param limit: Maximum use sites to return per variable.
     :param offset: Use sites to skip per variable before collecting results.
@@ -389,7 +418,7 @@ def rex_mlil_uses(
     bv = call.binary_view
     limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
     offset = _validate_range("offset", offset, 0)
-    resolution = _require_analyzed_function(bv, function)
+    resolution = _require_analyzed_function(bv, address if function is None else function)
     target = resolution.function
     target_mlil = target.mlil
     if target_mlil is None:
@@ -400,6 +429,9 @@ def rex_mlil_uses(
         variables = _defined_variables(instruction, definitions)
         if variables:
             defined_at.setdefault(instruction.address, []).extend(variables)
+    for parameter in target.parameter_vars:
+        if not target_mlil.get_var_definitions(parameter):
+            defined_at.setdefault(target.start, []).append(parameter)
     if not defined_at:
         raise mcp.ToolError(
             "no_definition",
