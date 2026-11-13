@@ -26,6 +26,7 @@ from helpers_view import (
     FakeBinaryView,
     FakeFunction,
     FakeInstructionTextTokenType,
+    FakeStructureType,
     FakeType,
     FakeTypeClass,
     FakeTypeLibrary,
@@ -288,6 +289,7 @@ class FakeToolCallBase:
 def _fake_types_module() -> types.ModuleType:
     module = types.ModuleType("binaryninja.types")
     setattr(module, "Symbol", fake_symbol_constructor)
+    setattr(module, "StructureType", FakeStructureType)
     return module
 
 

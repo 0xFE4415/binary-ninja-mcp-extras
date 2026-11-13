@@ -289,8 +289,14 @@ some rows.
   derived, refs, refs_truncated}`, `location` being `{type, address, length}` or null and each
   ref `{function_start, function_name, address}` (the first two are null outside a function).
 - `rex_struct_from_access`: `name`, `registered`, `width`, `member_count`, `members` of
-  `{offset, name, type}`, `truncated`. It sees only offset accesses analysis has already
-  recorded, and it registers the inferred struct under an auto type id.
+  `{offset, name, type}`, `truncated`. `name` must be an existing struct type. Analysis
+  records offset accesses only through variables typed as pointers to it, and the tool sees
+  only accesses already recorded. It redefines that type in place as a user type, in one
+  undoable transaction, so code already using the type shows the members; `registered` is
+  `name`. A name that is not a type raises `type_not_found`, and a type that is not a struct
+  raises `not_a_structure`; neither calls the core. `create_failed` means the core inferred
+  nothing, or nothing beyond the existing width and members (offset, name, type); nothing is
+  written then. Each message names the next step.
 - `rex_tag_list`: `total`, `truncated`, and `tags` of `{address, tag_type, data,
   data_truncated}`. `rex_tag_set`: `address`, `tag_type`, `data`, `data_truncated`, `length`.
   A missing `tag_type` is created when `create_missing` is true (the default), and raises
@@ -298,7 +304,12 @@ some rows.
 - `rex_type_library_export`: `path` (the resolved file), `bytes_written`, `library`
   (truncated), `exported`, `failed` (`{requested, reason}`), `applied`,
   `failed_count`, `total`. `rex_type_library_import`: `library` (null when none loaded),
-  `imported` of `{requested, resolved}`, `failed`, `applied`, `failed_count`, `total`.
+  `imported`, `failed`, `applied`, `failed_count`, `total`. With `kind="types"` (the
+  default) each `imported` entry is `{requested, resolved}`, `resolved` being the name the
+  core inserted. With `kind="objects"` the names are the library's named objects, as
+  `rex_type_library_export(kind="objects")` writes them, and each entry is `{requested,
+  type}` with the rendered object type, truncated. Importing an object adds the types it
+  references to the view; it does not apply its type to any function or data variable.
 - `rex_uidf_clear`: `function`, `variable` (null when clearing the whole function), `cleared`,
   `analysis_complete`, and, when a variable is named, `definition_sites`. A failure at any site
   rolls back the sites already cleared in that call. `rex_uidf_list`: `function` (resolved entry,
@@ -354,7 +365,9 @@ some rows.
   `export_failed` when the root or file cannot be written.
 - `rex_type_library_export` raises `invalid_params` for an empty `library_name`, for `names`
   (not a list, not 1-128 entries, an empty or over-long entry, or a non-string entry), and
-  for `kind`. `rex_uidf_set_many` raises `invalid_params` when no analyzed function contains
+  for `kind`. `rex_type_library_import` raises `invalid_params` for the same `names` errors
+  and for a `kind` other than `types` or `objects`, before it loads the library.
+  `rex_uidf_set_many` raises `invalid_params` when no analyzed function contains
   `function` or the item list is invalid. Each item can fail in its `results` row with
   `invalid_params`, `no_mlil`, `no_variable`, `ambiguous_definition`, `definition_not_found`,
   or `set_failed`.
