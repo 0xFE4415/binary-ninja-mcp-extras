@@ -241,6 +241,21 @@ def test_help_states_that_call_paths_defaults_to_callers_and_reachability_needs_
     )
 
 
+def test_help_states_that_analysis_wait_timeout_defaults_to_ten_seconds() -> None:
+    by_name = {
+        parameter["name"]: parameter for parameter in _help("rex_analysis_wait")["parameters"]
+    }
+    assert by_name["timeout_ms"]["default"] == 10000
+    assert by_name["timeout_ms"]["required"] is False
+
+
+def test_help_call_paths_describes_depth_limited() -> None:
+    by_name = {parameter["name"]: parameter for parameter in _help("rex_call_paths")["parameters"]}
+    assert by_name["max_depth"]["description"] == (
+        "Maximum edges walked; depth_limited in the result flags a cut at this depth."
+    )
+
+
 def test_help_details_required_flags_and_bounds() -> None:
     by_name = {parameter["name"]: parameter for parameter in _help("rex_data_find")["parameters"]}
     assert by_name["pattern"]["required"] is True

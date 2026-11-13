@@ -645,7 +645,37 @@ def test_call_paths_clean_miss_is_not_depth_limited() -> None:
     assert result["depth_limited"] is False
     shallow = paths(_call(view), 0x1000, 0x5000, direction="callees", max_depth=1)
     assert shallow["reachable"] is False
-    assert shallow["depth_limited"] is True
+    assert shallow["depth_limited"] is False
+
+
+def test_call_paths_depth_limit_needs_an_unvisited_neighbor_or_the_target() -> None:
+    root = FakeFunction("root", 0x1000, 0x1010)
+    mid = FakeFunction("mid", 0x2000, 0x2010)
+    deeper = FakeFunction("deeper", 0x3000, 0x3010)
+    target = FakeFunction("target", 0x4000, 0x4010)
+    view = FakeBinaryView(functions=[root, mid, deeper, target])
+    _, paths = get_tool("rex_call_paths")
+
+    root.callees = [mid]
+    mid.callees = [deeper]
+    unvisited = paths(_call(view), 0x1000, 0x4000, direction="callees", max_depth=1)
+    assert unvisited["depth_limited"] is True
+
+    mid.callees = [root, mid]
+    visited_only = paths(_call(view), 0x1000, 0x4000, direction="callees", max_depth=1)
+    assert visited_only["reachable"] is False
+    assert visited_only["depth_limited"] is False
+
+    mid.callees = [root, target]
+    target_next = paths(_call(view), 0x1000, 0x4000, direction="callees", max_depth=1)
+    assert target_next["reachable"] is False
+    assert target_next["depth_limited"] is True
+
+    mid.callees = []
+    root.callees = [mid, deeper]
+    deeper.callees = [mid]
+    siblings = paths(_call(view), 0x1000, 0x4000, direction="callees", max_depth=1)
+    assert siblings["depth_limited"] is False
 
 
 def test_call_paths_flags_depth_limit_even_when_a_path_was_found() -> None:
@@ -662,3 +692,20 @@ def test_call_paths_flags_depth_limit_even_when_a_path_was_found() -> None:
     full = paths(_call(view), 0x1000, 0x3000, direction="callees", max_depth=2, max_paths=5)
     assert len(full["paths"]) == 2
     assert full["depth_limited"] is False
+
+
+def test_call_paths_stops_checking_once_depth_limited() -> None:
+    root = FakeFunction("root", 0x1000, 0x1010)
+    first = FakeFunction("first", 0x2000, 0x2010)
+    second = FakeFunction("second", 0x3000, 0x3010)
+    beyond = FakeFunction("beyond", 0x4000, 0x4010)
+    target = FakeFunction("target", 0x5000, 0x5010)
+    root.callees = [first, second]
+    first.callees = [beyond]
+    second.callees = [beyond]
+    view = FakeBinaryView(functions=[root, first, second, beyond, target])
+    _, paths = get_tool("rex_call_paths")
+    result = paths(_call(view), 0x1000, 0x5000, direction="callees", max_depth=1)
+    assert result["reachable"] is False
+    assert result["depth_limited"] is True
+    assert result["explored"] == 1

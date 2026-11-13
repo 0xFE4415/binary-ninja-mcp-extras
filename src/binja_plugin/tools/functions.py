@@ -97,7 +97,7 @@ def rex_call_paths(
     :param from_addr: Function A: an address or symbol name inside it, such as main.
     :param to_addr: Function B: an address or symbol name inside it, such as write.
     :param direction: "callees": from_addr reaches to_addr; "callers" (default): the reverse.
-    :param max_depth: Maximum edges walked from the starting function.
+    :param max_depth: Maximum edges walked; depth_limited in the result flags a cut at this depth.
     :param max_paths: Maximum paths returned.
     """
     bv = call.binary_view
@@ -124,13 +124,18 @@ def rex_call_paths(
     depth_limited = False
     while queue and len(paths) < max_paths:
         function, path = queue.popleft()
-        if len(path) > max_depth:
-            depth_limited = True
+        if len(path) > max_depth and depth_limited:
             continue
-        explored += 1
         edges = function.callers if direction == "callers" else function.callees
         # The core lists one edge per call site; keep one edge per function.
         neighbors = {edge.start: edge for edge in edges}
+        if len(path) > max_depth:
+            for start in neighbors:
+                if start == target.start or start not in visited:
+                    depth_limited = True
+                    break
+            continue
+        explored += 1
         for start in sorted(neighbors):
             neighbor = neighbors[start]
             if start == target.start:

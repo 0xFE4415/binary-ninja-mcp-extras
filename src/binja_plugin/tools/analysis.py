@@ -17,6 +17,7 @@ from binja_plugin.tools import _truncate, _validate_range
 
 # The wait runs on the server thread in ~100 ms slices: a call holds it for timeout_ms plus one.
 _MAX_ANALYSIS_WAIT_MS = 600000
+_DEFAULT_ANALYSIS_WAIT_MS = 10000
 _ANALYSIS_WAIT_SLICE_MS = 100
 _MAX_ANALYSIS_INFLIGHT = 10
 
@@ -84,7 +85,9 @@ def _analysis_snapshot(bv: BinaryView) -> _AnalysisSnapshot:
 @mcp.tool(read_only=True)
 def rex_analysis_wait(
     call: mcp.ToolCall,
-    timeout_ms: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_ANALYSIS_WAIT_MS)] = 10000,
+    timeout_ms: Annotated[
+        int, mcp.Minimum(0), mcp.Maximum(_MAX_ANALYSIS_WAIT_MS)
+    ] = _DEFAULT_ANALYSIS_WAIT_MS,
 ) -> _AnalysisWaitResult:
     """Bounded wait for background analysis with a progress snapshot at expiry.
 
