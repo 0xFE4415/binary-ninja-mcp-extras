@@ -120,9 +120,9 @@ def _detected_entry_builders(
 
 
 def _derived_entry_builders(
-    view: BinaryView, strings: Iterable[DerivedString], only_referenced: bool
+    view: BinaryView, keep: Callable[[DerivedString], bool], only_referenced: bool
 ) -> Iterator[Callable[[], dict[str, object]]]:
-    for string in strings:
+    for string in filter(keep, view.derived_strings):
         if not only_referenced:
             yield partial(_derived_string_entry, view, string)
             continue
@@ -161,7 +161,7 @@ def rex_string_refs(
 
     entry_builders = chain(
         _detected_entry_builders(bv, filter(keep, bv.strings), only_referenced),
-        _derived_entry_builders(bv, filter(keep, bv.derived_strings), only_referenced),
+        _derived_entry_builders(bv, keep, only_referenced),
     )
     page, total, truncated = _paginate(entry_builders, offset, limit)
     strings = [build_entry() for build_entry in page]
@@ -192,19 +192,17 @@ def rex_string_read_at(
             "truncated": truncated,
             "detected": True,
         }
-    terminated = bv.get_ascii_string_at(addr, min_length=1, max_length=max_chars)
-    if terminated is not None:
-        return _undetected_string_result(terminated, truncated=False)
-    unterminated = bv.get_ascii_string_at(
-        addr, min_length=max_chars, max_length=max_chars, require_cstring=False
+    run = bv.get_ascii_string_at(addr, min_length=1, max_length=max_chars, require_cstring=False)
+    next_byte = b"" if run is None else bv.read(addr + len(run), 1)
+    if run is not None and next_byte == b"\x00":
+        return _undetected_string_result(run, truncated=False)
+    if run is not None and len(run) == max_chars and next_byte and next_byte[0] <= 0x7F:
+        return _undetected_string_result(run, truncated=True)
+    raise mcp.ToolError(
+        "no_string",
+        f"no string at {addr:#x}: none detected and no NUL-terminated ASCII text there; "
+        "rex_data_read reads raw bytes and rex_string_search lists detected strings",
     )
-    if unterminated is None:
-        raise mcp.ToolError(
-            "no_string",
-            f"no string at {addr:#x}: none detected and no NUL-terminated ASCII text there; "
-            "rex_data_read reads raw bytes and rex_string_search lists detected strings",
-        )
-    return _undetected_string_result(unterminated, truncated=True)
 
 
 def _undetected_string_result(string: StringReference, truncated: bool) -> dict[str, object]:

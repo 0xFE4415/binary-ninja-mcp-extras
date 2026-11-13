@@ -58,7 +58,7 @@ def test_help_index_pins_every_use_when_line() -> None:
         "decompile": (
             "bn_binary_triage gives the entry point; read its HLIL or disassembly, grep HLIL."
         ),
-        "strings": "Locate detected strings and the code that references them.",
+        "strings": "Find or read strings at an address, and the code that references them.",
         "scanning": "Find a magic constant or byte pattern, and the functions that contain it.",
         "data": "Read mapped bytes, relocations, or list references to an address.",
         "functions": (
@@ -104,7 +104,10 @@ def test_help_index_places_the_uidf_tools_in_the_uidf_category() -> None:
 def test_help_category_lists_its_tools_with_their_purposes() -> None:
     listing = _help(category="strings")
     assert listing["category"] == "strings"
-    assert listing["use_when"] == "Locate detected strings and the code that references them."
+    assert (
+        listing["use_when"]
+        == "Find or read strings at an address, and the code that references them."
+    )
     search = {tool["name"]: tool for tool in listing["tools"]}["rex_string_search"]
     assert search["description"] == (
         "Search the binary's detected strings by substring or regular expression."

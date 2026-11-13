@@ -284,19 +284,22 @@ some rows.
 - `rex_report_show`: `title`, `length`, `preview`, `truncated`. The markdown can link into
   the view with `binaryninja://?expr=...`.
 - `rex_string_read_at`: `address`, `length`, `type`, `value`, `truncated`, `detected`.
-  `detected` is true for a string analysis found. Otherwise the tool reads NUL-terminated
-  ASCII starting exactly at `addr` (`detected` false, `type` `AsciiString`), reading at most
-  `max_chars` characters. A longer run returns its first `max_chars` characters with
-  `truncated` true and `length` equal to `max_chars` (a lower bound). No string either way
-  fails with `no_string`.
-  `rex_string_refs` takes `only_referenced` (default false). When true it skips strings
-  with no code reference, and they take no slot in `total`, paging, or `truncated`. Only
-  code references to a string's start address count; a string reached only through data
-  pointers shows none.
+  `detected` is true for a string analysis found. Otherwise the tool reads ASCII (bytes
+  0x01-0x7f) starting exactly at `addr` (`detected` false, `type` `AsciiString`) and accepts
+  it only when a NUL follows within `max_chars` characters. A run of more than `max_chars`
+  characters followed by another ASCII byte returns its first `max_chars` characters with
+  `truncated` true and `length` equal to `max_chars`; termination beyond the bound is not
+  verified, and this value carries no `... [N chars truncated]` suffix because the full
+  length is unknown. Anything else (no ASCII, a short run not followed by NUL, a non-ASCII
+  byte after the bound, unreadable memory) fails with `no_string`.
   `rex_string_search`: `total`, `truncated`, and `strings` of `{address, length, type,
   value}`. `rex_string_refs`: `total`, `truncated`, and `strings` of `{value, location,
   derived, refs, refs_truncated}`, `location` being `{type, address, length}` or null and each
   ref `{function_start, function_name, address}` (the first two are null outside a function).
+  `rex_string_refs` takes `only_referenced` (default false). When true it skips strings
+  with no code reference, and they take no slot in `total`, paging, or `truncated`. For a
+  detected string only code references to its start address count, so a string reached only
+  through data pointers shows none; a derived string counts its own code references.
 - `rex_struct_from_access`: `name`, `registered`, `width`, `member_count`, `members` of
   `{offset, name, type}`, `truncated`. It sees only offset accesses analysis has already
   recorded, and it registers the inferred struct under an auto type id.

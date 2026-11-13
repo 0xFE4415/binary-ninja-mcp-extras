@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, override
+
 import pytest
 from helpers import (
     FakeToolError,
@@ -538,3 +540,93 @@ def test_string_refs_default_skips_lookups_for_unreturned_rows() -> None:
     _, refs = get_tool("rex_string_refs")
     refs(_call(view), limit=1)
     assert view.code_ref_requests == [(0x4000, 65)]
+
+
+def _read_fallback(memory: bytes, max_chars: int) -> dict[str, Any]:
+    view = FakeBinaryView(memory={0x2000: memory})
+    _, read = get_tool("rex_string_read_at")
+    return read(_call(view), 0x2000, max_chars=max_chars)
+
+
+@pytest.mark.parametrize("text", ["a", "ab", "abc"])
+def test_string_read_at_fallback_reads_short_strings(text: str) -> None:
+    result = _read_fallback(text.encode() + b"\x00", 8)
+    assert result["value"] == text
+    assert result["length"] == len(text)
+    assert result["truncated"] is False
+    assert result["detected"] is False
+
+
+def test_string_read_at_fallback_accepts_newlines() -> None:
+    result = _read_fallback(b"a\nb\x00", 8)
+    assert result["value"] == "a\nb"
+    assert result["length"] == 3
+
+
+def test_string_read_at_fallback_rejects_a_leading_nul() -> None:
+    with pytest.raises(FakeToolError) as exc:
+        _read_fallback(b"\x00abc", 8)
+    assert exc.value.code == "no_string"
+
+
+def test_string_read_at_fallback_flags_a_run_one_past_the_bound() -> None:
+    result = _read_fallback(b"abcde\x00", 4)
+    assert result["value"] == "abcd"
+    assert result["length"] == 4
+    assert result["truncated"] is True
+
+
+@pytest.mark.parametrize(
+    "memory", [b"abcd\xff", b"abcd", b"abc\xff", b"abc", b"abcd\x80\x00"], ids=str
+)
+def test_string_read_at_fallback_rejects_unverifiable_runs(memory: bytes) -> None:
+    with pytest.raises(FakeToolError) as exc:
+        _read_fallback(memory, 4)
+    assert exc.value.code == "no_string"
+
+
+def test_string_read_at_fallback_with_one_char_needs_an_ascii_follower() -> None:
+    result = _read_fallback(b"UH\xff", 1)
+    assert result["value"] == "U"
+    assert result["truncated"] is True
+    with pytest.raises(FakeToolError) as exc:
+        _read_fallback(b"U\xff", 1)
+    assert exc.value.code == "no_string"
+    assert _read_fallback(b"U\x00", 1)["truncated"] is False
+
+
+class _CountingDerivedView(FakeBinaryView):
+    derived_reads = 0
+
+    @property
+    @override
+    def derived_strings(self) -> list[FakeDerivedString]:
+        type(self).derived_reads += 1
+        return []
+
+    @derived_strings.setter
+    @override
+    def derived_strings(self, value: list[FakeDerivedString]) -> None:
+        return None
+
+
+def test_string_refs_reads_derived_strings_only_after_detected_ones() -> None:
+    strings = [FakeStringReference(f"s{i}", 0x100 + i * 0x10) for i in range(3)]
+    view = _CountingDerivedView(strings=strings)
+    _, refs = get_tool("rex_string_refs")
+    refs(_call(view), limit=2)
+    assert _CountingDerivedView.derived_reads == 0
+    refs(_call(view), limit=3)
+    assert _CountingDerivedView.derived_reads == 1
+
+
+def test_string_refs_only_referenced_counts_a_capped_string_as_referenced() -> None:
+    filler = FakeFunction("filler", 0x9000, 0x9100)
+    view = FakeBinaryView(
+        strings=[FakeStringReference("big", 0x8000)],
+        code_refs={0x8000: [FakeReferenceSource(filler, 0x9000 + index) for index in range(65)]},
+    )
+    _, refs = get_tool("rex_string_refs")
+    entry = refs(_call(view), only_referenced=True)["strings"][0]
+    assert len(entry["refs"]) == 64
+    assert entry["refs_truncated"] is True

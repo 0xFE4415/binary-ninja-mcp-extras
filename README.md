@@ -71,7 +71,7 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_parameter_variables` | Map a parameter to its storage, variables, and copies. |
 | `rex_constant_find` | Find functions that use a constant in a disassembly line. |
 | `rex_find_functions_by_pattern` | Map a byte pattern to the functions that contain it. |
-| `rex_string_refs` | List code references to detected strings. |
+| `rex_string_refs` | List code references to detected strings, optionally only referenced ones. |
 | `rex_xrefs_to` | List code and data references to an address. |
 | `rex_disasm_at` | Disassemble the lines around an address. |
 | `rex_disasm_many` | Disassemble up to 64 addresses in one call. |
