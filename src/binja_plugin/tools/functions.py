@@ -36,6 +36,7 @@ class _CallPathsResult(TypedDict):
     reachable: bool
     paths: list[list[_FunctionEntry]]
     truncated: bool
+    depth_limited: bool
     explored: int
 
 
@@ -96,7 +97,7 @@ def rex_call_paths(
     :param from_addr: Function A: an address or symbol name inside it, such as main.
     :param to_addr: Function B: an address or symbol name inside it, such as write.
     :param direction: "callees": from_addr reaches to_addr; "callers" (default): the reverse.
-    :param max_depth: Maximum edges walked from the starting function.
+    :param max_depth: Maximum edges walked; depth_limited in the result flags a cut at this depth.
     :param max_paths: Maximum paths returned.
     """
     bv = call.binary_view
@@ -112,6 +113,7 @@ def rex_call_paths(
             "reachable": True,
             "paths": [[_function_entry(source)]],
             "truncated": False,
+            "depth_limited": False,
             "explored": 1,
         }
     paths: list[list[_FunctionEntry]] = []
@@ -119,14 +121,22 @@ def rex_call_paths(
     visited = {source.start}
     explored = 0
     hit_path_cap = False
+    depth_limited = False
     while queue and len(paths) < max_paths:
         function, path = queue.popleft()
-        if len(path) > max_depth:
+        if len(path) > max_depth and depth_limited:
             continue
-        explored += 1
         edges = function.callers if direction == "callers" else function.callees
         # The core lists one edge per call site; keep one edge per function.
         neighbors = {edge.start: edge for edge in edges}
+        if len(path) > max_depth:
+            # The target is never marked visited, so it counts as an unvisited neighbor.
+            for start in neighbors:
+                if start not in visited:
+                    depth_limited = True
+                    break
+            continue
+        explored += 1
         for start in sorted(neighbors):
             neighbor = neighbors[start]
             if start == target.start:
@@ -142,6 +152,7 @@ def rex_call_paths(
         "reachable": bool(paths),
         "paths": paths,
         "truncated": hit_path_cap,
+        "depth_limited": depth_limited,
         "explored": explored,
     }
 

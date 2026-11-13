@@ -123,6 +123,18 @@ def test_uidf_set_informs_a_constant_and_renders_hlil(monkeypatch: pytest.Monkey
     assert clipped["truncated"] is True
 
 
+def test_uidf_set_renders_no_lines_for_a_function_without_hlil(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_time(monkeypatch, FakeClock())
+    view, main = _uidf_view()
+    main.hlil = None
+    _, uidf_set = get_tool("rex_uidf_set")
+    result = uidf_set(_call(view), 0x1100, "rax_1", "0x10")
+    assert result["lines"] == []
+    assert result["truncated"] is False
+
+
 def test_uidf_set_many_applies_valid_items_and_reanalyzes_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -141,6 +153,8 @@ def test_uidf_set_many_applies_valid_items_and_reanalyzes_once(
     )
     assert result["applied"] == 2
     assert result["failed"] == 2
+    assert result["failed_count"] == 2
+    assert result["failed_count"] == result["failed"]
     assert result["total"] == 4
     assert result["results"][0] == {
         "index": 0,
@@ -313,11 +327,24 @@ def test_uidf_set_many_reports_core_apply_failures_without_reanalysis() -> None:
     )
     assert result["applied"] == 0
     assert result["failed"] == 1
+    assert result["failed_count"] == 1
     assert result["results"][0]["error"] == {
         "code": "set_failed",
         "message": "could not inform 'rax_1': core refused",
     }
     assert view.update_analysis_calls == 0
+
+
+def test_uidf_set_many_reports_zero_failed_when_every_item_applies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_time(monkeypatch, FakeClock())
+    view, _ = _uidf_view()
+    _, uidf_set_many = get_tool("rex_uidf_set_many")
+    result = uidf_set_many(_call(view), 0x1100, [{"variable": "rax_1", "value": "0x10"}])
+    assert result["applied"] == 1
+    assert result["failed"] == 0
+    assert result["failed_count"] == 0
 
 
 class _ExplodingValue(FakePossibleValueSet):

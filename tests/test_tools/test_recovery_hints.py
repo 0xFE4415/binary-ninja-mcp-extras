@@ -32,7 +32,10 @@ def test_a_missing_component_names_the_tools_that_create_and_list() -> None:
 
 def test_a_missing_string_names_the_tool_that_lists_strings() -> None:
     message = _error("rex_string_read_at", FakeBinaryView(), 0x1000)
-    assert message == "no detected string at 0x1000; rex_string_search lists detected strings"
+    assert message == (
+        "no string at 0x1000: none detected and no NUL-terminated ASCII text there; "
+        "rex_data_read reads raw bytes and rex_string_search lists detected strings"
+    )
 
 
 def test_an_annotate_row_for_a_pending_function_says_to_wait_for_analysis() -> None:

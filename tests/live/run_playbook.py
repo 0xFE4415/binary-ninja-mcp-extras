@@ -491,8 +491,39 @@ def run_opened(
     return 1 if failed or not closed else 0
 
 
+def read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        document = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise HarnessError(f"cannot read the playbook file {path}: {error}") from error
+    if not isinstance(document, dict):
+        raise HarnessError(f"{path} is not a JSON object")
+    return document
+
+
+def load_playbook(playbook_path: Path) -> dict[str, Any]:
+    playbook = read_json_object(playbook_path)
+    includes = playbook.get("include", [])
+    if not isinstance(includes, list):
+        raise HarnessError(f"{playbook_path}: include must be a list of file names")
+    steps = list(playbook["steps"])
+    for name in includes:
+        included_path = playbook_path.parent / name
+        included = read_json_object(included_path)
+        extra_keys = sorted(set(included) - {"steps"})
+        if extra_keys:
+            raise HarnessError(f"{included_path}: only steps is allowed, found {extra_keys}")
+        steps.extend(included["steps"])
+    seen: set[str] = set()
+    for step in steps:
+        if step["id"] in seen:
+            raise HarnessError(f"duplicate step id {step['id']!r} across playbook files")
+        seen.add(step["id"])
+    return {**playbook, "steps": steps}
+
+
 def run(playbook_path: Path, url: str) -> int:
-    playbook = json.loads(playbook_path.read_text())
+    playbook = load_playbook(playbook_path)
     fixture = verify_fixture(playbook)
     base = fixture_base(playbook)
     client = McpClient(url)

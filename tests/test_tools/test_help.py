@@ -58,7 +58,7 @@ def test_help_index_pins_every_use_when_line() -> None:
         "decompile": (
             "bn_binary_triage gives the entry point; read its HLIL or disassembly, grep HLIL."
         ),
-        "strings": "Locate detected strings and the code that references them.",
+        "strings": "Find or read strings at an address, and the code that references them.",
         "scanning": "Find a magic constant or byte pattern, and the functions that contain it.",
         "data": "Read mapped bytes, relocations, or list references to an address.",
         "functions": (
@@ -104,7 +104,10 @@ def test_help_index_places_the_uidf_tools_in_the_uidf_category() -> None:
 def test_help_category_lists_its_tools_with_their_purposes() -> None:
     listing = _help(category="strings")
     assert listing["category"] == "strings"
-    assert listing["use_when"] == "Locate detected strings and the code that references them."
+    assert (
+        listing["use_when"]
+        == "Find or read strings at an address, and the code that references them."
+    )
     search = {tool["name"]: tool for tool in listing["tools"]}["rex_string_search"]
     assert search["description"] == (
         "Search the binary's detected strings by substring or regular expression."
@@ -189,6 +192,17 @@ def test_help_fails_on_an_unknown_category_and_lists_the_valid_ones() -> None:
     assert exc.value.message == f"no category named 'nope'; categories: {expected_categories}"
 
 
+def test_help_truncates_a_long_unknown_category_name_in_the_error() -> None:
+    with pytest.raises(FakeToolError) as exc:
+        _help(category="c" * 600)
+    assert exc.value.code == "unknown_category"
+    expected_categories = ", ".join([*_CATEGORY_USE_WHEN, _UNCATEGORIZED])
+    expected_echo = "c" * 512 + "... [88 chars truncated]"
+    assert exc.value.message == (
+        f"no category named '{expected_echo}'; categories: {expected_categories}"
+    )
+
+
 @pytest.mark.parametrize("category", ["strings", "nope"])
 def test_help_rejects_a_tool_name_together_with_any_category(category: str) -> None:
     with pytest.raises(FakeToolError) as exc:
@@ -241,6 +255,21 @@ def test_help_states_that_call_paths_defaults_to_callers_and_reachability_needs_
     )
 
 
+def test_help_states_that_analysis_wait_timeout_defaults_to_ten_seconds() -> None:
+    by_name = {
+        parameter["name"]: parameter for parameter in _help("rex_analysis_wait")["parameters"]
+    }
+    assert by_name["timeout_ms"]["default"] == 10000
+    assert by_name["timeout_ms"]["required"] is False
+
+
+def test_help_call_paths_describes_depth_limited() -> None:
+    by_name = {parameter["name"]: parameter for parameter in _help("rex_call_paths")["parameters"]}
+    assert by_name["max_depth"]["description"] == (
+        "Maximum edges walked; depth_limited in the result flags a cut at this depth."
+    )
+
+
 def test_help_details_required_flags_and_bounds() -> None:
     by_name = {parameter["name"]: parameter for parameter in _help("rex_data_find")["parameters"]}
     assert by_name["pattern"]["required"] is True
@@ -256,6 +285,15 @@ def test_help_details_the_annotate_items_schema() -> None:
     assert items["type"] == "array"
     assert items["items"]["properties"]["addr"]["type"] == ["integer", "string"]
     assert items["items"]["required"] == ["addr"]
+    properties = items["items"]["properties"]
+    assert properties["name"]["description"] == "new function name"
+    assert properties["comment"]["description"] == (
+        "comment at exactly addr; an empty string clears it"
+    )
+    assert properties["prototype"]["description"] == (
+        "function prototype such as 'int name(int a, int b)'; a name inside it is not applied,"
+        " use name"
+    )
 
 
 def test_help_details_the_uidf_batch_items_schema() -> None:
@@ -305,6 +343,15 @@ def test_help_fails_on_an_unknown_name_and_lists_the_valid_ones() -> None:
     registered = ", ".join(sorted(tool.name for tool in FakeTool.list()))
     expected = f"no tool named 'rex_nope'; registered tools: {registered}"
     assert exc.value.message == expected
+
+
+def test_help_truncates_a_long_unknown_tool_name_in_the_error() -> None:
+    with pytest.raises(FakeToolError) as exc:
+        _help("t" * 600)
+    assert exc.value.code == "unknown_tool"
+    registered = ", ".join(sorted(tool.name for tool in FakeTool.list()))
+    expected_echo = "t" * 512 + "... [88 chars truncated]"
+    assert exc.value.message == f"no tool named '{expected_echo}'; registered tools: {registered}"
 
 
 def test_help_uncategorized_category_reports_the_uncategorized_use_when() -> None:

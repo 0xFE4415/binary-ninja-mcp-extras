@@ -16,6 +16,7 @@ from typing import Annotated, NamedTuple, TypedDict
 
 import binaryninja
 from binaryninja import mcp
+from binaryninja.exceptions import RelocationWriteException
 
 from binja_plugin.tools import (
     _functions_needing_update,
@@ -279,6 +280,11 @@ def rex_eval_result(
     }
 
 
+class _ShortWriteError(Exception):
+    def __init__(self, written: int) -> None:
+        self.written = written
+
+
 @mcp.tool(destructive=True)
 def rex_memory_write(call: mcp.ToolCall, addr: mcp.Address, hex_data: str) -> _MemoryWriteResult:
     """Overwrite bytes in the binary view with a hex byte string. Writes; undoable.
@@ -294,8 +300,23 @@ def rex_memory_write(call: mcp.ToolCall, addr: mcp.Address, hex_data: str) -> _M
     except ValueError:
         raise mcp.ToolError("invalid_hex", "hex_data must contain hex byte pairs") from None
     bv = call.binary_view
-    with bv.undoable_transaction():
-        written = bv.write(addr, data)
+    try:
+        with bv.undoable_transaction():
+            written = bv.write(addr, data)
+            if written != len(data):
+                raise _ShortWriteError(written)
+    except RelocationWriteException:
+        raise mcp.ToolError(
+            "relocation_overlap",
+            f"the {len(data)}-byte range at {hex(addr)} overlaps a relocation; "
+            "inspect it with rex_relocation_at",
+        ) from None
+    except _ShortWriteError as short:
+        raise mcp.ToolError(
+            "write_failed",
+            f"wrote {short.written} of {len(data)} bytes at {hex(addr)}; the address is "
+            "probably unmapped or not backed by the file. Nothing was written.",
+        ) from None
     analysis_complete = _refresh_analysis(bv, _functions_needing_update(bv))
     return {
         "address": hex(addr),

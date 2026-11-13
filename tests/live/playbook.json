@@ -307,6 +307,40 @@
    ]
   },
   {
+   "id": "export-symbols-hex-string-range",
+   "guards": "Hex strings are accepted for start and end, so a reversed range reaches the range check.",
+   "tool": "rex_export_symbols",
+   "args": {
+    "start": "0x400100",
+    "end": "0x400000",
+    "filename": "range.csv"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "end must be greater than start"
+    }
+   ]
+  },
+  {
+   "id": "export-symbols-mixed-integer-and-string-range",
+   "guards": "An integer start and a hex string end are both accepted in one call.",
+   "tool": "rex_export_symbols",
+   "args": {
+    "start": 4194560,
+    "end": "0x400000",
+    "filename": "range.csv"
+   },
+   "expect": [
+    {
+     "kind": "error_code",
+     "code": "invalid_params",
+     "message_contains": "end must be greater than start"
+    }
+   ]
+  },
+  {
    "id": "export-symbols-dot-filename",
    "guards": "A filename of '.' is rejected as an invalid file name.",
    "tool": "rex_export_symbols",
@@ -1092,6 +1126,69 @@
    ]
   },
   {
+   "id": "mlil-uses-parameter-at-function-start",
+   "guards": "A parameter with no MLIL definition is defined at the function start and lists its reads.",
+   "tool": "rex_mlil_uses",
+   "args": {
+    "function": "compare_minus_one",
+    "address": "compare_minus_one",
+    "variable": "arg1"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "variables",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "value": "arg1",
+     "path": "variables.0.variable"
+    },
+    {
+     "kind": "subset",
+     "value": [],
+     "path": "variables.0.definitions"
+    },
+    {
+     "kind": "not_regex",
+     "pattern": "^0$",
+     "path": "variables.0.total"
+    }
+   ]
+  },
+  {
+   "id": "mlil-uses-parameter-at-function-start-without-function",
+   "guards": "Omitting function resolves it from address; the parameter is still defined at the start.",
+   "tool": "rex_mlil_uses",
+   "args": {
+    "address": "compare_minus_one",
+    "variable": "arg1"
+   },
+   "expect": [
+    {
+     "kind": "length",
+     "path": "variables",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "value": "arg1",
+     "path": "variables.0.variable"
+    },
+    {
+     "kind": "subset",
+     "value": [],
+     "path": "variables.0.definitions"
+    },
+    {
+     "kind": "not_regex",
+     "pattern": "^0$",
+     "path": "variables.0.total"
+    }
+   ]
+  },
+  {
    "id": "pattern-credits-lowest-start-function",
    "guards": "A match in a block shared by two functions is credited once, to the lowest-start function.",
    "tool": "rex_find_functions_by_pattern",
@@ -1392,6 +1489,117 @@
    ]
   },
   {
+   "id": "kv-set-for-list",
+   "guards": "rex_kv_set stores a value that rex_kv_list then reports.",
+   "tool": "rex_kv_set",
+   "args": {
+    "key": "playbook/list",
+    "value": "abcde"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "length",
+     "value": 5
+    }
+   ]
+  },
+  {
+   "id": "kv-list-shows-stored-key-with-length",
+   "guards": "rex_kv_list returns a stored key with the prefix stripped and the value's length.",
+   "tool": "rex_kv_list",
+   "args": {
+    "prefix": "playbook/"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "total",
+     "value": 1
+    },
+    {
+     "kind": "subset",
+     "path": "truncated",
+     "value": false
+    },
+    {
+     "kind": "includes",
+     "path": "keys",
+     "item": {
+      "key": "playbook/list",
+      "length": 5
+     }
+    }
+   ]
+  },
+  {
+   "id": "kv-delete-reports-existed-true",
+   "guards": "rex_kv_delete reports existed true when a value was stored under the key.",
+   "tool": "rex_kv_delete",
+   "args": {
+    "key": "playbook/list"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "existed",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": "kv-delete-reports-existed-false",
+   "guards": "rex_kv_delete reports existed false for a key that is already gone, without an error.",
+   "tool": "rex_kv_delete",
+   "args": {
+    "key": "playbook/list"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "existed",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": "tag-set-for-list",
+   "guards": "rex_tag_set adds a data tag that rex_tag_list then reports.",
+   "tool": "rex_tag_set",
+   "args": {
+    "addr": "0x400160",
+    "tag_type": "Finding",
+    "data": "playbook tag"
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "address",
+     "value": "0x400160"
+    }
+   ]
+  },
+  {
+   "id": "tag-list-reports-data-scope",
+   "guards": "rex_tag_list rows carry a scope; a tag added with rex_tag_set is scope data.",
+   "tool": "rex_tag_list",
+   "args": {
+    "limit": 1000
+   },
+   "expect": [
+    {
+     "kind": "includes",
+     "path": "tags",
+     "item": {
+      "address": "0x400160",
+      "scope": "data",
+      "tag_type": "Finding",
+      "data": "playbook tag"
+     }
+    }
+   ]
+  },
+  {
    "id": "annotate-name-with-nul-rejected",
    "guards": "A NUL byte in an annotation name fails that row with a name error and applies nothing in the batch.",
    "tool": "rex_annotate_many",
@@ -1606,475 +1814,7 @@
      }
     }
    ]
-  },
-  {
-   "id": "data-find-parity-e8-wildcards",
-   "guards": "Both scanners return the same first page for the bytes e8 followed by four wildcards, which includes the displacement of a jmp and the start of the cmp after it, not only calls.",
-   "tool": "rex_data_find",
-   "args": {
-    "pattern": "e8 ?? ?? ?? ??",
-    "section": ".text",
-    "limit": 5
-   },
-   "expect": [
-    {
-     "kind": "subset",
-     "value": true,
-     "path": "truncated"
-    },
-    {
-     "kind": "length",
-     "path": "matches",
-     "value": 5
-    },
-    {
-     "kind": "parity",
-     "against": {
-      "tool": "rx_data_find",
-      "args": {
-       "pattern": "e8 ?? ?? ?? ??",
-       "section": ".text",
-       "limit": 5
-      }
-     },
-     "fields": [
-      "total",
-      "truncated",
-      "matches"
-     ]
-    }
-   ]
-  },
-  {
-   "id": "data-find-parity-second-page",
-   "guards": "Both scanners return the same second page for the bytes e8 followed by four wildcards.",
-   "tool": "rex_data_find",
-   "args": {
-    "pattern": "e8 ?? ?? ?? ??",
-    "section": ".text",
-    "limit": 5,
-    "offset": 5
-   },
-   "expect": [
-    {
-     "kind": "subset",
-     "path": "",
-     "value": {
-      "total": 11,
-      "truncated": true,
-      "matches": [
-       "0x4000e8",
-       "0x400104",
-       "0x400124",
-       "0x400287",
-       "0x4002b7"
-      ]
-     }
-    },
-    {
-     "kind": "parity",
-     "against": {
-      "tool": "rx_data_find",
-      "args": {
-       "pattern": "e8 ?? ?? ?? ??",
-       "section": ".text",
-       "limit": 5,
-       "offset": 5
-      }
-     },
-     "fields": [
-      "total",
-      "truncated",
-      "matches"
-     ]
-    }
-   ]
-  },
-  {
-   "id": "data-find-parity-whole-view",
-   "guards": "Both scanners return the same matches for a whole-view scan.",
-   "tool": "rex_data_find",
-   "args": {
-    "pattern": "c3",
-    "limit": 20
-   },
-   "expect": [
-    {
-     "kind": "subset",
-     "path": "",
-     "value": {
-      "total": 21,
-      "truncated": true
-     }
-    },
-    {
-     "kind": "length",
-     "path": "matches",
-     "value": 20
-    },
-    {
-     "kind": "parity",
-     "against": {
-      "tool": "rx_data_find",
-      "args": {
-       "pattern": "c3",
-       "limit": 20
-      }
-     },
-     "fields": [
-      "total",
-      "truncated",
-      "matches"
-     ]
-    }
-   ]
-  },
-  {
-   "id": "data-find-parity-no-match",
-   "guards": "Both scanners agree on a pattern with no match.",
-   "tool": "rex_data_find",
-   "args": {
-    "pattern": "de ad be ef 5a 5a 5a 5a"
-   },
-   "expect": [
-    {
-     "kind": "subset",
-     "value": {
-      "total": 0,
-      "truncated": false,
-      "matches": []
-     }
-    },
-    {
-     "kind": "parity",
-     "against": {
-      "tool": "rx_data_find",
-      "args": {
-       "pattern": "de ad be ef 5a 5a 5a 5a"
-      }
-     },
-     "fields": [
-      "total",
-      "truncated",
-      "matches"
-     ]
-    }
-   ]
-  },
-  {
-   "id": "data-find-parity-invalid-token",
-   "guards": "Both scanners reject an invalid token with the same error.",
-   "tool": "rex_data_find",
-   "args": {
-    "pattern": "zz"
-   },
-   "expect": [
-    {
-     "kind": "error_code",
-     "code": "invalid_pattern"
-    },
-    {
-     "kind": "parity",
-     "against": {
-      "tool": "rx_data_find",
-      "args": {
-       "pattern": "zz"
-      }
-     },
-     "fields": [
-      "errorCode",
-      "errorMessage"
-     ],
-     "expect_error": true
-    }
-   ]
-  },
-  {
-   "id": "multi-find-parity-with-data-find",
-   "guards": "rx_multi_find returns the pinned matches and agrees with rex_data_find for each pattern.",
-   "tool": "rx_multi_find",
-   "args": {
-    "patterns": [
-     "e8 ?? ?? ?? ??",
-     "b8 34 12 5a 5a",
-     "83 3d ?? ?? ?? ?? 01",
-     "31 c0"
-    ],
-    "limit": 4
-   },
-   "expect": [
-    {
-     "kind": "length",
-     "path": "results",
-     "value": 4
-    },
-    {
-     "kind": "subset",
-     "path": "results.0",
-     "value": {
-      "pattern": "e8 ?? ?? ?? ??",
-      "total": 5,
-      "truncated": true,
-      "matches": [
-       "0x40002e",
-       "0x400068",
-       "0x400084",
-       "0x4000a6"
-      ]
-     }
-    },
-    {
-     "kind": "subset",
-     "path": "results.1",
-     "value": {
-      "pattern": "b8 34 12 5a 5a",
-      "total": 1,
-      "truncated": false,
-      "matches": [
-       "0x40003e"
-      ]
-     }
-    },
-    {
-     "kind": "subset",
-     "path": "results.2",
-     "value": {
-      "pattern": "83 3d ?? ?? ?? ?? 01",
-      "total": 2,
-      "truncated": false,
-      "matches": [
-       "0x40000b",
-       "0x400044"
-      ]
-     }
-    },
-    {
-     "kind": "subset",
-     "path": "results.3",
-     "value": {
-      "pattern": "31 c0",
-      "total": 4,
-      "truncated": false,
-      "matches": [
-       "0x400000",
-       "0x400006",
-       "0x400171",
-       "0x4001cf"
-      ]
-     }
-    },
-    {
-     "kind": "parity",
-     "against": {
-      "tool": "rex_data_find",
-      "args": {
-       "pattern": "e8 ?? ?? ?? ??",
-       "limit": 4
-      }
-     },
-     "fields": [
-      "total",
-      "truncated",
-      "matches"
-     ],
-     "path": "results.0"
-    },
-    {
-     "kind": "parity",
-     "against": {
-      "tool": "rex_data_find",
-      "args": {
-       "pattern": "b8 34 12 5a 5a",
-       "limit": 4
-      }
-     },
-     "fields": [
-      "total",
-      "truncated",
-      "matches"
-     ],
-     "path": "results.1"
-    },
-    {
-     "kind": "parity",
-     "against": {
-      "tool": "rex_data_find",
-      "args": {
-       "pattern": "83 3d ?? ?? ?? ?? 01",
-       "limit": 4
-      }
-     },
-     "fields": [
-      "total",
-      "truncated",
-      "matches"
-     ],
-     "path": "results.2"
-    },
-    {
-     "kind": "parity",
-     "against": {
-      "tool": "rex_data_find",
-      "args": {
-       "pattern": "31 c0",
-       "limit": 4
-      }
-     },
-     "fields": [
-      "total",
-      "truncated",
-      "matches"
-     ],
-     "path": "results.3"
-    }
-   ]
-  },
-  {
-   "id": "multi-find-no-match",
-   "guards": "rx_multi_find reports a pattern with no match as empty, untruncated, and agrees with rex_data_find.",
-   "tool": "rx_multi_find",
-   "args": {
-    "patterns": [
-     "de ad be ef 5a 5a 5a 5a"
-    ]
-   },
-   "expect": [
-    {
-     "kind": "subset",
-     "value": {
-      "total": 0,
-      "results": [
-       {
-        "pattern": "de ad be ef 5a 5a 5a 5a",
-        "total": 0,
-        "truncated": false,
-        "matches": []
-       }
-      ]
-     }
-    },
-    {
-     "kind": "parity",
-     "against": {
-      "tool": "rex_data_find",
-      "args": {
-       "pattern": "de ad be ef 5a 5a 5a 5a"
-      }
-     },
-     "fields": [
-      "total",
-      "truncated",
-      "matches"
-     ],
-     "path": "results.0"
-    }
-   ]
-  },
-  {
-   "id": "multi-find-section-error-parity",
-   "guards": "rx_multi_find and rex_data_find report an unknown section the same way.",
-   "tool": "rx_multi_find",
-   "args": {
-    "patterns": [
-     "e8"
-    ],
-    "section": ".te\u0000xt"
-   },
-   "expect": [
-    {
-     "kind": "error_code",
-     "code": "section_not_found"
-    },
-    {
-     "kind": "parity",
-     "against": {
-      "tool": "rex_data_find",
-      "args": {
-       "pattern": "e8",
-       "section": ".te\u0000xt"
-      }
-     },
-     "fields": [
-      "errorCode",
-      "errorMessage"
-     ],
-     "expect_error": true
-    }
-   ]
-  },
-  {
-   "id": "undo-probe-comment",
-   "guards": "Setup for the undo steps: one annotate batch that adds a comment.",
-   "tool": "rex_annotate_many",
-   "args": {
-    "items": [
-     {
-      "addr": "0x400060",
-      "comment": "undo probe"
-     }
-    ]
-   },
-   "expect": [
-    {
-     "kind": "subset",
-     "path": "applied",
-     "value": 1
-    }
-   ]
-  },
-  {
-   "id": "undo-lists-what-it-undid",
-   "guards": "rex_undo names the actions of the entry it undid.",
-   "tool": "rex_undo",
-   "args": {},
-   "expect": [
-    {
-     "kind": "subset",
-     "path": "undone",
-     "value": true
-    },
-    {
-     "kind": "includes",
-     "path": "actions",
-     "item": "Comment in function dup_leaf at 0x400060: \"undo probe\""
-    },
-    {
-     "kind": "subset",
-     "path": "actions_truncated",
-     "value": false
-    }
-   ]
-  },
-  {
-   "id": "redo-lists-what-it-redid",
-   "guards": "rex_redo names the actions of the entry it redid.",
-   "tool": "rex_redo",
-   "args": {},
-   "expect": [
-    {
-     "kind": "subset",
-     "path": "redone",
-     "value": true
-    },
-    {
-     "kind": "includes",
-     "path": "actions",
-     "item": "Comment in function dup_leaf at 0x400060: \"undo probe\""
-    }
-   ]
-  },
-  {
-   "id": "undo-probe-comment-restored",
-   "guards": "Teardown for the undo steps: removes the probe comment again.",
-   "tool": "rex_undo",
-   "args": {},
-   "expect": [
-    {
-     "kind": "includes",
-     "path": "actions",
-     "item": "Comment in function dup_leaf at 0x400060: \"undo probe\""
-    }
-   ]
   }
- ]
+ ],
+ "include": ["playbook_more.json"]
 }

@@ -7,7 +7,7 @@ from typing import TypedDict
 
 from binaryninja import mcp
 
-from binja_plugin.tools import _show_nul
+from binja_plugin.tools import _show_nul, _truncate
 
 _TOOL_PREFIX = "rex_"
 _NATIVE_TOOL_NAMES = frozenset({"rx_data_find", "rx_multi_find"})
@@ -18,7 +18,7 @@ _UNCATEGORIZED_USE_WHEN = "Registered rex_ tools that no category module defines
 
 _CATEGORY_USE_WHEN: dict[str, str] = {
     "decompile": "bn_binary_triage gives the entry point; read its HLIL or disassembly, grep HLIL.",
-    "strings": "Locate detected strings and the code that references them.",
+    "strings": "Find or read strings at an address, and the code that references them.",
     "scanning": "Find a magic constant or byte pattern, and the functions that contain it.",
     "data": "Read mapped bytes, relocations, or list references to an address.",
     "functions": "Define missing functions (code after int3, indirect targets), map call paths.",
@@ -96,7 +96,7 @@ def _category_view(registered: dict[str, mcp.Tool], category: str) -> _CategoryV
     if category not in _CATEGORY_USE_WHEN and category != _UNCATEGORIZED:
         raise mcp.ToolError(
             "unknown_category",
-            f"no category named '{_show_nul(category)}'; categories: "
+            f"no category named '{_show_nul(_truncate(category))}'; categories: "
             f"{', '.join([*_CATEGORY_USE_WHEN, _UNCATEGORIZED])}",
         )
     return {
@@ -124,7 +124,7 @@ def _tool_view(registered: dict[str, mcp.Tool], tool_name: str) -> _ToolView:
     if tool is None:
         raise mcp.ToolError(
             "unknown_tool",
-            f"no tool named '{_show_nul(tool_name)}'; "
+            f"no tool named '{_show_nul(_truncate(tool_name))}'; "
             f"registered tools: {', '.join(sorted(registered))}",
         )
     schema = tool.input_schema

@@ -5,11 +5,13 @@ from pathlib import Path
 import pytest
 from helpers import (
     DIRECTORY_NAME_MESSAGE,
+    FakeNamedTypeReference,
     FakeToolError,
     _call,
     _use_export_root,
     get_tool,
 )
+from helpers_types import FakeStructureVariant
 from helpers_view import (
     TYPE_LIBRARIES_ON_DISK,
     FakeArchitecture,
@@ -177,6 +179,93 @@ def test_type_library_import_rejects_bad_names_lists(
     at_cap_result = import_tool(_call(view), str(tmp_path / "libc.bntl"), at_cap)
     assert at_cap_result["total"] == types._MAX_TYPE_LIBRARY_NAMES
     assert len(at_cap_result["failed"]) == types._MAX_TYPE_LIBRARY_NAMES
+
+
+def _objects_library(tmp_path: Path) -> tuple[FakeTypeLibrary, str]:
+    library = FakeTypeLibrary(
+        name="libc",
+        named_types={"stat_t": FakeType("stat_t", "struct stat_t")},
+        named_objects={"open": FakeType("open", "int32_t(char const* path, int32_t flags)")},
+    )
+    return library, _library_on_disk(tmp_path, library)
+
+
+def test_type_library_import_objects_imports_named_objects(tmp_path: Path) -> None:
+    library, path = _objects_library(tmp_path)
+    view = FakeBinaryView()
+    _, import_tool = get_tool("rex_type_library_import")
+    # "stat_t" is only a named type, so the objects import does not find it.
+    result = import_tool(_call(view), path, ["open", "stat_t"], kind="objects")
+    assert result == {
+        "library": "libc",
+        "imported": [{"requested": "open", "type": "int32_t(char const* path, int32_t flags)"}],
+        "failed": [{"requested": "stat_t", "reason": "not provided by this type library"}],
+        "applied": 1,
+        "failed_count": 1,
+        "total": 2,
+    }
+    assert view.type_libraries == [library]
+    assert view.imported_library_objects == [(library, "open")]
+    assert view.imported_library_types == []
+
+
+def test_type_library_import_types_ignores_named_objects(tmp_path: Path) -> None:
+    library, path = _objects_library(tmp_path)
+    view = FakeBinaryView(library_types={"stat_t": "stat_t"})
+    _, import_tool = get_tool("rex_type_library_import")
+    result = import_tool(_call(view), path, ["open", "stat_t"], kind="types")
+    assert result["imported"] == [{"requested": "stat_t", "resolved": "stat_t"}]
+    assert result["failed"] == [
+        {"requested": "open", "reason": "not provided by this type library"}
+    ]
+    assert view.imported_library_types == [(library, "stat_t")]
+    assert view.imported_library_objects == []
+
+
+def test_type_library_import_objects_reports_a_failed_core_import(tmp_path: Path) -> None:
+    library, path = _objects_library(tmp_path)
+    view = FakeBinaryView()
+    view.refused_library_objects = frozenset({"open"})
+    _, import_tool = get_tool("rex_type_library_import")
+    result = import_tool(_call(view), path, ["open"], kind="objects")
+    assert result["imported"] == []
+    assert result["failed"] == [
+        {"requested": "open", "reason": "the core could not import this object"}
+    ]
+    assert view.imported_library_objects == [(library, "open")]
+
+
+@pytest.mark.parametrize(
+    ("type_string", "reported"),
+    [
+        ("t" * 512, "t" * 512),
+        ("t" * 513, "t" * 512 + "... [1 chars truncated]"),
+    ],
+)
+def test_type_library_import_objects_bounds_the_reported_type_string(
+    tmp_path: Path, type_string: str, reported: str
+) -> None:
+    library = FakeTypeLibrary(name="libc", named_objects={"wide": FakeType("wide", type_string)})
+    path = _library_on_disk(tmp_path, library)
+    _, import_tool = get_tool("rex_type_library_import")
+    result = import_tool(_call(FakeBinaryView()), path, ["wide"], kind="objects")
+    assert result["imported"] == [{"requested": "wide", "type": reported}]
+
+
+def test_type_library_import_rejects_an_unknown_kind(tmp_path: Path) -> None:
+    _, path = _objects_library(tmp_path)
+    view = FakeBinaryView()
+    _, import_tool = get_tool("rex_type_library_import")
+    for kind, shown in (
+        ("bogus", "bogus"),
+        ("Objects", "Objects"),
+        ("t\x00", "t\N{REPLACEMENT CHARACTER}"),
+    ):
+        with pytest.raises(FakeToolError) as exc:
+            import_tool(_call(view), path, ["open"], kind=kind)
+        assert exc.value.code == "invalid_params"
+        assert exc.value.message == f"kind must be 'types' or 'objects', not '{shown}'"
+    assert view.type_libraries == []
 
 
 # --- rex_type_library_export ----------------------------------------------------------------
@@ -924,21 +1013,31 @@ def test_type_library_export_rejects_invalid_inputs(
 # --- rex_struct_from_access ------------------------------------------------------------------
 
 
-def _struct_view(members: list[FakeStructureMember], width: int) -> FakeBinaryView:
-    return FakeBinaryView(structure=FakeStructureType(members, width))
+_NEXT_STEP = (
+    "apply 'struct {name}*' to a variable that is dereferenced with bn_variable_set_type, "
+    "run rex_analysis_wait, then retry"
+)
 
 
-def test_struct_from_access_creates_and_defines_the_struct() -> None:
+def _struct_view(
+    members: list[FakeStructureMember], width: int, name: str = "ctx"
+) -> FakeBinaryView:
+    return FakeBinaryView(
+        types={name: FakeStructureType([], 0)}, structure=FakeStructureType(members, width)
+    )
+
+
+def test_struct_from_access_redefines_the_existing_type_in_place() -> None:
     members = [
         FakeStructureMember("field_0", 0, FakeType("field_0", "int32_t")),
         FakeStructureMember("ptr", 8, FakeType("ptr", "void *")),
     ]
-    view = _struct_view(members, width=16)
+    view = _struct_view(members, width=16, name="probe_s")
     _, create = get_tool("rex_struct_from_access")
-    result = create(_call(view), "ctx")
+    result = create(_call(view), "probe_s")
     assert result == {
-        "name": "ctx",
-        "registered": "ctx",
+        "name": "probe_s",
+        "registered": "probe_s",
         "width": 16,
         "member_count": 2,
         "members": [
@@ -947,20 +1046,117 @@ def test_struct_from_access_creates_and_defines_the_struct() -> None:
         ],
         "truncated": False,
     }
-    # The struct is defined in the view under an auto type id derived from this tool's
-    # source marker and the requested name.
-    assert view.defined_types == [("auto:rex_struct:ctx", "ctx", view._structure)]
+    # The inferred members replace the existing user type under its own name, in one
+    # undoable transaction, so code typed 'struct probe_s*' sees them.
+    assert view.defined_types == [("probe_s", view._structure)]
+    assert view.get_type_by_name("probe_s") is view._structure
+    assert view.transactions == ["open", "commit"]
 
 
-def test_struct_from_access_reports_a_deconflicted_registered_name() -> None:
-    view = FakeBinaryView(
-        structure=FakeStructureType([], 0),
-        defined_type_name="ctx_0",
-    )
+def test_struct_from_access_rejects_a_name_that_is_not_a_type() -> None:
+    # With no structure the core would refuse, so reaching it would surface create_failed.
+    view = FakeBinaryView()
     _, create = get_tool("rex_struct_from_access")
-    result = create(_call(view), "ctx")
-    assert result["registered"] == "ctx_0"
-    assert result["member_count"] == 0
+    with pytest.raises(FakeToolError) as exc:
+        create(_call(view), "ctx")
+    assert exc.value.code == "type_not_found"
+    assert exc.value.message == (
+        "no type named 'ctx' in the view; create it as an empty struct with "
+        "bn_type_struct_create, then " + _NEXT_STEP.format(name="ctx")
+    )
+    assert view.defined_types == []
+
+
+def test_struct_from_access_rejects_a_type_that_is_not_a_structure() -> None:
+    view = FakeBinaryView(types={"ctx_t": FakeType("ctx_t", "int32_t")})
+    _, create = get_tool("rex_struct_from_access")
+    with pytest.raises(FakeToolError) as exc:
+        create(_call(view), "ctx_t")
+    assert exc.value.code == "not_a_structure"
+    assert exc.value.message == "type 'ctx_t' is not a structure; pass the name of a struct type"
+    assert view.defined_types == []
+
+
+def _union() -> FakeStructureType:
+    union = FakeStructureType([], 8)
+    union.type = FakeStructureVariant.UnionStructureType
+    return union
+
+
+_NOT_PLAIN = "which is not a plain struct; pass the name of a plain struct type"
+_LONG_TARGET = "s" * 513
+
+
+@pytest.mark.parametrize(
+    ("target_name", "target", "message"),
+    [
+        (
+            "conn",
+            FakeStructureType([], 0),
+            "type 'conn_t' is an alias of struct 'conn'; pass 'conn' as name instead",
+        ),
+        ("conn", _union(), f"type 'conn_t' is an alias of 'conn', {_NOT_PLAIN}"),
+        ("conn", FakeType("conn", "int32_t"), f"type 'conn_t' is an alias of 'conn', {_NOT_PLAIN}"),
+        ("conn", None, f"type 'conn_t' is an alias of 'conn', {_NOT_PLAIN}"),
+        (
+            "conn_t",
+            None,
+            "type 'conn_t' is a named reference to itself, not a struct definition; define it "
+            "with bn_type_struct_create, then " + _NEXT_STEP.format(name="conn_t"),
+        ),
+        (
+            _LONG_TARGET,
+            FakeStructureType([], 0),
+            "type 'conn_t' is an alias of struct '{shown}'; pass '{shown}' as name instead".format(
+                shown="s" * 512 + "... [1 chars truncated]"
+            ),
+        ),
+    ],
+)
+def test_struct_from_access_rejects_an_alias_by_its_target(
+    target_name: str, target: FakeType | FakeStructureType | None, message: str
+) -> None:
+    named: dict[str, FakeType | FakeStructureType] = {
+        "conn_t": FakeNamedTypeReference(target_name, f"struct {target_name}")
+    }
+    if target is not None:
+        named[target_name] = target
+    view = FakeBinaryView(types=named, structure=FakeStructureType([], 8))
+    _, create = get_tool("rex_struct_from_access")
+    with pytest.raises(FakeToolError) as exc:
+        create(_call(view), "conn_t")
+    assert exc.value.code == "not_a_structure"
+    assert exc.value.message == message
+    assert view.defined_types == []
+
+
+@pytest.mark.parametrize(
+    ("variant", "message"),
+    [
+        (
+            FakeStructureVariant.UnionStructureType,
+            "type 'ctx' is a union, and this tool fills plain structs only; "
+            "edit the union's members with bn_type_union_modify",
+        ),
+        (
+            FakeStructureVariant.ClassStructureType,
+            "type 'ctx' is a class, and this tool fills plain structs only; "
+            "edit the class's members with bn_type_struct_modify",
+        ),
+    ],
+)
+def test_struct_from_access_rejects_a_union_or_class(
+    variant: FakeStructureVariant, message: str
+) -> None:
+    existing = FakeStructureType([], 0)
+    existing.type = variant
+    view = FakeBinaryView(types={"ctx": existing}, structure=FakeStructureType([], 8))
+    _, create = get_tool("rex_struct_from_access")
+    with pytest.raises(FakeToolError) as exc:
+        create(_call(view), "ctx")
+    assert exc.value.code == "not_a_structure"
+    assert exc.value.message == message
+    assert view.defined_types == []
 
 
 def test_struct_from_access_caps_the_echoed_members() -> None:
@@ -982,17 +1178,49 @@ def test_struct_from_access_caps_the_echoed_members() -> None:
     assert over["truncated"] is True
 
 
-def test_struct_from_access_reports_the_core_refusal() -> None:
-    view = FakeBinaryView()
+def test_struct_from_access_reports_a_type_without_recorded_accesses() -> None:
+    view = FakeBinaryView(types={"ctx": FakeStructureType([], 0)})
     _, create = get_tool("rex_struct_from_access")
     with pytest.raises(FakeToolError) as exc:
         create(_call(view), "ctx")
     assert exc.value.code == "create_failed"
     assert exc.value.message == (
-        "could not create a structure from offset accesses: "
-        "BNCreateStructureFromOffsetAccess failed to create struct from offsets"
+        "analysis has recorded no offset accesses for struct 'ctx' "
+        "(BNCreateStructureFromOffsetAccess failed to create struct from offsets); "
+        + _NEXT_STEP.format(name="ctx")
     )
     assert view.defined_types == []
+    assert view.transactions == []
+
+
+def test_struct_from_access_writes_only_when_the_inference_changes_the_struct() -> None:
+    def member(name: str, type_string: str) -> FakeStructureMember:
+        return FakeStructureMember(name, 0, FakeType(name, type_string))
+
+    _, create = get_tool("rex_struct_from_access")
+    existing = FakeStructureType([member("field_0", "int32_t")], 8)
+    same = FakeStructureType([member("field_0", "int32_t")], 8)
+    view = FakeBinaryView(types={"ctx": existing}, structure=same)
+    with pytest.raises(FakeToolError) as exc:
+        create(_call(view), "ctx")
+    assert exc.value.code == "create_failed"
+    assert exc.value.message == (
+        "analysis has recorded no offset accesses for struct 'ctx' beyond its existing "
+        "members; " + _NEXT_STEP.format(name="ctx")
+    )
+    assert view.defined_types == []
+    # Each of width, member type, member name, and member offset alone counts as a change.
+    moved = FakeStructureMember("field_0", 4, FakeType("field_0", "int32_t"))
+    for changed in (
+        FakeStructureType([member("field_0", "int32_t")], 16),
+        FakeStructureType([member("field_0", "uint32_t")], 8),
+        FakeStructureType([member("count", "int32_t")], 8),
+        FakeStructureType([moved], 8),
+        FakeStructureType([member("field_0", "int32_t"), moved], 8),
+    ):
+        view = FakeBinaryView(types={"ctx": existing}, structure=changed)
+        create(_call(view), "ctx")
+        assert view.defined_types == [("ctx", changed)]
 
 
 def test_struct_from_access_rejects_bad_names() -> None:
@@ -1011,7 +1239,9 @@ def test_struct_from_access_rejects_bad_names() -> None:
         assert exc.value.code == code
         assert exc.value.message == message
     # Exactly at the cap the name is accepted (with the fake struct in place).
-    view_at_cap = _struct_view([], 0)
+    view_at_cap = _struct_view(
+        [FakeStructureMember("a", 0, FakeType("a"))], 8, name="x" * types._MAX_TYPE_NAME_CHARS
+    )
     at_cap = create(_call(view_at_cap), "x" * types._MAX_TYPE_NAME_CHARS)
     assert at_cap["name"] == "x" * types._MAX_TYPE_NAME_CHARS
 

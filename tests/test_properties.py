@@ -318,13 +318,14 @@ def test_tag_list_pages_arbitrary_limits(tags: list[tuple[int, str]], limit: int
     expected = [
         {
             "address": hex(address),
+            "scope": "data",
             "tag_type": "Finding",
             "data": data
             if len(data) <= tools._MAX_CHARS
             else data[: tools._MAX_CHARS] + f"... [{len(data) - tools._MAX_CHARS} chars truncated]",
             "data_truncated": len(data) > tools._MAX_CHARS,
         }
-        for address, data in tags
+        for address, data in sorted(tags)
     ]
     assert result["total"] == len(tags)
     assert result["truncated"] is (len(tags) > limit)
@@ -361,6 +362,7 @@ def test_tag_list_rejects_out_of_range_limits(tags: list[tuple[int, str]], limit
 
 
 _NODES = 6
+_UNREACHABLE = 10**9
 _STARTS = [0x1000 + 0x10 * index for index in range(_NODES)]
 
 
@@ -376,7 +378,7 @@ def _graph(edges: list[tuple[int, int]]) -> tuple[list[FakeFunction], list[set[i
 
 def _min_distances(adjacency: list[set[int]], direction: str) -> list[list[int]]:
     """Floyd-Warshall over the traversal edges: callers walk call edges backwards."""
-    huge = 10**9
+    huge = _UNREACHABLE
     dist = [[huge] * _NODES for _ in range(_NODES)]
     for node in range(_NODES):
         dist[node][node] = 0
@@ -435,6 +437,7 @@ def test_call_paths_reports_real_edges_within_the_depth_cap(
             "reachable": True,
             "paths": [[{"start": hex(_STARTS[from_index]), "name": f"f{from_index}"}]],
             "truncated": False,
+            "depth_limited": False,
             "explored": 1,
         }
         return
@@ -461,7 +464,12 @@ def test_call_paths_reports_real_edges_within_the_depth_cap(
                 assert step_index in adjacency[following_index]
 
     oracle = _min_distances(adjacency, direction)
-    assert result["reachable"] is (oracle[from_index][to_index] <= depth_cap)
+    distance = oracle[from_index][to_index]
+    assert result["reachable"] is (distance <= depth_cap)
+    if not result["reachable"] and not result["depth_limited"]:
+        assert distance == _UNREACHABLE
+    if depth_cap < distance < _UNREACHABLE:
+        assert result["depth_limited"] is True
 
 
 @given(

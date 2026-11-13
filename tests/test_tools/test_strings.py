@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, override
+
 import pytest
 from helpers import (
     FakeToolError,
@@ -186,7 +188,7 @@ def test_string_read_at_truncates_and_caps_max_chars() -> None:
     short = FakeBinaryView(strings=[FakeStringReference("hi", 0x1100)])
     assert read(_call(short), 0x1100)["truncated"] is False
     with pytest.raises(FakeToolError) as exc:
-        read(_call(view), 0x2000)
+        read(_call(view), 0x3000)
     assert exc.value.code == "no_string"
 
 
@@ -405,3 +407,249 @@ def test_string_refs_rejects_out_of_range_windows() -> None:
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
     assert refs(_call(view), limit=tools._MAX_LIMIT)["total"] == 1
+
+
+# --- rex_string_read_at fallback ----------------------------------------------------------
+def test_string_read_at_marks_detected_strings() -> None:
+    view = FakeBinaryView(strings=[FakeStringReference("hello", 0x1100)])
+    _, read = get_tool("rex_string_read_at")
+    assert read(_call(view), 0x1100) == {
+        "address": "0x1100",
+        "length": 5,
+        "type": "AsciiString",
+        "value": "hello",
+        "truncated": False,
+        "detected": True,
+    }
+
+
+def test_string_read_at_falls_back_to_a_nul_terminated_ascii_string() -> None:
+    view = FakeBinaryView(memory={0x2000: b"abc\x00zzz\x00"})
+    _, read = get_tool("rex_string_read_at")
+    assert read(_call(view), 0x2000) == {
+        "address": "0x2000",
+        "length": 3,
+        "type": "AsciiString",
+        "value": "abc",
+        "truncated": False,
+        "detected": False,
+    }
+    assert read(_call(view), 0x2001)["value"] == "bc"
+
+
+def test_string_read_at_fallback_accepts_exactly_max_chars() -> None:
+    view = FakeBinaryView(memory={0x2000: b"abcd\x00"})
+    _, read = get_tool("rex_string_read_at")
+    result = read(_call(view), 0x2000, max_chars=4)
+    assert result["value"] == "abcd"
+    assert result["length"] == 4
+    assert result["truncated"] is False
+    assert result["detected"] is False
+
+
+def test_string_read_at_fallback_bounds_a_long_read_and_flags_truncation() -> None:
+    view = FakeBinaryView(memory={0x2000: b"abcdef\x00"})
+    _, read = get_tool("rex_string_read_at")
+    assert read(_call(view), 0x2000, max_chars=4) == {
+        "address": "0x2000",
+        "length": 4,
+        "type": "AsciiString",
+        "value": "abcd",
+        "truncated": True,
+        "detected": False,
+    }
+
+
+def test_string_read_at_fallback_rejects_unterminated_short_runs() -> None:
+    view = FakeBinaryView(memory={0x2000: b"abc\xff"})
+    _, read = get_tool("rex_string_read_at")
+    with pytest.raises(FakeToolError) as exc:
+        read(_call(view), 0x2000)
+    assert exc.value.code == "no_string"
+
+
+def test_string_read_at_reports_no_string_with_the_next_step() -> None:
+    view = FakeBinaryView(memory={0x2000: b"\x00abc"})
+    _, read = get_tool("rex_string_read_at")
+    with pytest.raises(FakeToolError) as exc:
+        read(_call(view), 0x2000)
+    assert exc.value.code == "no_string"
+    assert exc.value.message == (
+        "no string at 0x2000: none detected and no NUL-terminated ASCII text there; "
+        "rex_data_read reads raw bytes and rex_string_search lists detected strings"
+    )
+
+
+# --- rex_string_refs only_referenced ------------------------------------------------------
+def _referenced_view() -> FakeBinaryView:
+    main = FakeFunction("main", 0x1100, 0x1200)
+    return FakeBinaryView(
+        strings=[
+            FakeStringReference("bare0", 0x4000),
+            FakeStringReference("used1", 0x4010),
+            FakeStringReference("bare2", 0x4020),
+            FakeStringReference("used3", 0x4030),
+        ],
+        code_refs={
+            0x4010: [FakeReferenceSource(main, 0x1150)],
+            0x4030: [FakeReferenceSource(main, 0x1160)],
+        },
+        derived_strings=[
+            FakeDerivedString("derived-bare", None),
+            FakeDerivedString("derived-used", None, refs=[FakeReferenceSource(main, 0x1170)]),
+        ],
+    )
+
+
+def test_string_refs_only_referenced_skips_unreferenced_strings() -> None:
+    _, refs = get_tool("rex_string_refs")
+    result = refs(_call(_referenced_view()), only_referenced=True)
+    assert [entry["value"] for entry in result["strings"]] == ["used1", "used3", "derived-used"]
+    assert result["total"] == 3
+    assert result["truncated"] is False
+    default = refs(_call(_referenced_view()))
+    assert [entry["value"] for entry in default["strings"]][:2] == ["bare0", "used1"]
+    assert default["total"] == 6
+
+
+def test_string_refs_only_referenced_pages_over_referenced_strings_only() -> None:
+    _, refs = get_tool("rex_string_refs")
+    first = refs(_call(_referenced_view()), only_referenced=True, limit=1)
+    assert [entry["value"] for entry in first["strings"]] == ["used1"]
+    assert first["total"] == 2
+    assert first["truncated"] is True
+    second = refs(_call(_referenced_view()), only_referenced=True, limit=1, offset=1)
+    assert [entry["value"] for entry in second["strings"]] == ["used3"]
+    assert second["truncated"] is True
+    last = refs(_call(_referenced_view()), only_referenced=True, limit=1, offset=2)
+    assert [entry["value"] for entry in last["strings"]] == ["derived-used"]
+    assert last["total"] == 3
+    assert last["truncated"] is False
+
+
+def test_string_refs_only_referenced_looks_up_each_string_once() -> None:
+    view = _referenced_view()
+    _, refs = get_tool("rex_string_refs")
+    refs(_call(view), only_referenced=True)
+    assert view.code_ref_requests == [(0x4000, 65), (0x4010, 65), (0x4020, 65), (0x4030, 65)]
+    assert view.derived_code_ref_requests == [65, 65]
+
+
+def test_string_refs_default_skips_lookups_for_unreturned_rows() -> None:
+    view = _referenced_view()
+    _, refs = get_tool("rex_string_refs")
+    refs(_call(view), limit=1)
+    assert view.code_ref_requests == [(0x4000, 65)]
+
+
+def _read_fallback(memory: bytes, max_chars: int) -> dict[str, Any]:
+    view = FakeBinaryView(memory={0x2000: memory})
+    _, read = get_tool("rex_string_read_at")
+    return read(_call(view), 0x2000, max_chars=max_chars)
+
+
+@pytest.mark.parametrize("text", ["a", "ab", "abc"])
+def test_string_read_at_fallback_reads_short_strings(text: str) -> None:
+    result = _read_fallback(text.encode() + b"\x00", 8)
+    assert result["value"] == text
+    assert result["length"] == len(text)
+    assert result["truncated"] is False
+    assert result["detected"] is False
+
+
+def test_string_read_at_fallback_accepts_newlines() -> None:
+    result = _read_fallback(b"a\nb\x00", 8)
+    assert result["value"] == "a\nb"
+    assert result["length"] == 3
+
+
+def test_string_read_at_fallback_rejects_a_leading_nul() -> None:
+    with pytest.raises(FakeToolError) as exc:
+        _read_fallback(b"\x00abc", 8)
+    assert exc.value.code == "no_string"
+
+
+def test_string_read_at_fallback_flags_a_run_one_past_the_bound() -> None:
+    result = _read_fallback(b"abcde\x00", 4)
+    assert result["value"] == "abcd"
+    assert result["length"] == 4
+    assert result["truncated"] is True
+
+
+@pytest.mark.parametrize(
+    "memory", [b"abcd\xff", b"abcd", b"abc\xff", b"abc", b"abcd\x80\x00"], ids=str
+)
+def test_string_read_at_fallback_rejects_unverifiable_runs(memory: bytes) -> None:
+    with pytest.raises(FakeToolError) as exc:
+        _read_fallback(memory, 4)
+    assert exc.value.code == "no_string"
+
+
+def test_string_read_at_fallback_with_one_char_needs_an_ascii_follower() -> None:
+    result = _read_fallback(b"UH\xff", 1)
+    assert result["value"] == "U"
+    assert result["truncated"] is True
+    with pytest.raises(FakeToolError) as exc:
+        _read_fallback(b"U\xff", 1)
+    assert exc.value.code == "no_string"
+    assert _read_fallback(b"U\x00", 1)["truncated"] is False
+
+
+class _CountingDerivedView(FakeBinaryView):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.derived_reads = 0
+
+    @property
+    @override
+    def derived_strings(self) -> list[FakeDerivedString]:
+        self.derived_reads += 1
+        return []
+
+    @derived_strings.setter
+    @override
+    def derived_strings(self, value: list[FakeDerivedString]) -> None:
+        return None
+
+
+def test_string_refs_reads_derived_strings_only_after_detected_ones() -> None:
+    strings = [FakeStringReference(f"s{i}", 0x100 + i * 0x10) for i in range(3)]
+    view = _CountingDerivedView(strings=strings)
+    _, refs = get_tool("rex_string_refs")
+    refs(_call(view), limit=2)
+    assert view.derived_reads == 0
+    refs(_call(view), limit=3)
+    assert view.derived_reads == 1
+
+
+def test_string_refs_only_referenced_counts_a_capped_string_as_referenced() -> None:
+    filler = FakeFunction("filler", 0x9000, 0x9100)
+    view = FakeBinaryView(
+        strings=[FakeStringReference("big", 0x8000)],
+        code_refs={0x8000: [FakeReferenceSource(filler, 0x9000 + index) for index in range(65)]},
+    )
+    _, refs = get_tool("rex_string_refs")
+    entry = refs(_call(view), only_referenced=True)["strings"][0]
+    assert len(entry["refs"]) == 64
+    assert entry["refs_truncated"] is True
+
+
+def test_string_read_at_a_mid_string_address_returns_the_whole_detected_string() -> None:
+    view = FakeBinaryView(strings=[FakeStringReference("0123456789", 0x400034)])
+    _, read = get_tool("rex_string_read_at")
+    result = read(_call(view), 0x400037)
+    assert result["address"] == "0x400034"
+    assert result["length"] == 10
+    assert result["value"] == "0123456789"
+    assert result["detected"] is True
+    assert read(_call(view), 0x40003D)["detected"] is True
+    with pytest.raises(FakeToolError) as exc:
+        read(_call(view), 0x40003E)
+    assert exc.value.code == "no_string"
+
+
+def test_string_read_at_fallback_pins_the_ascii_boundary_after_the_bound() -> None:
+    assert _read_fallback(b"abcd\x7f", 4)["truncated"] is True
+    with pytest.raises(FakeToolError) as exc:
+        _read_fallback(b"abcd\x80", 4)
+    assert exc.value.code == "no_string"

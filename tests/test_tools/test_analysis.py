@@ -236,3 +236,13 @@ def test_binary_close_failure_keeps_unmodified_flag_false() -> None:
     with pytest.raises(FakeToolError):
         close(_call(view))
     assert file_metadata.modified is False
+
+
+def test_analysis_wait_defaults_to_ten_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    _patch_time(monkeypatch, clock)
+    view = FakeBinaryView(analysis_progress_sequence=_running_progress())
+    _, wait = get_tool("rex_analysis_wait")
+    result = wait(_call(view))
+    assert result["completed"] is False
+    assert result["elapsed_ms"] == 10000

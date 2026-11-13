@@ -4,7 +4,15 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from helpers import NO_ALTERNATIVES, FakeToolError, _call, _run_uses, _uses_view, get_tool
+from helpers import (
+    NO_ALTERNATIVES,
+    FakeTool,
+    FakeToolError,
+    _call,
+    _run_uses,
+    _uses_view,
+    get_tool,
+)
 from helpers_dataflow import (
     FakeInstruction,
     FakeMLILInstructions,
@@ -679,3 +687,167 @@ def test_a_temp_flag_display_names_the_exact_storage_it_stands_for(index: int) -
     call = FakeInstruction("MLIL_CALL", 0x1020, output=[variable])
     [report] = _run_uses(_uses_view([call], {variable: [call]}))["variables"]
     assert report["storage"] == {"source": "flag", "flag": f"temp flag {index}"}
+
+
+def _parameter_view(
+    instructions: list[FakeInstruction],
+    definitions: dict[FakeVariable, list[FakeInstruction]],
+    uses: dict[FakeVariable, list[FakeInstruction]],
+    parameters: list[FakeVariable],
+) -> FakeBinaryView:
+    mlil = FakeMLILInstructions(instructions, uses=uses, definitions=definitions)
+    function = FakeFunction("check", 0x1000, 0x1100, mlil=mlil, parameter_vars=parameters)
+    return FakeBinaryView(functions=[function])
+
+
+def _arg1_view() -> FakeBinaryView:
+    arg1 = FakeVariable("arg1", storage=105)
+    counter = FakeVariable("counter", storage=98)
+    copy = FakeVariable("copy", storage=99)
+    entry = set_var(0x1000, counter, const(0))
+    copy_arg1 = set_var(0x1010, copy, var(arg1))
+    reads = [_read_of(arg1, 0x1030), copy_arg1]
+    return _parameter_view(
+        [entry, copy_arg1], {counter: [entry], copy: [copy_arg1]}, {arg1: reads}, [arg1]
+    )
+
+
+def test_uses_list_the_reads_of_a_parameter_defined_at_the_function_start() -> None:
+    assert _run_uses(_arg1_view(), address=0x1000, variable="arg1") == {
+        "function": {"start": "0x1000", "name": "check", **NO_ALTERNATIVES},
+        "definition_site": "0x1000",
+        "variables": [
+            {
+                "variable": "arg1",
+                "storage": {"source": "register", "register": "rdi"},
+                "type": "int64_t",
+                "definitions": [],
+                "total": 2,
+                "truncated": False,
+                "uses": [
+                    {"address": "0x1010", "operation": "MLIL_SET_VAR", "text": "copy = arg1"},
+                    {"address": "0x1030", "operation": "MLIL_IF", "text": "MLIL_IF"},
+                ],
+            }
+        ],
+    }
+
+
+def test_uses_list_the_entry_instruction_variables_before_the_start_parameters() -> None:
+    reports = _run_uses(_arg1_view(), address=0x1000)["variables"]
+    assert [(report["variable"], report["definitions"]) for report in reports] == [
+        ("counter", ["0x1000"]),
+        ("arg1", []),
+    ]
+
+
+def test_uses_list_start_parameters_in_parameter_order() -> None:
+    first, second = FakeVariable("arg1", storage=105), FakeVariable("arg2", storage=99)
+    view = _parameter_view([], {}, {}, [second, first])
+    assert [r["variable"] for r in _run_uses(view, address=0x1000)["variables"]] == [
+        "arg2",
+        "arg1",
+    ]
+
+
+def test_uses_do_not_place_a_parameter_with_an_mlil_definition_at_the_start() -> None:
+    arg1 = FakeVariable("arg1", storage=105)
+    definition = set_var(0x1020, arg1, const(1))
+    view = _parameter_view([definition], {arg1: [definition]}, {}, [arg1])
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(view, address=0x1000)
+    assert error.value.message == (
+        "no MLIL variable definition at 0x1000 in check; "
+        "variables are defined at: 0x1020; "
+        "use rex_hlil_statements or bn_function_il to match an address to its variable"
+    )
+    assert _run_uses(view)["variables"][0]["definitions"] == ["0x1020"]
+
+
+def test_uses_do_not_place_an_undefined_non_parameter_at_the_start() -> None:
+    local = FakeVariable("local", storage=105)
+    view = _parameter_view([], {}, {local: [_read_of(local)]}, [])
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(view, address=0x1000)
+    assert error.value.message == (
+        "no MLIL variable definition at 0x1000 in check; the function defines no MLIL variables"
+    )
+
+
+def test_uses_list_the_function_start_among_the_definition_sites() -> None:
+    arg1, copy = FakeVariable("arg1", storage=105), FakeVariable("copy", storage=99)
+    copy_arg1 = set_var(0x1010, copy, var(arg1))
+    view = _parameter_view([copy_arg1], {copy: [copy_arg1]}, {arg1: [copy_arg1]}, [arg1])
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(view, address=0x1030)
+    assert error.value.code == "no_definition"
+    assert error.value.message == (
+        "no MLIL variable definition at 0x1030 in check; "
+        "variables are defined at: 0x1000, 0x1010; "
+        "use rex_hlil_statements or bn_function_il to match an address to its variable"
+    )
+
+
+def test_uses_list_the_start_of_a_function_whose_only_definitions_are_parameters() -> None:
+    view = _parameter_view([], {}, {}, [FakeVariable("arg1", storage=105)])
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(view, address=0x1020)
+    assert error.value.message == (
+        "no MLIL variable definition at 0x1020 in check; "
+        "variables are defined at: 0x1000; "
+        "use rex_hlil_statements or bn_function_il to match an address to its variable"
+    )
+
+
+def test_no_variable_at_the_start_lists_the_start_parameters() -> None:
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(_arg1_view(), address=0x1000, variable="arg9")
+    assert error.value.code == "no_variable"
+    assert error.value.message == (
+        "no variable named 'arg9' is defined at 0x1000 in check; "
+        "defined there: counter (rax), arg1 (rdi)"
+    )
+
+
+def test_uses_resolve_the_function_from_the_address_when_function_is_none() -> None:
+    assert _run_uses(_two_use_view(), function=None) == _run_uses(_two_use_view())
+
+
+def test_uses_pick_the_lowest_start_function_containing_the_address() -> None:
+    arg_40 = FakeVariable("arg_40")
+    definition = set_var(0x1020, arg_40, const(1))
+    outer_mlil = FakeMLILInstructions([definition], definitions={arg_40: [definition]})
+    outer = FakeFunction("outer", 0x0F00, 0x1100, mlil=outer_mlil)
+    inner = FakeFunction("inner", 0x1000, 0x1100, mlil=FakeMLILInstructions([]))
+    result = _run_uses(FakeBinaryView(functions=[inner, outer]), function=None)
+    assert result["function"]["start"] == "0xf00"
+    assert result["function"]["also_containing"] == [{"start": "0x1000", "name": "inner"}]
+    assert result["variables"][0]["variable"] == "arg_40"
+
+
+def test_uses_resolve_a_given_function_rather_than_the_one_holding_the_address() -> None:
+    other = FakeFunction("other", 0x2000, 0x2100, mlil=FakeMLILInstructions([]))
+    view = _two_use_view()
+    view.functions.append(other)
+    assert _run_uses(view, function=None, address=0x1020)["function"]["name"] == "check"
+    with pytest.raises(FakeToolError) as error:
+        _run_uses(view, function=0x2000, address=0x1020)
+    assert error.value.message == (
+        "no MLIL variable definition at 0x1020 in other; the function defines no MLIL variables"
+    )
+
+
+def test_uses_still_accept_function_and_address_positionally() -> None:
+    _, uses = get_tool("rex_mlil_uses")
+    assert uses(_call(_two_use_view()), 0x1000, 0x1020) == _run_uses(_two_use_view())
+
+
+def test_uses_schema_requires_only_the_address() -> None:
+    options, function = get_tool("rex_mlil_uses")
+    schema = FakeTool("rex_mlil_uses", options, function).input_schema
+    assert schema["required"] == ["address"]
+    assert schema["properties"]["function"] == {
+        "type": "string",
+        "description": "Address expression inside the target function; omit to use address.",
+    }
+    assert schema["properties"]["address"]["type"] == "string"

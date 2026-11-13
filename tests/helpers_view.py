@@ -14,12 +14,20 @@ from dataclasses import dataclass
 from typing import Any, override
 
 from helpers_dataflow import FakeMLILInstructions
+from helpers_qualified_name import FakeQualifiedName, ParseOutcome, prototype_name
+from helpers_relocation import (
+    FakeRelocation,
+    RelocationWriteException,
+)
+from helpers_state import FakeStateMixin
+from helpers_string import FakeStringReference, ascii_string_at
 from helpers_symbol import (
     FakeSymbol,
     FakeSymbolBinding,
     FakeSymbolType,
     fake_symbol_constructor,
 )
+from helpers_types import FakeStructureVariant
 from helpers_uidf import (
     FakeMediumLevelIL,
     FakePossibleValueSet,
@@ -35,34 +43,6 @@ class FakeSegment:
         self.length = length
         # Mirrors binaryview.Segment.readable (the SegmentFlag readability bit).
         self.readable = readable
-
-
-class FakeStringReference:
-    def __init__(self, value: str, start: int, type_name: str = "AsciiString") -> None:
-        self._value = value
-        self.start = start
-        self._type_name = type_name
-
-    def __len__(self) -> int:
-        return len(self._value)
-
-    @property
-    def value(self) -> str:
-        return self._value
-
-    @property
-    def type(self) -> types.SimpleNamespace:
-        return types.SimpleNamespace(name=self._type_name)
-
-
-class FakeTag:
-    def __init__(self, type_name: str, data: str) -> None:
-        self.data = data
-        self._type_name = type_name
-
-    @property
-    def type(self) -> types.SimpleNamespace:
-        return types.SimpleNamespace(name=self._type_name)
 
 
 class RenderableText:
@@ -230,47 +210,6 @@ class FakeCoreSymbol:
 
     def __init__(self, full_name: str) -> None:
         self.full_name = full_name
-
-
-class FakeRelocationInfo:
-    """Mirrors the RelocationInfo fields rex_relocation_at reads.
-
-    ``type`` is a namespace with ``name`` like the other fakes, mirroring the enum
-    member the real core hands back.
-    """
-
-    def __init__(
-        self,
-        *,
-        type_name: str,
-        address: int,
-        size: int = 8,
-        addend: int = 0,
-        implicit_addend: bool = False,
-        pc_relative: bool = False,
-    ) -> None:
-        self.type = types.SimpleNamespace(name=type_name)
-        self.address = address
-        self.size = size
-        self.addend = addend
-        self.implicit_addend = implicit_addend
-        self.pc_relative = pc_relative
-
-
-class FakeRelocation:
-    """Mirrors the Relocation fields rex_relocation_at reads."""
-
-    def __init__(
-        self,
-        info: FakeRelocationInfo,
-        target: int,
-        reloc: int,
-        symbol: FakeCoreSymbol | None = None,
-    ) -> None:
-        self.info = info
-        self.target = target
-        self.reloc = reloc
-        self.symbol = symbol
 
 
 class FakeAnalysisState(enum.IntEnum):
@@ -595,8 +534,10 @@ class FakeDataVariable:
         return len(self.type)
 
 
-class FakeBinaryView:
+class FakeBinaryView(FakeStateMixin):
     data_variable_types: Mapping[int, FakeType] = types.MappingProxyType({})
+    # Object names whose import returns no handle.
+    refused_library_objects: frozenset[str] = frozenset()
 
     def __init__(
         self,
@@ -618,9 +559,8 @@ class FakeBinaryView:
         library_types: dict[str, str | None] | None = None,
         code_refs: dict[int, list[FakeReferenceSource]] | None = None,
         data_refs: dict[int, list[int]] | None = None,
-        types: dict[str, FakeType] | None = None,
+        types: dict[str, FakeType | FakeStructureType] | None = None,
         structure: FakeStructureType | None = None,
-        defined_type_name: str | None = None,
         derived_strings: list[FakeDerivedString] | None = None,
         component_root: FakeComponent | None = None,
         relocations: list[FakeRelocation] | None = None,
@@ -632,8 +572,7 @@ class FakeBinaryView:
         self.functions = functions if functions is not None else []
         self._sections: dict[str, tuple[int, int]] = sections or {}
         self._memory: dict[int, bytes] = memory or {}
-        self._metadata: dict[str, object] = {}
-        self._tags: list[tuple[int, FakeTag]] = []
+        self._init_state()
         self._tag_types: dict[str, object] = {}
         self.written: list[tuple[int, bytes]] = []
         self.shown_reports: list[tuple[str, str, str]] = []
@@ -665,13 +604,12 @@ class FakeBinaryView:
         self.file = file if file is not None else FakeFileMetadata()
         # rex_annotate_many: transaction lifecycle markers in application order.
         self.transactions: list[str] = []
-        # Injected into parse_type_string to model a type string the core rejects.
-        self.parse_type_error: Exception | None = None
-        # Type-system state for the type-library and struct-inference tools: ``arch`` is
-        # Optional to model views without a default architecture; ``library_types`` maps a
-        # requested name to the deconflicted name the core would insert (None fails the
-        # import); ``structure`` is what create_structure_from_offset_access hands back
-        # (None models the core refusing to build anything).
+        # Per-text parse outcome: a raised error or a (type, name); else an unnamed function type.
+        self.parse_type_results: dict[str, ParseOutcome] = {}
+        # Type-system state: ``arch`` is Optional to model views without a default
+        # architecture; ``library_types`` maps a requested name to the deconflicted name
+        # the core would insert (None fails the import); ``structure`` is what
+        # create_structure_from_offset_access hands back (None: the core refuses).
         self.arch = arch
         self._library_types = library_types or {}
         # Address -> code refs pointing at it, answered by get_code_refs.
@@ -682,12 +620,12 @@ class FakeBinaryView:
         self.data_ref_requests: list[tuple[int, int | None]] = []
         self._types = types or {}
         self._structure = structure
-        self._defined_type_name = defined_type_name
         self.type_libraries: list[FakeTypeLibrary] = []
         self.imported_library_types: list[tuple[FakeTypeLibrary | None, str]] = []
+        self.imported_library_objects: list[tuple[FakeTypeLibrary, str]] = []
         self.exported_types: list[tuple[FakeTypeLibrary, str, FakeType]] = []
         self.exported_objects: list[tuple[FakeTypeLibrary, str, FakeType]] = []
-        self.defined_types: list[tuple[str, str, FakeStructureType]] = []
+        self.defined_types: list[tuple[str, FakeStructureType]] = []
         self.derived_strings = derived_strings if derived_strings is not None else []
         # max_items values the tool sent with each derived-string code-ref request, in
         # order, so tests can pin the bounding contract without parsing responses.
@@ -752,9 +690,26 @@ class FakeBinaryView:
                 return blob[offset : offset + length]
         return b""
 
-    def write(self, address: int, data: bytes) -> int:
-        self.written.append((address, bytes(data)))
-        return len(data)
+    def range_contains_relocation(self, addr: int, size: int) -> bool:
+        """Mirror BinaryView.range_contains_relocation: any relocation overlaps the range."""
+        return any(
+            relocation.info.address < addr + size
+            and addr < relocation.info.address + relocation.info.size
+            for relocation in self._relocations
+        )
+
+    def write(self, address: int, data: bytes, except_on_relocation: bool = True) -> int:
+        """Mirror BinaryView.write: raise over a relocation, else write the mapped prefix."""
+        if except_on_relocation and self.range_contains_relocation(address, len(data)):
+            raise RelocationWriteException(
+                "Attempting to write to a location which has a relocation"
+            )
+        mapped = 0
+        while mapped < len(data) and self.is_valid_offset(address + mapped):
+            mapped += 1
+        if mapped:
+            self.written.append((address, bytes(data[:mapped])))
+        return mapped
 
     def get_functions_containing(self, address: int) -> list[FakeFunction]:
         return [f for f in self.functions if f.contains(address)]
@@ -803,9 +758,18 @@ class FakeBinaryView:
 
     def get_string_at(self, address: int) -> object:
         for string in self.strings:
-            if string.start == address:
+            if string.start <= address < string.start + len(string):
                 return string
         return None
+
+    def get_ascii_string_at(
+        self,
+        address: int,
+        min_length: int = 4,
+        max_length: int | None = None,
+        require_cstring: bool = True,
+    ) -> FakeStringReference | None:
+        return ascii_string_at(self, address, min_length, max_length, require_cstring)
 
     def relocations_at(self, addr: int) -> list[FakeRelocation]:
         # Mirrors the observed core lookup: a relocation matches any address in its
@@ -846,10 +810,14 @@ class FakeBinaryView:
     def redo(self) -> None:
         self.file.redo()
 
-    def parse_type_string(self, text: str) -> tuple[str, str]:
-        if self.parse_type_error is not None:
-            raise self.parse_type_error
-        return text, text
+    def parse_type_string(self, text: str) -> tuple[Any, FakeQualifiedName]:
+        outcome = self.parse_type_results.get(text)
+        if isinstance(outcome, Exception):
+            raise outcome
+        if outcome is not None:
+            return outcome
+        function_type = FakeType("", text, type_class=FakeTypeClass.FunctionTypeClass)
+        return function_type, prototype_name(text)
 
     def parse_possiblevalueset(
         self, value: str, state: FakeRegisterValueType, here: int = 0
@@ -877,9 +845,11 @@ class FakeBinaryView:
         modelable here. Metadata and type-library writes push nothing and are not wrapped.
         """
         self.transactions.append("open")
+        written_before = list(self.written)
         try:
             yield
         except Exception:
+            self.written[:] = written_before
             self.transactions.append("revert")
             raise
         self.transactions.append("commit")
@@ -891,23 +861,6 @@ class FakeBinaryView:
 
     def create_tag_type(self, name: str, icon: str) -> None:
         self._tag_types[name] = types.SimpleNamespace(name=name, icon=icon)
-
-    def add_tag(self, address: int, tag_type_name: str, data: str) -> None:
-        self._tags.append((address, FakeTag(tag_type_name, data)))
-
-    def get_tags(self) -> list[tuple[int, FakeTag]]:
-        return list(self._tags)
-
-    def store_metadata(self, key: str, value: object) -> None:
-        self._metadata[key] = value
-
-    def query_metadata(self, key: str) -> object:
-        if key not in self._metadata:
-            raise KeyError(key)
-        return self._metadata[key]
-
-    def remove_metadata(self, key: str) -> None:
-        self._metadata.pop(key, None)
 
     def add_type_library(self, library: FakeTypeLibrary) -> None:
         self.type_libraries.append(library)
@@ -927,6 +880,12 @@ class FakeBinaryView:
         self._types[resolved] = FakeType(name=resolved)
         return FakeType(name=resolved)
 
+    def import_library_object(self, name: str, library: FakeTypeLibrary) -> FakeType | None:
+        self.imported_library_objects.append((library, name))
+        if name in self.refused_library_objects:
+            return None
+        return library.get_named_object(name)
+
     def get_symbols_by_name(self, name: str) -> list[FakeSymbol]:
         return [symbol for symbol in self._symbols if symbol.name == name]
 
@@ -936,7 +895,7 @@ class FakeBinaryView:
             return None
         return FakeDataVariable(address, self.data_variable_types[address])
 
-    def get_type_by_name(self, name: str) -> FakeType | None:
+    def get_type_by_name(self, name: str) -> FakeType | FakeStructureType | None:
         return self._types.get(name)
 
     def export_type_to_library(
@@ -949,13 +908,12 @@ class FakeBinaryView:
     ) -> None:
         self.exported_objects.append((library, name, type_obj))
 
-    def define_type(self, type_id: str, default_name: str, type_obj: FakeStructureType) -> str:
-        self.defined_types.append((type_id, default_name, type_obj))
-        return self._defined_type_name if self._defined_type_name is not None else default_name
+    def define_user_type(self, name: str, type_obj: FakeStructureType) -> None:
+        self.defined_types.append((name, type_obj))
+        self._types[name] = type_obj
 
     def create_structure_from_offset_access(self, name: str) -> FakeStructureType:
-        # Mirrors the real wrapper's refusal (binaryview.py raises when the core hands
-        # back no structure), so the failure path is exercised at the same layer.
+        # Mirrors the real wrapper, which raises when the core returns no structure.
         if self._structure is None:
             raise Exception(
                 "BNCreateStructureFromOffsetAccess failed to create struct from offsets"
@@ -1133,10 +1091,6 @@ class FakeType:
         """Mirrors Type.__len__, the width: void and function types are falsy on the real core."""
         return self._width
 
-    @staticmethod
-    def generate_auto_type_id(source: str, name: str) -> str:
-        return f"auto:{source}:{name}"
-
 
 class FakeStructureMember:
     def __init__(self, name: str, offset: int, type_obj: FakeType) -> None:
@@ -1146,6 +1100,8 @@ class FakeStructureMember:
 
 
 class FakeStructureType:
+    type = FakeStructureVariant.StructStructureType
+
     def __init__(self, members: list[FakeStructureMember], width: int) -> None:
         self.members = members
         self.width = width
@@ -1166,6 +1122,7 @@ class FakeTypeLibrary:
         write_error: OSError | None = None,
         writes_file: bool = True,
         named_types: dict[str, FakeType] | None = None,
+        named_objects: dict[str, FakeType] | None = None,
     ) -> None:
         self.name = name
         self.arch = arch
@@ -1176,11 +1133,15 @@ class FakeTypeLibrary:
         # Names the library provides, answered by get_named_type; everything else is
         # absent from the library even though the view-level import still returns an NTR.
         self.named_types = named_types or {}
+        self.named_objects = named_objects or {}
         self.finalized = False
         self.written_paths: list[str] = []
 
     def get_named_type(self, name: str) -> FakeType | None:
         return self.named_types.get(name)
+
+    def get_named_object(self, name: str) -> FakeType | None:
+        return self.named_objects.get(name)
 
     @staticmethod
     def load_from_file(path: str) -> FakeTypeLibrary | None:

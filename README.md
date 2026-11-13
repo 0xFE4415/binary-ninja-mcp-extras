@@ -52,7 +52,7 @@ to the `bn_*` ones, and a first session usually runs the same arc:
 
 Each tool registers as read-only or destructive. That mark is the only approval signal an
 MCP client gets, so read the destructive table before you let an agent run those tools.
-The tables list all 51 tools: 49 Python `rex_*` tools and 2 native `rx_*` scanners.
+The tables list all 52 tools: 50 Python `rex_*` tools and 2 native `rx_*` scanners.
 CONTRACTS.md holds the exact rules for every response field and limit.
 
 ### Read-only tools
@@ -66,12 +66,12 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rx_data_find` | Same as `rex_data_find`, with the scan in native Rust. |
 | `rex_hlil_grep` | Regex search over HLIL text, one page of functions at a time. |
 | `rex_hlil_statements` | List a function's HLIL statements with their addresses. |
-| `rex_function_constraints` | List branch comparisons against a constant. |
-| `rex_mlil_uses` | Show every read of the MLIL variables defined at an address. |
+| `rex_function_constraints` | List branch tests on a constant; `operators="all"` adds ranges. |
+| `rex_mlil_uses` | Show reads of the MLIL variables defined at an address; parameters at start. |
 | `rex_parameter_variables` | Map a parameter to its storage, variables, and copies. |
 | `rex_constant_find` | Find functions that use a constant in a disassembly line. |
 | `rex_find_functions_by_pattern` | Map a byte pattern to the functions that contain it. |
-| `rex_string_refs` | List code references to detected strings. |
+| `rex_string_refs` | List code references to detected strings, optionally only referenced ones. |
 | `rex_xrefs_to` | List code and data references to an address. |
 | `rex_disasm_at` | Disassemble the lines around an address. |
 | `rex_disasm_many` | Disassemble up to 64 addresses in one call. |
@@ -81,11 +81,12 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_call_paths` | Find call paths; `from_addr` reaching `to_addr` needs `direction=callees`. |
 | `rex_function_containing` | List every function that contains an address. |
 | `rex_component_get` | Show a component's functions and child components. |
-| `rex_string_read_at` | Read the detected string at an address. |
+| `rex_string_read_at` | Read the string at an address, detected or NUL-terminated ASCII. |
 | `rex_relocation_at` | List the relocations that cover an address. |
-| `rex_tag_list` | List the tags in the view. |
+| `rex_tag_list` | List the data, address, and function tags in the view. |
 | `rex_report_show` | Show a markdown report inside Binary Ninja. |
 | `rex_kv_get` | Read a scratch string stored in the database. |
+| `rex_kv_list` | List the stored scratch keys with their value lengths. |
 | `rex_eval_result` | Page through a long `rex_eval_python` result. |
 | `rex_help` | List tool categories, a category's tools, or one tool's parameters. |
 
@@ -101,14 +102,14 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_uidf_set` | Set an MLIL variable's value at its definition; returns the new HLIL. |
 | `rex_uidf_set_many` | Set up to 128 values, then reanalyze and render once. |
 | `rex_uidf_clear` | Clear one variable's set values, or all values in a function. |
-| `rex_struct_from_access` | Infer a struct from recorded offset accesses and define it. |
-| `rex_type_library_import` | Attach a `.bntl` and import a list of its types. |
+| `rex_struct_from_access` | Fill an existing struct from offset accesses; it becomes a user type. |
+| `rex_type_library_import` | Attach a `.bntl` and import a list of its types or objects. |
 | `rex_type_library_export` | Write view types or objects to a new `.bntl` file. |
 | `rex_component_create` | Create a component, optionally under a parent path. |
 | `rex_component_add_functions` | Add functions to a component. |
 | `rex_tag_set` | Add a tag at an address; creates the tag type if needed. |
 | `rex_kv_set` | Store a scratch string in the view's database. |
-| `rex_kv_delete` | Delete a stored scratch string. |
+| `rex_kv_delete` | Delete a stored scratch string; reports if it existed. |
 | `rex_export_disasm` | Write a function's disassembly window to a file. |
 | `rex_export_symbols` | Write the symbols in an address range to a CSV or JSON file. |
 | `rex_eval_python` | Run Binary Ninja Python with `bv`, `bn`, `binaryninja`, and `call`. |
@@ -146,6 +147,9 @@ Three searches stop early, so one call stays fast on a large database.
   with Python's `re`, which has no timeout. A pattern like `(a+)+$` can stall the server,
   and it handles calls one at a time. Use substring mode (`regex=false`) for untrusted
   input where the tool has it, and keep `rex_hlil_grep` patterns simple.
+- The server handles one call at a time. A long `rex_analysis_wait` or `rex_function_define`
+  wait (up to 10 minutes), or a `rex_eval_python` script that does not return, blocks every
+  other call, even after the client gives up waiting. Keep waits short and poll.
 - `rx_data_find` beats `rex_data_find` by about 7.5x on a whole-view scan and ties it
   (0.99x) on `.text`; on `.rodata` it was about 30x faster in one diagnostic run.
   `rx_multi_find` won at every scope, up to 12.6x on the full view. Both register
@@ -182,8 +186,8 @@ the live benchmark protocol.
 The `live` session checks a running Binary Ninja through its MCP server. Start Binary Ninja
 with the plugin and the native half loaded, then run `uvx nox -s live`. It opens
 `tests/live/fixture.o` (a compiled object, never linked), runs `tests/live/playbook.json`
-against `http://127.0.0.1:24642/mcp`, and closes its view again. Pass `-- --url URL` to use
-another server. CI does not run it.
+and the steps of `playbook_more.json` it includes, against `http://127.0.0.1:24642/mcp`,
+and closes its view again. Pass `-- --url URL` to use another server. CI does not run it.
 
 CI (`.github/workflows/check.yml`) runs four jobs: `check` (markdownlint-cli2 plus
 the format, ruff, size, ty, and test sessions), `native`, and one mutation job per

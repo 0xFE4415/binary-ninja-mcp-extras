@@ -11,8 +11,8 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
 - Stock `bn_*` listings return a Markdown table in `content`, not `structuredContent`;
   `rex_*` listings return structured data.
 - Paged tools accept but do not echo `limit`/`offset`. `rex_string_search`, `rex_data_find`,
-  `rx_data_find`, `rex_string_refs`, `rex_xrefs_to`, `rex_tag_list`, `rex_uidf_list`, and
-  `rex_export_symbols` return `total`/`truncated`, with results inline.
+  `rx_data_find`, `rex_string_refs`, `rex_xrefs_to`, `rex_tag_list`, `rex_kv_list`,
+  `rex_uidf_list`, and `rex_export_symbols` return `total`/`truncated`, with results inline.
   `rex_export_symbols` instead writes the selected rows to a file and returns `path`,
   `bytes_written`, `rows` written, `total`, and `truncated`; the flag also covers rows dropped
   by its 4 MiB file cap. `rex_component_get` pages functions and returns exact
@@ -22,14 +22,16 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
   `rex_string_search`, `rex_data_find`, `rx_data_find`, `rex_string_refs`, `rex_uidf_list`,
   and the fetched refs of `rex_xrefs_to`. `rx_multi_find` applies it per pattern, sums those
   totals, and sets top-level `truncated` if any pattern is truncated. `rex_tag_list`,
-  `rex_export_symbols`, and `rex_component_get` return exact totals.
+  `rex_kv_list`, `rex_export_symbols`, and `rex_component_get` return exact totals.
 - `rex_xrefs_to` fetches at most 501 code and 501 data refs, sorts each fetched list by
   address, then pages the combined list with code refs first. Counts cover only fetched refs;
   omitted refs are not necessarily higher addresses, and `truncated` can be false.
 - `rex_mlil_uses` takes definitions from the core: a variable is defined at an instruction
   when `get_var_definitions` lists it there (assignments, split writes, field writes, call,
-  syscall, tailcall, and intrinsic outputs, and forced versions). An instruction with no core
-  definition (a call without outputs, a store) is `no_definition`; its message lists up to 10
+  syscall, tailcall, and intrinsic outputs, and forced versions). As for the uidf tools, a
+  declared parameter with no MLIL definition is defined at the function start, after the
+  variables the entry instruction defines, in parameter order. An address with no definition
+  (a call without outputs, a store) is `no_definition`; its message lists up to 10
   addresses that do define variables (`(+N more)` past that), or says the function defines no
   MLIL variables. It returns `variables`, one entry per defined variable (in `vars_written`
   order, then any further variable the core records, such as a field write's destination),
@@ -56,7 +58,8 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
   before or after the instruction, including values set outside the plugin.
 - `no_mlil` (`rex_function_constraints`, `rex_mlil_uses`, `rex_parameter_variables`, and the
   uidf setters and clearers that resolve a variable name) and `no_hlil`
-  (`rex_hlil_statements`) distinguish a skipped function from a pending one. When the core
+  (`rex_hlil_statements`, and per item `rex_decompile_many`) distinguish a skipped function
+  from a pending one. When the core
   reports `analysis_skipped`, the message says analysis is skipped, names the cause from
   `analysis_skip_reason` (user override, size, time, or update-count limit, suppressed
   new-function analysis, `analysis.mode`, or a suspended pipeline), and does not advise
@@ -98,7 +101,12 @@ discrepancy. Keep user-facing usage guidance in `README.md`.
   count.
   `offset`/`next_offset` count functions in the view, not matches; pass the cursor back as
   `offset` and page while either flag is set. A call renders at most `max_functions`
-  functions.
+  functions. `limit=0` and `max_functions=0` are probes. `max_functions=0` scans nothing: it
+  returns `scan_incomplete` with `next_offset` equal to `offset` when `offset` is below the
+  function count, and `scan_incomplete` false with a null `next_offset` otherwise. `limit=0`
+  scans until the first matching function and returns `next_offset` pointing at it; with no
+  match inside the `max_functions` budget it ends as `scan_incomplete` at the first unscanned
+  function. A paging loop must pass at least 1 for both, or it stalls at a match.
 - Returned strings usually keep 512 characters, then append `... [N chars truncated]`; the
   suffix is additional. Larger caps are `rex_eval_python.stdout` (65,536), `result` (16,384),
   `rex_kv_get.value` (65,536), and `rex_string_read_at.value` (up to 4,096 via `max_chars`,
@@ -186,24 +194,37 @@ some rows.
   `rex_uidf_set`, `rex_uidf_set_many`, `rex_uidf_clear`): the tool reanalyzes after a change and
   waits up to 10 s for every function the change left stale. False means the deadline passed; wait
   with `rex_analysis_wait` before reading IL. True when nothing changed.
-- `rex_analysis_wait`: `completed`, `elapsed_ms`, `progress` (`{state, count, total}`),
-  `function_count`, `in_flight` (`{start, name, analysis_time_ms}`, at most 10), and
+- `rex_analysis_wait`: `timeout_ms` defaults to 10000. Returns `completed`, `elapsed_ms`,
+  `progress` (`{state, count, total}`), `function_count`,
+  `in_flight` (`{start, name, analysis_time_ms}`, at most 10), and
   `truncated` (more in-flight functions than listed).
-- `rex_annotate_many`: `applied`, `failed_count`, `total`, `analysis_complete`, and
-  `results` rows `{addr, ok, function?, error?}`; `function` is the resolved function entry
-  read after the batch applies, so it carries the new name and its `same_name`, present on
-  every row that passed validation. A `comment` lands at the exact `addr` the item named; `name`
-  and `prototype` apply to the whole function. A rename keeps the symbol's type, binding,
-  namespace, and ordinal; only the name changes.
+- `rex_annotate_many`: `applied`, `failed_count`, `total`, `analysis_complete`, and `results` rows
+  `{addr, ok, function?, error?, prototype_name_ignored?}`; `function` is the resolved function
+  entry read after the batch applies, so it carries the new name and its `same_name`, present on
+  every row that passed validation. A `comment` lands at the exact `addr` the item named; `name` and
+  `prototype` apply to the whole function. A rename keeps the symbol's type, binding, namespace, and
+  ordinal; only the name changes. An item must carry at least one of `name`, `comment`, `prototype`
+  (an empty `comment` counts: it clears the comment); an item with none is an error row. A
+  `prototype` that does not parse to a function type (for example `int`) is an error row naming the
+  type class and showing an example (a typedef name also gets a hint to spell out the signature);
+  nothing is applied for it. A name inside a valid `prototype` is never applied. When the item has
+  no `name` and the prototype named something, the row carries `prototype_name_ignored` with that
+  name; it is absent for an unnamed prototype such as `int(int a)` and when the item gave a `name`.
 - `rex_binary_close`: `closed` (always true; a failed close raises `close_failed`) and
   `path`, the closed file's full filename as the core reports it (truncated).
 - `rex_call_paths`: `from_function` and `to_function` (resolved function entries for
-  `from_addr` and `to_addr`), `reachable`, `paths` (lists of function entries), `truncated`,
-  and `explored` (functions expanded during the search). `direction` defaults to `callers`.
-  Both directions are bounded by `max_depth` and `max_paths`. Edges come from the core's call
-  graph and include tail calls. A function called from several sites is one edge, so a path
-  is never listed twice. Code pointers passed as data and imports with no function object are
-  not edges.
+  `from_addr` and `to_addr`), `reachable`, `paths` (lists of function entries), `truncated`
+  (reached the `max_paths` cap; more paths may exist), `depth_limited`, and `explored`
+  (functions expanded during the search). `depth_limited` is true when the search stopped
+  expanding at `max_depth` a function that had a neighbor not yet visited (the target counts,
+  because it is never marked visited), whether or not paths were found. `reachable` false
+  with `depth_limited` false means no path exists in the core's call graph; with it true,
+  raise `max_depth`. `depth_limited` is only meaningful when `truncated` is false, because
+  the search may stop before it reaches depth-limited nodes. `direction` defaults to
+  `callers`. Both directions are bounded by `max_depth` and `max_paths`. Edges come from the
+  core's call graph and include tail calls. A function called from several sites is one edge,
+  so a path is never listed twice. Code pointers passed as data and imports with no function
+  object are not edges.
 - `rex_component_add_functions`: `path`, `applied`, `failed_count`, `total`,
   and `results` rows `{start, name, also_containing, same_name, added}`.
 - `rex_component_create`: `path`, `display_name`, `guid`.
@@ -220,9 +241,10 @@ some rows.
 - `rex_decompile_many`: `functions` of `{index, start, name, also_containing, same_name,
   lines, truncated}` and `errors` of `{index, address, error: {code, message}}`; `index` is
   the position in the request; every entry lands in exactly one list, and an address that
-  fails to resolve is an `errors` row. Only a non-list `functions` or a count outside 1-1024
-  raises for the whole call. `lines` starts with the function's signature, then the HLIL
-  body; the signature counts toward `max_lines`.
+  fails to resolve is an `errors` row, as is a function with no HLIL (`no_hlil`: skipped
+  analysis, which waiting will not fix, or pending analysis, which a retry may). Only a
+  non-list `functions` or a count outside 1-1024 raises for the whole call. `lines` starts with
+  the function's signature, then the HLIL body; the signature counts toward `max_lines`.
 - `rex_disasm_at`: `function`, `instructions` (`{address, text}`), `truncated`.
   `rex_disasm_many`: `windows` of `{address, index, function, instructions, truncated}`,
   `errors` of `{index, address, error: {code, message}}`, `truncated`, `next_offset` (an
@@ -233,10 +255,30 @@ some rows.
   `error_location`. `rex_eval_result`: `key`, `value`, `total`, `truncated`, `next_offset`.
 - `rex_export_disasm`: `function`, `path`, `bytes_written`, `lines`, `truncated`.
   `rex_export_symbols`: `path`, `bytes_written`, `rows`, `truncated`, `total`.
+- Each line of a `rex_export_disasm` file is the instruction address as lowercase `0x` hex,
+  two spaces, then the instruction text (`0x400084  sub     rsp, 0x18`), so a branch target
+  can be found by its address. The `max_lines` maximum is 8193 (4096 before, 4096 after, and
+  the anchor), the default stays 200, and the 4 MiB file cap still drops trailing lines.
+- `rex_export_symbols` takes `start` and `end` as an unsigned integer or an address-expression
+  string (`0x` hex included), like the built-in `IntegerExpression` type. Send a string for
+  values above 2^53, which clients that read JSON numbers as doubles would round. `end` must
+  be greater than `start`.
+  A negative or 2^64-or-larger `start` or `end` is rejected by the core's unsigned integer
+  parse (`Invalid unsigned integer parameter ...`).
+- The export root is the `exports` directory inside `binaryninja.user_directory()`, resolved
+  once at import. When that returns `None` or an empty string, it is `~/.binaryninja/exports`.
+  The root follows `user_directory()`, so exports can sit at a different path than before on
+  macOS, Windows, and portable installs.
 - `rex_find_functions_by_pattern`: `total`, `truncated`, and `functions` of `{start, name,
   match_count, addresses, addresses_truncated}`.
 - `rex_function_constraints`: `function`, `total`, `truncated`, and `constraints` of
-  `{address, operator, constant, char, subject, subject_text}`. `operator` is `==` or `!=`.
+  `{address, operator, constant, char, subject, subject_text}`. With `operators`
+  `"equality"` (the default), `operator` is `==` or `!=`. With `"all"`, it can also be an
+  ordered comparison, spelled as in HLIL: `s<`, `s<=`, `s>=`, `s>` (signed) and `u<`, `u<=`,
+  `u>=`, `u>` (unsigned). Rows read subject, operator, constant, so a constant
+  on the left mirrors the operator (`5 s< x` is `s>` 5). A signed row adds `signed_constant`,
+  the constant as signed two's complement at its width (`x s< -1` in four bytes has
+  `constant` `0xffffffff` and `signed_constant` `-0x1`); other rows have no such key.
   `constant` and a `load` `offset` render the value the expression computes: a zero or sign
   extension of a constant is applied at its outer width first, then shown at that width.
   `constant` is unsigned hex (-1 is `0xffffffff` in four bytes and `0xffffffffffffffff` in
@@ -261,14 +303,32 @@ some rows.
   reached the end of the view.
 - `rex_hlil_statements`: `function`, `total`, `truncated`, and `statements` of `{address,
   index, text}`.
-- `rex_kv_delete`: `key`. `rex_kv_get`: `key`, `value`, `truncated`. `rex_kv_set`: `key`,
+- `rex_kv_delete`: `key`, `existed` (true when a value was stored under the key before the
+  delete; a missing key is not an error and reports false; a stored value the core cannot
+  read back still counts as existing and is deleted). `rex_kv_get`: `key`, `value`,
+  `truncated`. `rex_kv_set`: `key`,
   `length`, `value` (preview), `truncated`. `rex_kv_set` stores under the `rex/` metadata
   prefix with the core's persistent-flag default, so values serialize into the BNDB snapshot
   and survive reload.
-- `rex_memory_write`: `address`, `bytes_written`, `analysis_complete`.
+- `rex_kv_list`: `total`, `truncated`, and `keys` of `{key, length}`, sorted by key (code
+  point order) and paged by `limit`/`offset`. It lists the `bv.metadata` entries under the
+  `rex/` prefix with the prefix stripped, skipping an empty stripped key, and `prefix` keeps
+  only keys that start with that text (it must not contain NUL). `length` is the character
+  count of the full stored value; a non-string value stored by other code reports the length
+  of its `str()` text, the same text `rex_kv_get` returns. Reading `bv.metadata` copies every
+  entry of the view, so the cost grows with all stored metadata, not just `rex/` keys. A key
+  over 512 characters is clipped with the usual suffix and cannot be used with the other kv
+  tools; a key that foreign code stored with a NUL byte is listed but `rex_kv_get` and
+  `rex_kv_delete` reject it. The core converts every entry of `bv.metadata` at once, so one
+  `rex/` or other entry of an unrecognised type makes `rex_kv_list` fail for the whole view
+  (the core raises `TypeError`); the tool does not work around it.
+- `rex_memory_write`: `address`, `bytes_written`, `analysis_complete`. `bytes_written` always
+  equals the length of `hex_data`: a write that stores fewer bytes raises `write_failed`
+  instead (see Errors), and no reanalysis runs.
 - `rex_mlil_uses`: `function`, `definition_site` (the queried address), and `variables`, each
   `variable`, `storage`, `type`, `definitions` (addresses of every definition the core records
-  for it, ascending), `total`, `truncated`, and `uses` of `{address, operation, text}`.
+  for it, ascending; empty for a parameter defined at the function start), `total`,
+  `truncated`, and `uses` of `{address, operation, text}`.
 - `rex_parameter_variables`: `function`, `parameter`, `storage` (one entry per matching
   variable in the function's variable order), `definitions` (a flat list of addresses over
   all matching variables, ascending), and `carriers` of `{variable, address, text}`.
@@ -283,30 +343,69 @@ some rows.
   relocation has none).
 - `rex_report_show`: `title`, `length`, `preview`, `truncated`. The markdown can link into
   the view with `binaryninja://?expr=...`.
-- `rex_string_read_at`: `address`, `length`, `type`, `value`, `truncated`.
+- `rex_string_read_at`: `address`, `length`, `type`, `value`, `truncated`, `detected`.
+  `detected` is true when analysis detected a string containing `addr`; that string wins, so a
+  mid-string `addr` returns the whole string with its own start as `address`. Otherwise the tool
+  reads ASCII (bytes 0x01-0x7f) from `addr` (`detected` false, `type` `AsciiString`). A NUL after
+  at most `max_chars` characters ends a complete string. If the byte at `addr + max_chars` is
+  also ASCII (0x01-0x7f), it returns the first `max_chars` characters with `truncated` true and
+  `length` equal to `max_chars`, without checking that a NUL follows, and with no
+  `... [N chars truncated]` suffix because the full length is unknown. Anything else (no ASCII,
+  a short run not followed by NUL, a non-ASCII byte after the bound, unreadable memory) fails
+  with `no_string`. UTF-16 text reads as a one-character ASCII string.
   `rex_string_search`: `total`, `truncated`, and `strings` of `{address, length, type,
   value}`. `rex_string_refs`: `total`, `truncated`, and `strings` of `{value, location,
   derived, refs, refs_truncated}`, `location` being `{type, address, length}` or null and each
   ref `{function_start, function_name, address}` (the first two are null outside a function).
+  `rex_string_refs` takes `only_referenced` (default false). When true it skips strings
+  with no code reference, and they take no slot in `total`, paging, or `truncated`. A
+  detected string needs a code reference to its start address, so one reached only through
+  data pointers shows none; a derived string counts its own code references. Because the
+  filter needs each string's references, a call may scan every remaining string.
 - `rex_struct_from_access`: `name`, `registered`, `width`, `member_count`, `members` of
-  `{offset, name, type}`, `truncated`. It sees only offset accesses analysis has already
-  recorded, and it registers the inferred struct under an auto type id.
-- `rex_tag_list`: `total`, `truncated`, and `tags` of `{address, tag_type, data,
-  data_truncated}`. `rex_tag_set`: `address`, `tag_type`, `data`, `data_truncated`, `length`.
+  `{offset, name, type}`, `truncated`. `name` must be an existing plain struct. Analysis
+  records offset accesses only through variables typed as pointers to it, and the tool sees
+  only accesses already recorded. It redefines that type in place as a user type, in one
+  undoable transaction, so code already using the type shows the members; `registered` is
+  `name`. An auto type, for example from debug info or a type library, becomes a user type.
+  A name that is not a type raises `type_not_found`. A type that is not a plain struct (a
+  union, a class, an alias, or any other type) raises `not_a_structure`. For a union the
+  message names `bn_type_union_modify`, and for a class `bn_type_struct_modify`. For an
+  alias it names the target: to pass instead when the target is a plain struct, and
+  otherwise as not a plain struct. An alias that names itself is reported as such. Neither
+  error calls the core. Inference keeps the existing members, so
+  `create_failed` means the core inferred nothing, or nothing beyond the existing width and
+  members (offset, name, type); nothing is written then. Each message names the next step.
+- `rex_tag_list`: `total`, `truncated`, and `tags` of `{address, scope, tag_type, data,
+  data_truncated}`. It lists every scope: `data` (a tag on a data address), `address` (a tag on
+  one address inside a function), and `function` (a tag on a whole function). Rows sort by
+  address, then scope name (`address`, `data`, `function`), then tag type name, then tag data, so
+  the order is stable between calls and `total` counts every row. The scopes come from three
+  separate core calls and are not deduplicated; a tag attached in two scopes appears once per
+  scope. For scope `function` the address is the function's start. There is no auto/user
+  filter: tags that analysis creates itself are listed in the `address` and `function` scopes,
+  so a real binary can return many more rows than the data scope alone.
+- `rex_tag_set`: `address`, `tag_type`, `data`, `data_truncated`, `length`.
   A missing `tag_type` is created when `create_missing` is true (the default), and raises
   `tag_type_not_found` otherwise.
 - `rex_type_library_export`: `path` (the resolved file), `bytes_written`, `library`
   (truncated), `exported`, `failed` (`{requested, reason}`), `applied`,
   `failed_count`, `total`. `rex_type_library_import`: `library` (null when none loaded),
-  `imported` of `{requested, resolved}`, `failed`, `applied`, `failed_count`, `total`.
+  `imported`, `failed`, `applied`, `failed_count`, `total`. With `kind="types"` (the
+  default) each `imported` entry is `{requested, resolved}`, `resolved` being the name the
+  core inserted. With `kind="objects"` the names are the library's named objects, as
+  `rex_type_library_export(kind="objects")` writes them, and each entry is `{requested,
+  type}` with the rendered object type, truncated. Importing an object adds the types it
+  references to the view; it does not apply its type to any function or data variable.
 - `rex_uidf_clear`: `function`, `variable` (null when clearing the whole function), `cleared`,
   `analysis_complete`, and, when a variable is named, `definition_sites`. A failure at any site
   rolls back the sites already cleared in that call. `rex_uidf_list`: `function` (resolved entry,
   null when listing the whole view), `total`, `truncated`, and `values` of `{function, variable,
   definition_site, architecture, state, value}`, where each value's `function` is a plain function
   entry. `rex_uidf_set`: `function`, `variable`, `definition_site`, `value` (`{state, rendered}`),
-  `analysis_complete`, `lines`, `truncated`. `rex_uidf_set_many`: `function`, `applied`, `failed`,
-  `total`, `results` of `{index, variable, ok, definition_site?, value?, error?}`,
+  `analysis_complete`, `lines`, `truncated`. `rex_uidf_set_many`: `function`, `applied`,
+  `failed_count`, `failed` (an alias of `failed_count`, kept), `total`,
+  `results` of `{index, variable, ok, definition_site?, value?, error?}`,
   `analysis_complete`, `lines`, `truncated`.
 - `rex_xrefs_to`: `total`, `truncated`, `code_refs` of `{function_start, function_name, arch,
   address, kind}` (`kind` is `call` or `code`; the first three are null outside a function),
@@ -314,6 +413,10 @@ some rows.
 
 ### Parameters
 
+- `rex_mlil_uses` `function` may be omitted (or null); the function is then the one
+  containing `address`, by the lowest-start rule. `address` stays required.
+  `rex_function_constraints` `operators` is `"equality"` or `"all"`; any other value returns
+  `invalid_params` naming it.
 - Numeric parameters such as `limit`, `length`, `offset`, `max_depth`, `max_paths`,
   `max_functions`, and `max_chars` are range-checked, not clamped; invalid values return
   `invalid_params`.
@@ -354,10 +457,19 @@ some rows.
   `export_failed` when the root or file cannot be written.
 - `rex_type_library_export` raises `invalid_params` for an empty `library_name`, for `names`
   (not a list, not 1-128 entries, an empty or over-long entry, or a non-string entry), and
-  for `kind`. `rex_uidf_set_many` raises `invalid_params` when no analyzed function contains
+  for `kind`. `rex_type_library_import` raises `invalid_params` for the same `names` errors
+  and for a `kind` other than `types` or `objects`, before it loads the library.
+  `rex_uidf_set_many` raises `invalid_params` when no analyzed function contains
   `function` or the item list is invalid. Each item can fail in its `results` row with
   `invalid_params`, `no_mlil`, `no_variable`, `ambiguous_definition`, `definition_not_found`,
   or `set_failed`.
+- `rex_memory_write` raises `write_failed` when the core writes fewer bytes than requested,
+  usually because the address is unmapped or not backed by the file. The message gives the
+  address and the requested and written byte counts, and says nothing was written: the write
+  runs in one undoable transaction that reverts, so a short write is reverted as a whole and
+  leaves no bytes behind.
+  It raises `relocation_overlap` when the range overlaps a relocation, pointing to
+  `rex_relocation_at`; there is no way to force such a write.
 - A regular expression that does not compile returns `invalid_regex`; the message is
   `Invalid regular expression parameter '<name>': <reason>` and names the bad parameter:
   `pattern` (`rex_string_search` and `rex_string_refs` with `regex=true`), `regex`
@@ -373,8 +485,8 @@ some rows.
   returns `section_not_found`, like any unknown name. The `section_not_found` and
   `invalid_pattern` messages show an echoed NUL as U+FFFD, because the core cuts a message at
   its first NUL. The `no_variable`, `unknown_tool`, `unknown_category`, and eval `not_found`
-  messages, and the `kind` and `format` `invalid_params` messages, do the same; other tools'
-  messages are not rewritten.
+  messages, and the `kind`, `format`, and `operators` `invalid_params` messages, do the
+  same; other tools' messages are not rewritten.
 - `rex_constant_find` `value` is an integer (0 to 18446744073709551615) or a string: `0x` or
   `0X`, then 1-16 hex digits in either case. A client that reads JSON numbers as doubles
   rounds the integer maximum to 18446744073709552000, so send the hex string for values above

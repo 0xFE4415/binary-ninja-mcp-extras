@@ -149,7 +149,9 @@ def _component_add(view: FakeBinaryView) -> Any:
 
 
 def _annotate(view: FakeBinaryView) -> Any:
-    rows = _tool("rex_annotate_many")(FakeParsingToolCall(view), [{"addr": ADDRESS}])["results"]
+    rows = _tool("rex_annotate_many")(
+        FakeParsingToolCall(view), [{"addr": ADDRESS, "comment": "c"}]
+    )["results"]
     return rows[0]["function"]
 
 

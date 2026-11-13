@@ -6,7 +6,11 @@ from typing import Any
 
 import pytest
 from helpers import FakeToolError, _call, _view_with_functions, get_tool
-from helpers_view import FakeBinaryView
+from helpers_relocation import FakeRelocation, FakeRelocationInfo
+from helpers_view import (
+    FakeBinaryView,
+    FakeSegment,
+)
 
 from binja_plugin.tools import escape
 
@@ -65,6 +69,71 @@ def test_memory_write_reverts_its_transaction_when_the_core_refuses(
         write(_call(view), 0x1000, "90")
     assert view.transactions == ["open", "revert"]
     assert view.file.undo_entries == []
+
+
+def _forbid_analysis_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("analysis wait ran although nothing was written")
+
+    monkeypatch.setattr(escape, "_refresh_analysis", forbidden)
+
+
+def test_memory_write_to_unmapped_address_fails_without_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = FakeBinaryView(segments=[FakeSegment(0x1000, 0x10)])
+    _forbid_analysis_wait(monkeypatch)
+    _, write = get_tool("rex_memory_write")
+    with pytest.raises(FakeToolError) as exc:
+        write(_call(view), 0x10, "90 90")
+    assert exc.value.code == "write_failed"
+    assert str(exc.value) == (
+        "wrote 0 of 2 bytes at 0x10; the address is probably unmapped or not backed by the "
+        "file. Nothing was written."
+    )
+    assert view.written == []
+    assert view.transactions == ["open", "revert"]
+
+
+def test_memory_write_short_write_is_reverted_as_a_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = FakeBinaryView(segments=[FakeSegment(0x1000, 0x10)])
+    _forbid_analysis_wait(monkeypatch)
+    _, write = get_tool("rex_memory_write")
+    with pytest.raises(FakeToolError) as exc:
+        write(_call(view), 0x100E, "90 90 90 90")
+    assert exc.value.code == "write_failed"
+    assert str(exc.value) == (
+        "wrote 2 of 4 bytes at 0x100e; the address is probably unmapped or not backed by the "
+        "file. Nothing was written."
+    )
+    assert view.written == []
+    assert view.transactions == ["open", "revert"]
+    assert view.file.undo_entries == []
+
+
+def test_memory_write_over_a_relocation_names_the_inspection_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    info = FakeRelocationInfo(type_name="Standard", address=0x2000, size=8)
+    view = FakeBinaryView(relocations=[FakeRelocation(info, target=0, reloc=0)])
+    _forbid_analysis_wait(monkeypatch)
+    _, write = get_tool("rex_memory_write")
+    with pytest.raises(FakeToolError) as exc:
+        write(_call(view), 0x2004, "90 90 90 90 90 90")
+    assert exc.value.code == "relocation_overlap"
+    assert str(exc.value) == (
+        "the 6-byte range at 0x2004 overlaps a relocation; inspect it with rex_relocation_at"
+    )
+    assert view.written == []
+    assert view.transactions == ["open", "revert"]
+    monkeypatch.undo()
+    assert write(_call(view), 0x2008, "90") == {
+        "address": "0x2008",
+        "bytes_written": 1,
+        "analysis_complete": True,
+    }
 
 
 def test_eval_python_executes_code() -> None:

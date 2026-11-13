@@ -15,6 +15,7 @@ from helpers import (
     plain_gap_message,
 )
 from helpers_view import (
+    FakeAnalysisSkipReason,
     FakeBasicBlock,
     FakeBinaryView,
     FakeDisassemblyLine,
@@ -623,24 +624,96 @@ def test_decompile_many_truncates_lines_and_echoes() -> None:
     assert signature.startswith("int32_t f(b") and signature.endswith(" chars truncated]")
 
 
-def test_decompile_many_renders_unlifted_functions_as_empty() -> None:
-    # A function can contain addresses without having lifted HLIL; that renders the
-    # signature alone, not an error and not a truncation.
+def test_decompile_many_reports_a_pending_function_without_hlil_as_an_error() -> None:
     view = _decompile_view()
     _, decompile = get_tool("rex_decompile_many")
     assert decompile(FakeParsingToolCall(view), ["0x3000"]) == {
-        "functions": [
+        "functions": [],
+        "errors": [
             {
-                "start": "0x3000",
-                "name": "sink",
-                **NO_ALTERNATIVES,
                 "index": 0,
-                "lines": ["int32_t sink()"],
-                "truncated": False,
+                "address": "0x3000",
+                "error": {
+                    "code": "no_hlil",
+                    "message": (
+                        "function sink has no HLIL yet; "
+                        "run bn_analysis_update_and_wait (or rex_analysis_wait with a bound) "
+                        "and retry"
+                    ),
+                },
             }
         ],
-        "errors": [],
     }
+
+
+def test_decompile_many_reports_a_skipped_function_without_hlil_as_an_error() -> None:
+    skipped = FakeFunction(
+        "dup_leaf",
+        0x4000,
+        0x4010,
+        analysis_skipped=True,
+        analysis_skip_reason=FakeAnalysisSkipReason.AlwaysSkipReason,
+    )
+    view = FakeBinaryView(functions=[_decompile_view().functions[0], skipped])
+    _, decompile = get_tool("rex_decompile_many")
+    result = decompile(FakeParsingToolCall(view), ["0x1100", "0x4000"])
+    assert [entry["index"] for entry in result["functions"]] == [0]
+    assert result["errors"] == [
+        {
+            "index": 1,
+            "address": "0x4000",
+            "error": {
+                "code": "no_hlil",
+                "message": (
+                    "function dup_leaf has no HLIL: its analysis is skipped "
+                    "(its analysis_skip_override always skips it); "
+                    "waiting for analysis will not produce one"
+                ),
+            },
+        }
+    ]
+
+
+class _FlakyHlilFunction(FakeFunction):
+    @property
+    @override
+    def hlil(self) -> object:
+        reads = self.__dict__.setdefault("reads", 0)
+        self.__dict__["reads"] = reads + 1
+        return RenderableText("return 0") if reads == 0 else None
+
+    @hlil.setter
+    @override
+    def hlil(self, value: object) -> None:
+        pass
+
+
+def test_decompile_many_reads_hlil_once_per_function() -> None:
+    flaky = _FlakyHlilFunction("flaky", 0x5000, 0x5010)
+    _, decompile = get_tool("rex_decompile_many")
+    result = decompile(FakeParsingToolCall(FakeBinaryView(functions=[flaky])), ["0x5000"])
+    assert result["errors"] == []
+    assert result["functions"][0]["lines"] == ["int32_t flaky()", "return 0"]
+
+
+def test_decompile_many_keeps_indices_across_error_kinds() -> None:
+    view = _decompile_view()
+    _, decompile = get_tool("rex_decompile_many")
+    result = decompile(FakeParsingToolCall(view), ["0x9999", "0x3000", "0x1100"])
+    assert [(entry["index"], entry["error"]["code"]) for entry in result["errors"]] == [
+        (0, "invalid_params"),
+        (1, "no_hlil"),
+    ]
+    assert [entry["index"] for entry in result["functions"]] == [2]
+
+
+def test_hlil_grep_zero_scan_budget_next_offset_follows_offset() -> None:
+    view = _view_with_functions()
+    _, grep = get_tool("rex_hlil_grep")
+    inside = grep(_call(view), ".", max_functions=0, offset=1)
+    assert (inside["scan_incomplete"], inside["next_offset"]) == (True, 1)
+    past_end = grep(_call(view), ".", max_functions=0, offset=len(view.functions))
+    assert (past_end["scan_incomplete"], past_end["next_offset"]) == (False, None)
 
 
 def test_decompile_many_reports_a_bad_entry_per_item_and_renders_the_rest() -> None:

@@ -16,7 +16,9 @@ import pytest
 
 # These fake modules never import helpers, so importing them here cannot cycle.
 from helpers_dataflow import FakeInstruction, FakeMLILInstructions
+from helpers_relocation import RelocationWriteException
 from helpers_symbol import FakeSymbolBinding, FakeSymbolType, fake_symbol_constructor
+from helpers_types import FakeStructureVariant
 from helpers_uidf import FakeRegisterValueType, FakeVariable, FakeVariableSourceType
 from helpers_view import (
     TYPE_LIBRARIES_ON_DISK,
@@ -26,6 +28,7 @@ from helpers_view import (
     FakeBinaryView,
     FakeFunction,
     FakeInstructionTextTokenType,
+    FakeStructureType,
     FakeType,
     FakeTypeClass,
     FakeTypeLibrary,
@@ -285,9 +288,18 @@ class FakeToolCallBase:
     pass
 
 
+class FakeNamedTypeReference(FakeType):
+    """Mirrors NamedTypeReferenceType: ``name`` is the referenced type's name."""
+
+    def __init__(self, name: str, type_string: str) -> None:
+        super().__init__(name, type_string, type_class=FakeTypeClass.NamedTypeReferenceClass)
+
+
 def _fake_types_module() -> types.ModuleType:
     module = types.ModuleType("binaryninja.types")
     setattr(module, "Symbol", fake_symbol_constructor)
+    setattr(module, "StructureType", FakeStructureType)
+    setattr(module, "NamedTypeReferenceType", FakeNamedTypeReference)
     return module
 
 
@@ -337,6 +349,7 @@ def install_fake_binaryninja() -> None:
     enums_module = types.ModuleType("binaryninja.enums")
     setattr(enums_module, "AnalysisState", FakeAnalysisState)
     setattr(enums_module, "AnalysisSkipReason", FakeAnalysisSkipReason)
+    setattr(enums_module, "StructureVariant", FakeStructureVariant)
     setattr(enums_module, "RegisterValueType", FakeRegisterValueType)
     setattr(enums_module, "TypeClass", FakeTypeClass)
     setattr(enums_module, "InstructionTextTokenType", FakeInstructionTextTokenType)
@@ -370,6 +383,9 @@ def install_fake_binaryninja() -> None:
 
     types_module = _fake_types_module()
 
+    exceptions_module = types.ModuleType("binaryninja.exceptions")
+    setattr(exceptions_module, "RelocationWriteException", RelocationWriteException)
+
     package = types.ModuleType("binaryninja")
     for attribute, module in (
         ("mcp", mcp_module),
@@ -380,8 +396,10 @@ def install_fake_binaryninja() -> None:
         ("variable", variable_module),
         ("mediumlevelil", mlil_module),
         ("highlevelil", hlil_module),
+        ("exceptions", exceptions_module),
     ):
         setattr(package, attribute, module)
+    setattr(package, "user_directory", lambda: str(Path.home() / ".bn-fake-user"))
     setattr(package, "Type", FakeType)
     setattr(package, "TypeLibrary", FakeTypeLibrary)
 
@@ -395,6 +413,7 @@ def install_fake_binaryninja() -> None:
         ("binaryninja.variable", variable_module),
         ("binaryninja.mediumlevelil", mlil_module),
         ("binaryninja.highlevelil", hlil_module),
+        ("binaryninja.exceptions", exceptions_module),
     ):
         sys.modules[name] = module
     REGISTERED_TOOLS.clear()
