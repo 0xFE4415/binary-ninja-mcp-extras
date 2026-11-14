@@ -355,3 +355,13 @@ def test_carriers_fail_with_no_mlil_when_the_core_gives_no_ssa_form() -> None:
     with pytest.raises(FakeToolError) as error:
         tool(_call(FakeBinaryView(functions=[function])), function=0x1000, parameter="arg1")
     assert error.value.code == "no_mlil"
+
+
+def test_constraints_sort_by_address_value_not_by_its_text() -> None:
+    subject = FakeVariable("value")
+    late = branch(0x10000, compare("MLIL_CMP_E", var(subject), const(1)))
+    early = branch(0x2000, compare("MLIL_CMP_E", var(subject), const(2)))
+    function = FakeFunction("order", 0x1000, 0x20000, mlil=FakeMLILInstructions([late, early]))
+    _, constraints = get_tool("rex_function_constraints")
+    rows = constraints(_call(FakeBinaryView(functions=[function])), function=0x1000)["constraints"]
+    assert [row["address"] for row in rows] == ["0x2000", "0x10000"]
