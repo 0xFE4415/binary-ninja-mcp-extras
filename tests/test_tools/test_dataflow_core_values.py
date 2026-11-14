@@ -365,3 +365,25 @@ def test_constraints_sort_by_address_value_not_by_its_text() -> None:
     _, constraints = get_tool("rex_function_constraints")
     rows = constraints(_call(FakeBinaryView(functions=[function])), function=0x1000)["constraints"]
     assert [row["address"] for row in rows] == ["0x2000", "0x10000"]
+
+
+def test_carriers_skip_a_field_write_of_the_parameter_into_another_variable() -> None:
+    arg1, holder, copy = FakeVariable("arg1"), FakeVariable("var_18"), FakeVariable("copy")
+    written = FakeSSAVariable(holder, 2)
+    field = FakeInstruction(
+        "MLIL_SET_VAR_SSA_FIELD", 0x1010, dest=written, src=var_ssa(FakeSSAVariable(arg1, 0))
+    )
+    ssa = FakeMLILSSA(
+        [field, set_var_ssa(0x1020, FakeSSAVariable(copy, 1), var_ssa(written), "copy = var_18")]
+    )
+    assert _carriers(arg1, [holder, copy], ssa) == []
+
+
+def test_constraints_at_one_address_keep_the_core_order() -> None:
+    subject = FakeVariable("value")
+    first = branch(0x2000, compare("MLIL_CMP_E", var(subject), const(2)))
+    second = branch(0x2000, compare("MLIL_CMP_E", var(subject), const(1)))
+    function = FakeFunction("same", 0x2000, 0x2100, mlil=FakeMLILInstructions([first, second]))
+    _, constraints = get_tool("rex_function_constraints")
+    rows = constraints(_call(FakeBinaryView(functions=[function])), function=0x2000)["constraints"]
+    assert [row["constant"] for row in rows] == ["0x2", "0x1"]

@@ -515,12 +515,13 @@ def rex_mlil_uses(
 
 
 def _copies_carried_value(use: Any, carried: set[SSAVariable]) -> bool:
+    """Whether a use of a carried variable copies its whole value into the use's dest."""
     if use.operation == MediumLevelILOperation.MLIL_VAR_PHI:
         return all(source in carried for source in use.src)
     if use.operation != MediumLevelILOperation.MLIL_SET_VAR_SSA:
         return False
     source = _strip(use.src, _EXTENSIONS)
-    return bool(source.operation == MediumLevelILOperation.MLIL_VAR_SSA and source.src in carried)
+    return bool(source.operation == MediumLevelILOperation.MLIL_VAR_SSA)
 
 
 def _parameter_carriers(
@@ -536,7 +537,8 @@ def _parameter_carriers(
     pending = list(entries)
     copies: list[Any] = []
     while pending:
-        uses: list[Any] = ssa.get_ssa_var_uses(pending.pop())
+        current = pending.pop()
+        uses: list[Any] = ssa.get_ssa_var_uses(current)
         for use in uses:
             if not _copies_carried_value(use, carried) or use.dest in carried:
                 continue

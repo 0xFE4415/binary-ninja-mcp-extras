@@ -73,6 +73,7 @@ class FakeMediumLevelILOperation(enum.IntEnum):
     MLIL_FCMP_O = 112
     MLIL_FCMP_UO = 113
     MLIL_SET_VAR_SSA = 114
+    MLIL_SET_VAR_SSA_FIELD = 115
     MLIL_SET_VAR_SPLIT_SSA = 116
     MLIL_VAR_SSA = 119
     MLIL_LOAD_SSA = 139
