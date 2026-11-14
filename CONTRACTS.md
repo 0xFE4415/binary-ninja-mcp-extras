@@ -492,16 +492,15 @@ Top-level response fields and tool-specific rules. Shared rules apply to every e
   - A key over 512 characters is clipped with the usual suffix and unusable with the other kv
     tools. A key stored by foreign code with a NUL byte is listed, but `rex_kv_get` and
     `rex_kv_delete` reject it.
-  - The core converts every entry of `bv.metadata` at once: one `rex/` or other entry of an
-    unrecognised type makes `rex_kv_list` fail for the whole view (core raises `TypeError`); the
-    tool does not work around it.
+  - The core converts every `bv.metadata` entry at once, so one entry of an unrecognised type
+    makes `rex_kv_list` fail for the whole view (`TypeError`); the tool does not work around it.
 
 #### `rex_memory_write`
 
 - Returns `address`, `bytes_written` (always equals the length of `hex_data`), `analysis_complete`.
 - `write_failed`: core writes fewer bytes than requested, usually unmapped or not file-backed
-  address. Message gives the address, requested and written counts, and says nothing was written:
-  one undoable transaction reverts, so a short write leaves no bytes and no reanalysis runs.
+  address. Message gives the address and requested and written counts, and says nothing was
+  written: the undoable transaction reverts, so no bytes change and no reanalysis runs.
 - `relocation_overlap`: range overlaps a relocation; points to `rex_relocation_at`; no way to force
   such a write.
 
@@ -553,10 +552,9 @@ Top-level response fields and tool-specific rules. Shared rules apply to every e
 - Returns `name`, `registered`, `width`, `member_count`, `members` of `{offset, name, type}`,
   `truncated`.
 - `name` must be an existing plain struct. Analysis records offset accesses only through variables
-  typed as pointers to it; the tool sees only accesses already recorded.
-- Redefines the type in place as a user type, in one undoable transaction, so code already using it
-  shows the members; `registered` is `name`. An auto type (debug info, type library) becomes a user
-  type.
+  typed as pointers to it, so the tool sees only those already recorded.
+- Redefines the type in place in one undoable transaction, so code already using it shows the
+  members; `registered` is `name`. An auto type (debug info, type library) becomes a user type.
 - `type_not_found`: name is not a type. `not_a_structure`: not a plain struct (union, class, alias,
   any other type). Neither calls the core.
   - Union: message names `bn_type_union_modify`; class: `bn_type_struct_modify`.
