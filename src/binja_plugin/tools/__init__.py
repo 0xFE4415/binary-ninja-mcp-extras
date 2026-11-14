@@ -433,7 +433,7 @@ def _render_function_disassembly(function: Function) -> list[tuple[int, str]]:
     for block in function.basic_blocks:
         for line in block.get_disassembly_text():
             if line.address is not None:
-                lines.append((line.address, "".join(str(token) for token in line.tokens)))
+                lines.append((line.address, str(line)))
     return sorted(lines, key=lambda entry: entry[0])
 
 

@@ -1268,7 +1268,11 @@ class FakeDisassemblyLine:
 
     def __init__(self, address: int | None, text: str) -> None:
         self.address = address
-        self.tokens = [text]
+        self.tokens = list(text.partition(" "))
+
+    @override
+    def __str__(self) -> str:
+        return "".join(map(str, self.tokens))
 
 
 class FakeBasicBlock:
