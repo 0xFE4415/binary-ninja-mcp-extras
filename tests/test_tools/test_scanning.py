@@ -1035,3 +1035,79 @@ def test_find_functions_by_pattern_stops_scanning_past_the_window(
     # The second function's match proves truncation; no later chunk is read or looked up.
     assert view.lookup_addresses == [0x1000, 0x1010]
     assert view.read_addresses == [0x1000, 0x1010]
+
+
+def test_data_find_matches_across_a_seam_between_adjacent_readable_segments() -> None:
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, 4), FakeSegment(0x1004, 4)],
+        memory={0x1000: b"\x00\x00\x00\x90\x91\x00\x00\x00"},
+    )
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="90 91")["matches"] == ["0x1003"]
+
+
+def test_data_find_matches_across_a_seam_that_is_also_a_chunk_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tools, "_READ_CHUNK", 4)
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, 6), FakeSegment(0x1006, 6)],
+        memory={0x1000: b"\x00" * 5 + b"\x90\x91\x92" + b"\x00" * 4},
+    )
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="90 91 92")["matches"] == ["0x1005"]
+
+
+def test_find_functions_by_pattern_sees_a_match_across_a_seam() -> None:
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, 4), FakeSegment(0x1004, 4)],
+        memory={0x1000: b"\x00\x00\x00\x90\x91\x00\x00\x00"},
+        functions=[FakeFunction("straddler", 0x1000, 0x1008)],
+    )
+    _, find = get_tool("rex_find_functions_by_pattern")
+    assert find(_call(view), pattern="90 91")["functions"][0]["addresses"] == ["0x1003"]
+
+
+def test_data_find_does_not_bridge_an_unreadable_neighbour() -> None:
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, 4), FakeSegment(0x1004, 4, readable=False)],
+        memory={0x1000: b"\x00\x00\x00\x90\x91\x00\x00\x00"},
+    )
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="90 91")["total"] == 0
+
+
+def test_data_find_does_not_bridge_a_gap_between_segments() -> None:
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, 4), FakeSegment(0x1005, 3)],
+        memory={0x1000: b"\x00\x00\x00\x90\x91\x00\x00\x00"},
+    )
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="90 91")["total"] == 0
+
+
+def test_data_find_scans_a_view_without_segments_across_its_whole_range() -> None:
+    view = FakeBinaryView(start=0, end=8, memory={0: b"\x7fELF\x00\x00\x00\x00"})
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="7f 45 4c 46")["matches"] == ["0x0"]
+    assert find(_call(view), pattern="00 00")["matches"] == ["0x4", "0x5", "0x6"]
+
+
+def test_data_find_finds_nothing_in_an_empty_view_without_segments() -> None:
+    view = FakeBinaryView(start=0, end=0)
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="00")["total"] == 0
+
+
+def test_data_find_keeps_scanning_after_a_merge_and_ignores_a_contained_segment() -> None:
+    view = FakeBinaryView(
+        segments=[
+            FakeSegment(0x1000, 8),
+            FakeSegment(0x1002, 2),
+            FakeSegment(0x1008, 4),
+            FakeSegment(0x3000, 4),
+        ],
+        memory={0x1000: b"\x00" * 7 + b"\x90\x91" + b"\x00" * 3, 0x3000: b"\x90\x91\x00\x00"},
+    )
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="90 91")["matches"] == ["0x1007", "0x3000"]

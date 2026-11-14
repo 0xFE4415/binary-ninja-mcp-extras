@@ -31,19 +31,30 @@ pub struct HexPattern {
 }
 
 impl HexPattern {
-    /// Parse a pattern such as `"48 8b ?? 05"`. Separators (Python's
-    /// `str.isspace()` set) are ignored; each token is two hex digits or `??`.
+    /// Parse a pattern such as `"48 8b ?? 05"`. Whitespace (Python's
+    /// `str.isspace()` set minus U+001C..U+001F, which are rejected) separates
+    /// tokens; each token holds whole bytes of two hex digits or `??`.
     pub fn parse(pattern: &str) -> Result<Self, PatternError> {
-        let chars: Vec<char> = pattern
-            .chars()
-            .filter(|char| !is_separator(*char))
+        if let Some(character) = pattern.chars().find(|char| is_rejected_separator(*char)) {
+            return Err(PatternError::new(format!(
+                "invalid separator U+{:04X}",
+                character as u32
+            )));
+        }
+        let tokens: Vec<&str> = pattern
+            .split(char::is_whitespace)
+            .filter(|token| !token.is_empty())
             .collect();
-        if chars.is_empty() {
+        if tokens.is_empty() {
             return Err(PatternError::new("empty hex pattern"));
         }
-        if !chars.len().is_multiple_of(2) {
+        if tokens
+            .iter()
+            .any(|token| !token.chars().count().is_multiple_of(2))
+        {
             return Err(PatternError::new("hex pattern must contain whole bytes"));
         }
+        let chars: Vec<char> = tokens.concat().chars().collect();
         // The length check above guarantees `as_chunks` leaves no remainder.
         let (pairs, remainder) = chars.as_chunks();
         debug_assert!(remainder.is_empty());
@@ -84,9 +95,9 @@ impl HexPattern {
     }
 }
 
-/// Python's `str.isspace()` set: Unicode whitespace plus U+001C..U+001F.
-fn is_separator(character: char) -> bool {
-    character.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&character)
+/// Python treats these as whitespace, but the grammar rejects them as separators.
+fn is_rejected_separator(character: char) -> bool {
+    ('\u{1c}'..='\u{1f}').contains(&character)
 }
 
 fn parse_hex_byte([high, low]: [char; 2]) -> Option<u8> {
@@ -149,14 +160,14 @@ mod tests {
     }
 
     // Keep equal to PYTHON_SEPARATORS in tests/test_hexpattern.py and CONTRACTS.md.
-    const SEPARATOR_CODE_POINTS: [u32; 29] = [
-        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x85, 0xA0, 0x1680, 0x2000,
-        0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A, 0x2028,
-        0x2029, 0x202F, 0x205F, 0x3000,
+    const SEPARATOR_CODE_POINTS: [u32; 25] = [
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20, 0x85, 0xA0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003,
+        0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A, 0x2028, 0x2029, 0x202F, 0x205F,
+        0x3000,
     ];
 
     #[test]
-    fn separators_are_exactly_the_python_isspace_set() {
+    fn separators_are_exactly_the_pinned_set() {
         let mut accepted = Vec::new();
         for code_point in 0..=char::MAX as u32 {
             let Some(character) = char::from_u32(code_point) else {
@@ -180,10 +191,28 @@ mod tests {
             HexPattern::parse("   ").unwrap_err().message,
             "empty hex pattern"
         );
-        assert_eq!(
-            HexPattern::parse("48 8").unwrap_err().message,
-            "hex pattern must contain whole bytes"
-        );
+        for odd in ["48 8", "9 0", "48 9 0", "4 8 8b", "48 8\nz"] {
+            assert_eq!(
+                HexPattern::parse(odd).unwrap_err().message,
+                "hex pattern must contain whole bytes",
+                "{odd:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_the_control_separators_naming_the_code_point() {
+        for (pattern, name) in [
+            ("48\u{1c}8b", "U+001C"),
+            ("48\u{1d}8b", "U+001D"),
+            ("48\u{1e}8b", "U+001E"),
+            ("\u{1f}", "U+001F"),
+        ] {
+            assert_eq!(
+                HexPattern::parse(pattern).unwrap_err().message,
+                format!("invalid separator {name}")
+            );
+        }
     }
 
     #[test]

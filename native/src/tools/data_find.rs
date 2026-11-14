@@ -115,6 +115,35 @@ mod tests {
     }
 
     #[test]
+    fn finds_a_match_across_a_seam_between_adjacent_segments() {
+        let view = FakeView {
+            segments: vec![(0x1000, 0x1004), (0x1004, 0x1008)],
+            unreadable_segments: Vec::new(),
+            runs: vec![(0x1000, b"\x00\x00\x00\x90\x91\x00\x00\x00".to_vec())],
+        };
+        let pattern = HexPattern::parse("90 91").unwrap();
+        assert_eq!(scan_page(&view, &pattern, 0, 10).matches, vec![0x1003]);
+    }
+
+    #[test]
+    fn does_not_bridge_an_unreadable_neighbour_or_a_gap() {
+        let bytes = b"\x00\x00\x00\x90\x91\x00\x00\x00".to_vec();
+        let pattern = HexPattern::parse("90 91").unwrap();
+        let unreadable_neighbour = FakeView {
+            segments: vec![(0x1000, 0x1004), (0x1004, 0x1008)],
+            unreadable_segments: vec![(0x1004, 0x1008)],
+            runs: vec![(0x1000, bytes.clone())],
+        };
+        assert_eq!(scan_page(&unreadable_neighbour, &pattern, 0, 10).total, 0);
+        let gap = FakeView {
+            segments: vec![(0x1000, 0x1004), (0x1005, 0x1008)],
+            unreadable_segments: Vec::new(),
+            runs: vec![(0x1000, bytes)],
+        };
+        assert_eq!(scan_page(&gap, &pattern, 0, 10).total, 0);
+    }
+
+    #[test]
     fn finds_matches_across_chunk_boundaries() {
         // Python test_data_find_finds_matches_across_chunk_boundaries analog.
         let view = FakeView {

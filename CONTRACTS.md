@@ -91,7 +91,7 @@ Tools resolving an address expression to a function (`rex_function_constraints`,
 | `max_lines` of `rex_export_disasm` | max 8193 (4096 + 4096 + anchor), default 200 |
 | `names` of the type-library tools | 1-128 strings, none empty or over-long |
 | `limit` of `rex_eval_result` | 1-65,536 characters (default 65,536) |
-| `rex_data_find` `pattern`; each `rx_multi_find` entry | 8,192 characters |
+| `rex_data_find` `pattern`; each `rx_multi_find` entry | 8,192 characters (`rex_*` enforce it in the body and do not advertise `maxLength`) |
 
 - Over-cap strings return `pattern_too_large`, `key_too_large`, `value_too_large`, `data_too_large`, `name_too_large`, or `library_name_too_large`. Over-cap `rx_multi_find` entry: `pattern_too_large` naming its index. Over-cap component paths, type-name list entries, export filenames: `invalid_params`.
 
@@ -112,9 +112,10 @@ Other codes live with their tool: `no_mlil`/`no_hlil` (Analysis state), `invalid
 
 #### Hex byte patterns
 
-- `rex_data_find`, `rx_data_find`, `rex_find_functions_by_pattern`, `rx_multi_find`: separator-delimited bytes, each exactly two ASCII hex digits or `??` (any byte); separators inside a byte are ignored.
-- Separator: any character Python's `str.isspace()` accepts: U+0009-U+000D, U+001C-U+001F, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000.
-- Any other token (`+f`, `-1`, `0x`, `f_`, non-ASCII digits, `?5`) returns `invalid_pattern` naming the token. Non-string `pattern`: `invalid_params`.
+- `rex_data_find`, `rx_data_find`, `rex_find_functions_by_pattern`, `rx_multi_find`: whitespace-separated tokens, each holding whole bytes, each byte exactly two ASCII hex digits or `??` (any byte). `9090` and `90 90` are the same pattern; `9 0` is not a byte.
+- Whitespace: Python's `str.isspace()` set minus U+001C-U+001F: U+0009-U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000.
+- `invalid_pattern` for: an empty pattern; a token with an odd number of digits (`hex pattern must contain whole bytes`); any other token (`+f`, `-1`, `0x`, `f_`, non-ASCII digits, `?5`), naming it; U+001C-U+001F, naming the code point (`invalid separator U+001C`). Non-string `pattern`: `invalid_params`.
+- Scan coverage: readable segments only. Segments that touch or overlap are one range, so a match may span the seam between them. Gaps and unreadable segments are never bridged. A view with no segments, such as a Raw view, is scanned over its whole range. A `section` clips the range to `[start, end)`.
 
 #### Export files
 
@@ -164,7 +165,7 @@ Top-level response fields and tool-specific rules. Shared rules apply to every e
 | `rex_hlil_grep` | `scanned`, `truncated`, `scan_incomplete`, `skipped_no_hlil`, `functions` of `{start, name, lines}`, `next_offset` (first function the next call starts from; set when `truncated` or `scan_incomplete`, null at end of view) |
 | `rex_hlil_statements` | `function`, `total`, `truncated`, `statements` of `{address, index, text}` |
 | `rex_kv_get` | `key`, `value`, `truncated` |
-| `rex_parameter_variables` | `function`, `parameter`, `storage` (one per matching variable, in variable order), `definitions` (flat ascending addresses over all matching variables), `carriers` of `{variable, address, text}` |
+| `rex_parameter_variables` | `function`, `parameter`, `storage` (one per matching variable, in variable order), `definitions` (flat ascending addresses over all matching variables), `carriers` of `{variable, address, text}`: every assignment copying the parameter's incoming value, possibly through a zero or sign extension, followed through further copies and through SSA phi joins whose every source carries the value; truncations and computed values are not carriers; rows ascend by address, `text` is the non-SSA instruction |
 | `rex_relocation_at` | `address`, `count`, `relocations` of `{address, size, type, addend, implicit_addend, pc_relative, target, reloc, symbol}` (`symbol` null when none) |
 | `rex_report_show` | `title`, `length`, `preview`, `truncated`; markdown can link into the view with `binaryninja://?expr=...` |
 | `rex_string_search` | `total`, `truncated`, `strings` of `{address, length, type, value}` |
@@ -235,15 +236,18 @@ Top-level response fields and tool-specific rules. Shared rules apply to every e
 
 #### `rex_function_constraints`
 
-- Returns `function`, `total`, `truncated`, `constraints` of `{address, operator, constant, char, subject, subject_text}`.
-- `operators`: `"equality"` (default) or `"all"`; any other value returns `invalid_params` naming it. `"equality"`: `operator` is `==` or `!=`. `"all"` adds ordered comparisons spelled as in HLIL: `s<`, `s<=`, `s>=`, `s>` (signed), `u<`, `u<=`, `u>=`, `u>` (unsigned).
+- Returns `function`, `total`, `truncated`, `constraints` of `{address, operator, constant, char, subject, subject_text}`; rows ascend by address, rows at one address keep the core's order.
+- `operators`: `"equality"` (default) or `"all"`; any other value returns `invalid_params` naming it. `"equality"`: `operator` is `==`, `!=`, `f==` or `f!=`. `"all"` adds ordered comparisons spelled as in HLIL: `s<`, `s<=`, `s>=`, `s>` (signed), `u<`, `u<=`, `u>=`, `u>` (unsigned), and `f<`, `f<=`, `f>=`, `f>` (float). Ordered and unordered tests are not reported.
 - Rows read subject, operator, constant: a constant on the left mirrors the operator (`5 s< x` is `s>` 5).
 - Signed row adds `signed_constant`, the constant as signed two's complement at its width (`x s< -1` in four bytes: `constant` `0xffffffff`, `signed_constant` `-0x1`); other rows lack the key.
-- `constant` and a `load` `offset` render the computed value: zero or sign extension of a constant applies at its outer width first, then shows at that width.
-- `constant`: unsigned hex (-1 is `0xffffffff` in four bytes, `0xffffffffffffffff` in eight; `sx.q` of four-byte -1 is `0xffffffffffffffff`; `zx.q` of `0xffffffff` is `0xffffffff`). A constant with no core size (width 0, e.g. `true`) keeps its value as stated.
+- A side is the constant when the core states a constant or constant-pointer value for it (`expression.value`); the other side is the subject. A comparison with a constant on both sides is not reported. An import is never a constant.
+- `constant`: that value as unsigned hex at the expression's width (-1 is `0xffffffff` in four bytes, `0xffffffffffffffff` in eight). A constant with no core size (width 0, e.g. `true`) keeps its value as stated.
+- Float rows add `float_constant`: the IEEE single or double the bits encode, as a decimal string, or null for other widths; `constant` holds the bits. Other rows lack the key.
 - `char`: printable ASCII character of that value, else null.
 - `subject`:
-  - `{kind: "load", base, offset}`: `base` null for an absolute address, whose `offset` is unsigned hex at its width like every address. For a base variable plus displacement, `offset` is the displacement as signed two's complement at its width (four-byte `0xfffffff8` prints `-0x8`; `zx.q` of it prints `0xfffffff8`). Both null, with `text` added, when the address is not a base variable plus a constant.
+  - `{kind: "load", base, offset}`, for a load or a struct-field load: `base` null for an absolute address, whose `offset` is unsigned hex at its width like every address; a struct-field offset adds to the displacement or the address. For a base variable plus displacement, `offset` is the displacement as signed two's complement at its width (four-byte `0xfffffff8` prints `-0x8`). Both null, with `text` added, when the address is not a base variable plus a constant.
+  - `{kind: "import", address, text}`: `address` is the import address slot.
+  - A zero or sign extension, or a low part, of the subject is looked through.
   - `{kind: "variable", variable, definition?}`: `definition` is `{address, load}` when the variable's only definition is a load.
   - `{kind: "expression", text}`.
 
