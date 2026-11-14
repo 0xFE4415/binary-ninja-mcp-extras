@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 # These fake modules never import helpers, so importing them here cannot cycle.
-from helpers_dataflow import FakeInstruction, FakeMLILInstructions
+from helpers_dataflow import FakeInstruction, FakeMediumLevelILOperation, FakeMLILInstructions
 from helpers_relocation import RelocationWriteException
 from helpers_symbol import FakeSymbolBinding, FakeSymbolType, fake_symbol_constructor
 from helpers_types import FakeStructureVariant
@@ -303,6 +303,29 @@ def _fake_types_module() -> types.ModuleType:
     return module
 
 
+def _fake_enums_module() -> types.ModuleType:
+    module = types.ModuleType("binaryninja.enums")
+    setattr(module, "AnalysisState", FakeAnalysisState)
+    setattr(module, "AnalysisSkipReason", FakeAnalysisSkipReason)
+    setattr(module, "StructureVariant", FakeStructureVariant)
+    setattr(module, "RegisterValueType", FakeRegisterValueType)
+    setattr(module, "TypeClass", FakeTypeClass)
+    setattr(module, "InstructionTextTokenType", FakeInstructionTextTokenType)
+    setattr(module, "SymbolType", FakeSymbolType)
+    setattr(module, "SymbolBinding", FakeSymbolBinding)
+    setattr(module, "VariableSourceType", FakeVariableSourceType)
+    setattr(module, "MediumLevelILOperation", FakeMediumLevelILOperation)
+    setattr(
+        module,
+        "LowLevelILOperation",
+        enum.IntEnum(
+            "LowLevelILOperation",
+            {"LLIL_CALL": 56, "LLIL_TAILCALL": 58, "LLIL_LOAD": 8},
+        ),
+    )
+    return module
+
+
 def install_fake_binaryninja() -> None:
     """Create the fake binaryninja package in sys.modules when it is absent."""
     if "binaryninja" in sys.modules:
@@ -346,24 +369,7 @@ def install_fake_binaryninja() -> None:
 
     setattr(fn_module, "Function", FakeFunctionBase)
 
-    enums_module = types.ModuleType("binaryninja.enums")
-    setattr(enums_module, "AnalysisState", FakeAnalysisState)
-    setattr(enums_module, "AnalysisSkipReason", FakeAnalysisSkipReason)
-    setattr(enums_module, "StructureVariant", FakeStructureVariant)
-    setattr(enums_module, "RegisterValueType", FakeRegisterValueType)
-    setattr(enums_module, "TypeClass", FakeTypeClass)
-    setattr(enums_module, "InstructionTextTokenType", FakeInstructionTextTokenType)
-    setattr(enums_module, "SymbolType", FakeSymbolType)
-    setattr(enums_module, "SymbolBinding", FakeSymbolBinding)
-    setattr(enums_module, "VariableSourceType", FakeVariableSourceType)
-    setattr(
-        enums_module,
-        "LowLevelILOperation",
-        enum.IntEnum(
-            "LowLevelILOperation",
-            {"LLIL_CALL": 56, "LLIL_TAILCALL": 58, "LLIL_LOAD": 8},
-        ),
-    )
+    enums_module = _fake_enums_module()
 
     variable_module = types.ModuleType("binaryninja.variable")
 

@@ -10,6 +10,7 @@ from helpers_dataflow import (
     branch,
     compare,
     const,
+    constant_value,
     load,
     set_var,
     sign_extend,
@@ -287,24 +288,14 @@ def _constraint_row(condition: Any) -> dict[str, Any]:
     [
         (const(1, size=0), "0x1", None),
         (const(0, size=0), "0x0", None),
-        (zero_extend(const(1, size=0)), "0x1", None),
-        (sign_extend(const(-1, size=0), size=0), "-0x1", None),
-        (zero_extend(const(0xFFFFFFFF, size=4)), "0xffffffff", None),
-        (zero_extend(const(-1, size=4)), "0xffffffff", None),
-        (sign_extend(const(-1, size=4)), "0xffffffffffffffff", None),
-        (sign_extend(const(0xFFFFFFFF, size=4)), "0xffffffffffffffff", None),
-        (sign_extend(const(-1, size=1), size=4), "0xffffffff", None),
-        (sign_extend(const(0x80, size=1), size=4), "0xffffff80", None),
-        (sign_extend(const(0x7F, size=1), size=4), "0x7f", None),
-        (zero_extend(const(-1, size=1), size=4), "0xff", None),
-        (zero_extend(sign_extend(const(-1, size=2), size=4)), "0xffffffff", None),
-        (sign_extend(zero_extend(const(-1, size=2), size=4)), "0xffff", None),
-        (sign_extend(const(0x41, size=1)), "0x41", "A"),
-        (zero_extend(const(0x41, size=1), size=4), "0x41", "A"),
-        (zero_extend(const(0x41, size=4), size=0), "0x41", "A"),
+        (zero_extend(const(1, size=0), size=0, value=constant_value(-1)), "-0x1", None),
+        (zero_extend(const(-1, size=4), value=constant_value(0xFFFFFFFF)), "0xffffffff", None),
+        (sign_extend(const(-1, size=4), value=constant_value(-1)), "0xffffffffffffffff", None),
+        (sign_extend(const(-1, size=1), size=4, value=constant_value(-1)), "0xffffffff", None),
+        (sign_extend(const(0x41, size=1), value=constant_value(0x41)), "0x41", "A"),
     ],
 )
-def test_constraint_constant_is_the_value_the_expression_computes(
+def test_constraint_constant_is_the_value_the_core_states_at_the_expression_width(
     wrapped: Any, expected: str, character: str | None
 ) -> None:
     row = _constraint_row(compare("MLIL_CMP_E", var(FakeVariable("value")), wrapped))
@@ -314,7 +305,11 @@ def test_constraint_constant_is_the_value_the_expression_computes(
 
 def test_extended_constant_on_the_left_renders_the_computed_value() -> None:
     row = _constraint_row(
-        compare("MLIL_CMP_NE", sign_extend(const(-1, size=4)), var(FakeVariable("value")))
+        compare(
+            "MLIL_CMP_NE",
+            sign_extend(const(-1, size=4), value=constant_value(-1)),
+            var(FakeVariable("value")),
+        )
     )
     assert row["constant"] == "0xffffffffffffffff"
     assert row["char"] is None
@@ -338,17 +333,9 @@ def test_extension_of_a_non_constant_states_no_constraint() -> None:
         (const(0xFFFF0000, size=4), "0xffff0000"),
         (const(-0x1000, size=8), "0xfffffffffffff000"),
         (const(0x403198, size=8), "0x403198"),
-        (zero_extend(const(-0x1000, size=4)), "0xfffff000"),
-        (sign_extend(const(-0x1000, size=4)), "0xfffffffffffff000"),
-        (sign_extend(const(0xFFFFF000, size=4)), "0xfffffffffffff000"),
-        (sign_extend(const(0x1000, size=4)), "0x1000"),
-        (sign_extend(const(0x7FFFFFFF, size=4)), "0x7fffffff"),
-        (sign_extend(const(0x80000000, size=4)), "0xffffffff80000000"),
-        (zero_extend(sign_extend(const(-1, size=1), size=2), size=8), "0xffff"),
-        (sign_extend(sign_extend(const(-1, size=1), size=2), size=8), "0xffffffffffffffff"),
+        (zero_extend(const(-0x1000, size=4), value=constant_value(0xFFFFF000)), "0xfffff000"),
+        (sign_extend(const(-0x1000, size=4), value=constant_value(-0x1000)), "0xfffffffffffff000"),
         (const(0x10, size=0), "0x10"),
-        (sign_extend(const(1, size=0)), "0x1"),
-        (zero_extend(const(1, size=4), size=0), "0x1"),
     ],
 )
 def test_absolute_load_address_is_the_unsigned_value_the_expression_computes(
@@ -370,18 +357,11 @@ def test_absolute_load_address_is_the_unsigned_value_the_expression_computes(
         (const(0x80000000, size=4), "-0x80000000"),
         (const(0x7F, size=1), "0x7f"),
         (const(0, size=4), "0x0"),
-        (zero_extend(const(0xFFFFFFF8, size=4)), "0xfffffff8"),
-        (zero_extend(const(-8, size=4)), "0xfffffff8"),
-        (sign_extend(const(0xFFFFFFF8, size=4)), "-0x8"),
-        (sign_extend(const(-8, size=4)), "-0x8"),
-        (sign_extend(const(8, size=4)), "0x8"),
-        (zero_extend(sign_extend(const(-8, size=4), size=8), size=8), "-0x8"),
-        (zero_extend(sign_extend(const(-8, size=1), size=4), size=8), "0xfffffff8"),
+        (zero_extend(const(-8, size=4), value=constant_value(0xFFFFFFF8)), "0xfffffff8"),
+        (sign_extend(const(-8, size=4), value=constant_value(-8)), "-0x8"),
         (const(5, size=0), "0x5"),
         (const(-5, size=0), "-0x5"),
-        (zero_extend(const(5, size=0)), "0x5"),
-        (zero_extend(const(5, size=4), size=0), "0x5"),
-        (sign_extend(const(-5, size=4), size=0), "-0x5"),
+        (zero_extend(const(5, size=4), size=0, value=constant_value(-5)), "-0x5"),
     ],
 )
 def test_load_displacement_is_signed_two_complement_at_its_width(

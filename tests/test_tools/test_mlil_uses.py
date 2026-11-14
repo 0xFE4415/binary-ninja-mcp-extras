@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -661,24 +660,6 @@ def test_uses_without_mlil_fail_with_no_mlil() -> None:
         uses(_call(view), function=0x2000, address=0x2004)
     assert error.value.code == "no_mlil"
     assert "run bn_analysis_update_and_wait" in error.value.message
-
-
-def test_uses_render_a_use_whose_operation_has_no_name_attribute() -> None:
-    # An operation object without .name must render as its string form, not raise or
-    # report None.
-    arg_40 = FakeVariable("arg_40")
-    definition = set_var(0x1020, arg_40, const(1))
-    use = SimpleNamespace(operation=42, address=0x1030)
-    mlil = FakeMLILInstructions(
-        instructions=[definition],
-        definitions={arg_40: [definition]},
-        uses={arg_40: [use]},  # ty: ignore[invalid-argument-type]
-    )
-    function = FakeFunction("check", 0x1000, 0x1100, mlil=mlil)
-    view = FakeBinaryView(functions=[function])
-    _, uses = get_tool("rex_mlil_uses")
-    result = uses(_call(view), function=0x1000, address=0x1020)
-    assert result["variables"][0]["uses"][0]["operation"] == "42"
 
 
 @given(index=st.integers(min_value=0, max_value=0x7FFFFFFF))

@@ -16,16 +16,21 @@ from helpers_dataflow import (
     FakeHLIL,
     FakeInstruction,
     FakeMLILInstructions,
+    FakeMLILSSA,
+    FakeSSAVariable,
     _flag_variable,
     _stack_variable,
     add,
     branch,
     compare,
     const,
+    constant_value,
     load,
     set_var,
+    set_var_ssa,
     sign_extend,
     var,
+    var_ssa,
     zero_extend,
 )
 from helpers_uidf import FakeVariable, FakeVariableSourceType
@@ -392,13 +397,24 @@ def test_parameter_maps_to_the_copies_that_carry_it() -> None:
     arg4.storage = 112
     arg4.source_type = FakeVariableSourceType.StackVariableSourceType
     r14 = FakeVariable("r14")
+    copy = set_var_ssa(
+        0x1438, FakeSSAVariable(r14, 1), var_ssa(FakeSSAVariable(arg4, 0)), "r14 = arg4"
+    )
+    ssa = FakeMLILSSA(
+        [
+            copy,
+            set_var_ssa(
+                0x1450,
+                FakeSSAVariable(FakeVariable("tmp"), 1),
+                load(var_ssa(FakeSSAVariable(r14, 1))),
+                "tmp = [r14]",
+            ),
+        ]
+    )
     mlil = FakeMLILInstructions(
-        instructions=[
-            set_var(0x1438, r14, var(arg4)),
-            set_var(0x1450, FakeVariable("tmp"), load(var(r14))),
-            branch(0x1460, var(r14)),
-        ],
-        definitions={r14: [set_var(0x1438, r14, var(arg4))]},
+        instructions=[copy.non_ssa_form, branch(0x1460, var(r14))],
+        definitions={r14: [copy.non_ssa_form]},
+        ssa_form=ssa,
     )
     function = FakeFunction("check", 0x1000, 0x1100, mlil=mlil, vars=[arg4, r14])
     view = FakeBinaryView(functions=[function])
@@ -539,20 +555,24 @@ def test_parameter_rejects_a_variable_source_type_the_plugin_does_not_know() -> 
         _parameter_storage(_parameter_view(variable), "v")
 
 
-def test_parameter_carriers_scan_the_whole_function_and_sort_by_address() -> None:
-    # The scan must move past definitions whose source is not the parameter and past
-    # non-definition instructions, and the report sorts carriers by address.
+def test_parameter_carriers_scan_every_use_and_sort_by_address() -> None:
+    # The scan must move past uses that are not copies, and the report sorts carriers by
+    # address whatever order the core lists the uses in.
     arg4 = FakeVariable("arg4")
     r14 = FakeVariable("r14")
     r15 = FakeVariable("r15")
-    mlil = FakeMLILInstructions(
-        instructions=[
-            set_var(0x1010, FakeVariable("tmp"), load(var(arg4))),
-            branch(0x1020, var(arg4)),
-            set_var(0x1400, r14, var(arg4)),
-            set_var(0x1040, r15, var(arg4)),
-        ],
+    entry = FakeSSAVariable(arg4, 0)
+    ssa = FakeMLILSSA(
+        [
+            set_var_ssa(
+                0x1010, FakeSSAVariable(FakeVariable("tmp"), 1), load(var_ssa(entry)), "tmp"
+            ),
+            branch(0x1020, var_ssa(entry)),
+            set_var_ssa(0x1400, FakeSSAVariable(r14, 1), var_ssa(entry), "r14 = arg4"),
+            set_var_ssa(0x1040, FakeSSAVariable(r15, 1), var_ssa(entry), "r15 = arg4"),
+        ]
     )
+    mlil = FakeMLILInstructions(instructions=[], ssa_form=ssa)
     function = FakeFunction("check", 0x1000, 0x1100, mlil=mlil, vars=[arg4, r14, r15])
     view = FakeBinaryView(functions=[function])
     _, parameter = get_tool("rex_parameter_variables")
@@ -682,7 +702,11 @@ def test_all_keeps_equality_rows_exactly_as_equality_mode_reports_them() -> None
             "0x7f",
         ),
         (
-            compare("MLIL_CMP_SGT", var(FakeVariable("value")), sign_extend(const(-1, size=4))),
+            compare(
+                "MLIL_CMP_SGT",
+                var(FakeVariable("value")),
+                sign_extend(const(-1, size=4), value=constant_value(-1)),
+            ),
             "s>",
             "0xffffffffffffffff",
             "-0x1",
@@ -711,8 +735,16 @@ def test_signed_comparisons_add_the_signed_reading_of_the_constant(
 @pytest.mark.parametrize(
     ("extended", "constant", "signed"),
     [
-        (zero_extend(const(0x80000000, size=4)), "0x80000000", "0x80000000"),
-        (sign_extend(const(0x80000000, size=4)), "0xffffffff80000000", "-0x80000000"),
+        (
+            zero_extend(const(0x80000000, size=4), value=constant_value(0x80000000)),
+            "0x80000000",
+            "0x80000000",
+        ),
+        (
+            sign_extend(const(0x80000000, size=4), value=constant_value(-0x80000000)),
+            "0xffffffff80000000",
+            "-0x80000000",
+        ),
     ],
 )
 def test_a_signed_reading_uses_the_width_after_extension(
