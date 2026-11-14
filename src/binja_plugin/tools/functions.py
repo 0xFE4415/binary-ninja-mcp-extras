@@ -17,7 +17,6 @@ from binja_plugin.tools import (
     _raise_containment_miss,
     _require_function,
     _ResolvedFunction,
-    _validate_range,
 )
 
 _MAX_CALL_PATH_DEPTH = 16
@@ -101,8 +100,6 @@ def rex_call_paths(
     :param max_paths: Maximum paths returned.
     """
     bv = call.binary_view
-    max_depth = _validate_range("max_depth", max_depth, 1, _MAX_CALL_PATH_DEPTH)
-    max_paths = _validate_range("max_paths", max_paths, 1, _MAX_CALL_PATHS)
     source_resolution = _require_function(bv, from_addr)
     target_resolution = _require_function(bv, to_addr)
     source, target = source_resolution.function, target_resolution.function
@@ -185,7 +182,6 @@ def rex_function_define(
     :param wait: Poll until the function has at least one basic block.
     :param timeout_ms: Bound on the analysis wait when ``wait`` is set.
     """
-    timeout_ms = _validate_range("timeout_ms", timeout_ms, 0, _MAX_DEFINE_WAIT_MS)
     function = call.binary_view.create_user_function(start)
     if function is None:
         raise mcp.ToolError("define_failed", f"could not create a function at {start:#x}")
@@ -206,7 +202,6 @@ def rex_function_define_many(
     :param wait: Poll until every defined function has at least one basic block.
     :param timeout_ms: Bound on the analysis wait when ``wait`` is set.
     """
-    timeout_ms = _validate_range("timeout_ms", timeout_ms, 0, _MAX_DEFINE_WAIT_MS)
     parsed = _parse_address_batch(call, addresses, _MAX_DEFINE_BATCH, "addresses")
     defined: list[Function] = []
     failed: list[str] = []

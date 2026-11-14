@@ -7,6 +7,7 @@ from helpers import (
     _call,
     get_tool,
 )
+from helpers_invoke import invoke_tool
 from helpers_relocation import FakeRelocation, FakeRelocationInfo
 from helpers_view import (
     FakeBinaryView,
@@ -235,7 +236,7 @@ def test_xrefs_to_rejects_out_of_range_windows() -> None:
         ({"offset": -1}, "Invalid integer parameter 'offset': Must be at least 0"),
     ):
         with pytest.raises(FakeToolError) as exc:
-            xrefs(_call(view), 0x401000, **kwargs)
+            invoke_tool(xrefs, _call(view), 0x401000, **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
     assert xrefs(_call(view), 0x401000, limit=tools._MAX_LIMIT)["total"] == 1
@@ -292,7 +293,7 @@ def test_data_read_rejects_out_of_range_lengths() -> None:
         ),
     ):
         with pytest.raises(FakeToolError) as exc:
-            read(_call(view), 0x1000, length)
+            invoke_tool(read, _call(view), 0x1000, length)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
     # Both bounds are inclusive: exactly 1 and exactly the cap are honored reads.

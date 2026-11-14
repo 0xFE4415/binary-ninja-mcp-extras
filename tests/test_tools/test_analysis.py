@@ -6,6 +6,7 @@ from helpers import (
     _call,
     get_tool,
 )
+from helpers_invoke import invoke_tool
 from helpers_view import (
     FakeActiveAnalysisInfo,
     FakeAnalysisInfo,
@@ -126,7 +127,7 @@ def test_analysis_wait_rejects_out_of_range_timeout(monkeypatch: pytest.MonkeyPa
     ):
         message = f"Invalid integer parameter 'timeout_ms': Must be {requirement}"
         with pytest.raises(FakeToolError) as exc:
-            wait(_call(FakeBinaryView()), timeout_ms=value)
+            invoke_tool(wait, _call(FakeBinaryView()), timeout_ms=value)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
     # The range bounds themselves are accepted, not normalized.

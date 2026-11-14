@@ -448,13 +448,6 @@ def _disasm_window(
     return start, end
 
 
-def _validate_disasm_window(before: int, after: int) -> tuple[int, int]:
-    """Range-check the shared before/after window parameters of the disasm tools."""
-    before = _validate_range("before", before, 0, _MAX_DISASM_CONTEXT)
-    after = _validate_range("after", after, 0, _MAX_DISASM_CONTEXT)
-    return before, after
-
-
 def _validate_export_path(filename: str) -> None:
     """Reject, purely lexically, filenames that could escape or abuse the export root."""
     if not filename:

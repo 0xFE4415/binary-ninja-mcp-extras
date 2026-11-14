@@ -10,7 +10,7 @@ import sys
 import types
 import typing
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -277,6 +277,14 @@ class FakeMaximum:
         self.value = value
 
 
+class FakeClampTo:
+    """Mirrors binaryninja.mcp.ClampTo."""
+
+    def __init__(self, minimum: int, maximum: int) -> None:
+        self.minimum = minimum
+        self.maximum = maximum
+
+
 class FakeNonEmpty:
     """Mirrors binaryninja.mcp.NonEmpty; the fake decorator does not apply rejection."""
 
@@ -313,9 +321,13 @@ def install_fake_binaryninja() -> None:
     setattr(mcp_module, "IntegerExpression", FakeIntegerExpression)
     setattr(mcp_module, "ToolCall", FakeToolCallBase)
     setattr(mcp_module, "ToolError", FakeToolError)
-    setattr(mcp_module, "Minimum", FakeMinimum)
-    setattr(mcp_module, "Maximum", FakeMaximum)
-    setattr(mcp_module, "NonEmpty", FakeNonEmpty)
+    for attribute, fake in (
+        ("Minimum", FakeMinimum),
+        ("Maximum", FakeMaximum),
+        ("ClampTo", FakeClampTo),
+        ("NonEmpty", FakeNonEmpty),
+    ):
+        setattr(mcp_module, attribute, fake)
     setattr(mcp_module, "Schema", FakeSchema)
     setattr(mcp_module, "Tool", FakeTool)
     setattr(
@@ -424,6 +436,12 @@ class FakeToolCall:
     def __init__(self, binary_view: FakeBinaryView) -> None:
         self.binary_view = binary_view
 
+    def parse_address(self, value: object, here: int = 0) -> int:
+        return int(str(value), 0)
+
+    def parse_integer(self, value: object, here: int = 0) -> int:
+        return int(str(value), 0)
+
 
 def get_tool(name: str) -> tuple[dict[str, object], Any]:
     for tool_name, options, function in REGISTERED_TOOLS:
@@ -503,6 +521,7 @@ class FakeParsingToolCall(FakeToolCall):
     way the core's address-expression parser was observed to resolve them live.
     """
 
+    @override
     def parse_address(self, value: object, here: int = 0) -> int:
         text = value if isinstance(value, str) else str(value)
         try:

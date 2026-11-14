@@ -14,7 +14,6 @@ from binja_plugin.tools import (
     _reject_nul,
     _truncate,
     _truncate_with_flag,
-    _validate_range,
     _validate_text,
 )
 
@@ -164,8 +163,6 @@ def rex_kv_list(
     :param limit: Maximum keys to return.
     :param offset: Keys to skip before collecting results.
     """
-    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     _reject_nul("prefix", prefix)
     entries: list[_KvListEntry] = []
     for metadata_key, value in call.binary_view.metadata.items():
@@ -282,8 +279,6 @@ def rex_tag_list(
     :param limit: Maximum tags to return.
     :param offset: Tags to skip before collecting results.
     """
-    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     bv = call.binary_view
     scoped_tags = {
         "data": bv.tags_for_data,

@@ -16,6 +16,7 @@ from helpers import (
     get_tool,
     plain_gap_message,
 )
+from helpers_invoke import invoke_tool
 from helpers_view import (
     FakeBasicBlock,
     FakeBinaryView,
@@ -244,7 +245,7 @@ def test_export_disasm_rejects_out_of_function_addresses_and_ranges(
         ),
     ):
         with pytest.raises(FakeToolError) as exc:
-            export(_call(view), 0x1104, filename="x.txt", **kwargs)
+            invoke_tool(export, _call(view), 0x1104, filename="x.txt", **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
     # Both bounds are inclusive on every size parameter.
@@ -259,7 +260,7 @@ def test_export_disasm_rejects_out_of_function_addresses_and_ranges(
     assert at_caps["lines"] == 6
     # Range errors are checked before the address lookup, like rex_disasm_at.
     with pytest.raises(FakeToolError) as exc:
-        export(_call(FakeBinaryView()), 0x1104, before=-1, filename="x.txt")
+        invoke_tool(export, _call(FakeBinaryView()), 0x1104, before=-1, filename="x.txt")
     assert exc.value.message == "Invalid integer parameter 'before': Must be at least 0"
 
 
@@ -636,7 +637,7 @@ def test_export_symbols_rejects_invalid_ranges_limits_and_format(
         ({"start": -1, "end": 0x4000}, "Invalid integer parameter 'start': Must be at least 0"),
     ):
         with pytest.raises(FakeToolError) as exc:
-            export(_call(view), filename="x.csv", **kwargs)
+            invoke_tool(export, _call(view), filename="x.csv", **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
     for kwargs, message in (
@@ -646,12 +647,15 @@ def test_export_symbols_rejects_invalid_ranges_limits_and_format(
             f"Invalid integer parameter 'limit': Must be at most {tools._MAX_EXPORT_SYMBOLS}",
         ),
         ({"offset": -1}, "Invalid integer parameter 'offset': Must be at least 0"),
-        ({"format": "xml"}, "format must be 'csv' or 'json', not 'xml'"),
     ):
         with pytest.raises(FakeToolError) as exc:
-            export(_call(view), 0x1000, 0x4000, filename="x.csv", **kwargs)
+            invoke_tool(export, _call(view), 0x1000, 0x4000, filename="x.csv", **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
+    with pytest.raises(FakeToolError) as exc:
+        export(_call(view), 0x1000, 0x4000, filename="x.csv", format="xml")
+    assert exc.value.code == "invalid_params"
+    assert exc.value.message == "format must be 'csv' or 'json', not 'xml'"
     # Exactly at the limit cap the export still runs.
     at_cap = export(
         _call(view), 0x1000, 0x4000, limit=tools._MAX_EXPORT_SYMBOLS, filename="cap.csv"

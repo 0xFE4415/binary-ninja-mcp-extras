@@ -66,9 +66,6 @@ _MAX_CONSTANT_ADDRESSES = 6
 
 
 def _compile_pattern(pattern: str) -> tuple[re.Pattern[bytes], int]:
-    # Schema-annotated parameters reach the body unchecked, so the type is enforced here.
-    if not isinstance(pattern, str):
-        raise mcp.ToolError("invalid_params", "Expected string parameter 'pattern'")
     if len(pattern) > _MAX_PATTERN_CHARS:
         raise mcp.ToolError("pattern_too_large", f"pattern exceeds {_MAX_PATTERN_CHARS} characters")
     try:
@@ -180,8 +177,6 @@ def rex_constant_find(
     """
     bv = call.binary_view
     constant = _parse_constant_value(value)
-    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     _reject_non_operand_option_without_zero(constant, include_non_operand_hits)
     name_matcher = _name_filter(function_filter)
     truncated = False
@@ -232,7 +227,7 @@ def rex_constant_find(
 @mcp.tool(read_only=True)
 def rex_data_find(
     call: mcp.ToolCall,
-    pattern: Annotated[str, mcp.Schema({"type": "string", "maxLength": _MAX_PATTERN_CHARS})],
+    pattern: str,
     section: str | None = None,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
@@ -245,8 +240,6 @@ def rex_data_find(
     :param offset: Matches to skip before collecting results.
     """
     bv = call.binary_view
-    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     matcher, pattern_length = _compile_pattern(pattern)
     bounds = _resolve_section(bv, section) if section is not None else None
     addresses = (
@@ -259,7 +252,7 @@ def rex_data_find(
 @mcp.tool(read_only=True)
 def rex_find_functions_by_pattern(
     call: mcp.ToolCall,
-    pattern: Annotated[str, mcp.Schema({"type": "string", "maxLength": _MAX_PATTERN_CHARS})],
+    pattern: str,
     limit: Annotated[int, mcp.Minimum(0), mcp.Maximum(_MAX_LIMIT)] = 50,
     offset: Annotated[int, mcp.Minimum(0)] = 0,
 ) -> _FindFunctionsResult:
@@ -270,8 +263,6 @@ def rex_find_functions_by_pattern(
     :param offset: Matching functions to skip before collecting results.
     """
     bv = call.binary_view
-    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     matcher, pattern_length = _compile_pattern(pattern)
     hits: dict[tuple[int, str], _FunctionHits] = {}
     truncated = False

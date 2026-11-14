@@ -8,6 +8,7 @@ from helpers import (
     get_tool,
     plain_gap_message,
 )
+from helpers_invoke import invoke_tool
 from helpers_view import (
     FakeArchitecture,
     FakeBinaryView,
@@ -168,7 +169,7 @@ def test_data_find_caps_limit() -> None:
     assert result["truncated"] is True
     # Past the cap the request is rejected, not silently normalized.
     with pytest.raises(FakeToolError) as exc:
-        find(_call(view), pattern="90", limit=tools._MAX_LIMIT + 1)
+        invoke_tool(find, _call(view), pattern="90", limit=tools._MAX_LIMIT + 1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == (
         f"Invalid integer parameter 'limit': Must be at most {tools._MAX_LIMIT}"
@@ -622,11 +623,11 @@ def test_constant_find_rejects_out_of_range_limit() -> None:
     view = _view_with_functions()
     _, find = get_tool("rex_constant_find")
     with pytest.raises(FakeToolError) as exc:
-        find(_call(view), value=1, limit=-1)
+        invoke_tool(find, _call(view), value=1, limit=-1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "Invalid integer parameter 'limit': Must be at least 0"
     with pytest.raises(FakeToolError) as exc:
-        find(_call(view), value=1, limit=tools._MAX_LIMIT + 1)
+        invoke_tool(find, _call(view), value=1, limit=tools._MAX_LIMIT + 1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == (
         f"Invalid integer parameter 'limit': Must be at most {tools._MAX_LIMIT}"
@@ -658,7 +659,7 @@ def test_data_find_rejects_negative_offset() -> None:
     )
     _, find = get_tool("rex_data_find")
     with pytest.raises(FakeToolError) as exc:
-        find(_call(view), pattern="eb0e", limit=1, offset=-1)
+        invoke_tool(find, _call(view), pattern="eb0e", limit=1, offset=-1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "Invalid integer parameter 'offset': Must be at least 0"
     # Nothing ran: the rejection happens before any segment is read.
@@ -669,11 +670,11 @@ def test_data_find_rejects_out_of_range_limit() -> None:
     view = FakeBinaryView(segments=[FakeSegment(0x1000, 8)], memory={0x1000: b"\x90" * 8})
     _, find = get_tool("rex_data_find")
     with pytest.raises(FakeToolError) as exc:
-        find(_call(view), pattern="90", limit=-1)
+        invoke_tool(find, _call(view), pattern="90", limit=-1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "Invalid integer parameter 'limit': Must be at least 0"
     with pytest.raises(FakeToolError) as exc:
-        find(_call(view), pattern="90", limit=tools._MAX_LIMIT + 1)
+        invoke_tool(find, _call(view), pattern="90", limit=tools._MAX_LIMIT + 1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == (
         f"Invalid integer parameter 'limit': Must be at most {tools._MAX_LIMIT}"
@@ -825,7 +826,7 @@ def test_find_functions_by_pattern_limits_offsets_and_truncates() -> None:
         ({"offset": -1}, "Invalid integer parameter 'offset': Must be at least 0"),
     ):
         with pytest.raises(FakeToolError) as exc:
-            find(_call(view), "eb0e", **kwargs)
+            invoke_tool(find, _call(view), "eb0e", **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
 

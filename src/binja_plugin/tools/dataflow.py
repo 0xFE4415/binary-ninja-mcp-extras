@@ -20,7 +20,6 @@ from binja_plugin.tools import (
     _show_nul,
     _truncate,
     _unknown_variable_error,
-    _validate_range,
 )
 
 if TYPE_CHECKING:
@@ -275,8 +274,6 @@ def rex_function_constraints(
     :param operators: Comparisons to report: equality (== and !=) or all (adds s<, u>=, ...).
     """
     bv = call.binary_view
-    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     requested: str = operators
     if requested not in _OPERATOR_SETS:
         raise mcp.ToolError(
@@ -311,8 +308,6 @@ def rex_hlil_statements(
     :param offset: Statements to skip before collecting results.
     """
     bv = call.binary_view
-    limit = _validate_range("limit", limit, 0, _MAX_STATEMENT_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     resolution = _require_analyzed_function(bv, function)
     target = resolution.function
     hlil = target.hlil
@@ -416,8 +411,6 @@ def rex_mlil_uses(
     :param offset: Use sites to skip per variable before collecting results.
     """
     bv = call.binary_view
-    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     resolution = _require_analyzed_function(bv, address if function is None else function)
     target = resolution.function
     target_mlil = target.mlil

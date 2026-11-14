@@ -13,7 +13,7 @@ from binaryninja import mcp
 from binaryninja.binaryview import BinaryView
 from binaryninja.enums import AnalysisState
 
-from binja_plugin.tools import _truncate, _validate_range
+from binja_plugin.tools import _truncate
 
 # The wait runs on the server thread in ~100 ms slices: a call holds it for timeout_ms plus one.
 _MAX_ANALYSIS_WAIT_MS = 600000
@@ -94,7 +94,6 @@ def rex_analysis_wait(
     :param timeout_ms: Milliseconds to wait; 0 answers a snapshot without waiting.
     """
     bv = call.binary_view
-    timeout_ms = _validate_range("timeout_ms", timeout_ms, 0, _MAX_ANALYSIS_WAIT_MS)
     started = time.monotonic()
     deadline = started + timeout_ms / 1000
     completed = _analysis_is_idle(bv)
