@@ -714,6 +714,110 @@
      "path": "result"
     }
    ]
+  },
+  {
+   "id": "annotate-prototype-name-not-applied",
+   "guards": "A name inside a valid prototype is never applied: the function keeps its name and the row reports prototype_name_ignored.",
+   "tool": "rex_annotate_many",
+   "args": {
+    "items": [
+     {
+      "addr": "0x400000",
+      "prototype": "int proto_ignored(int a)"
+     }
+    ]
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "results.0.ok",
+     "value": true
+    },
+    {
+     "kind": "subset",
+     "path": "results.0.function.name",
+     "value": "zero_xor_only"
+    },
+    {
+     "kind": "subset",
+     "path": "results.0.prototype_name_ignored",
+     "value": "proto_ignored"
+    }
+   ]
+  },
+  {
+   "id": "annotate-explicit-name-beats-prototype",
+   "guards": "An explicit name has the final word over a name inside the prototype; the row omits prototype_name_ignored.",
+   "tool": "rex_annotate_many",
+   "args": {
+    "items": [
+     {
+      "addr": "0x400000",
+      "name": "annotate_probe",
+      "prototype": "long loser_name(long x)"
+     }
+    ]
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "results.0.ok",
+     "value": true
+    },
+    {
+     "kind": "subset",
+     "path": "results.0.function.name",
+     "value": "annotate_probe"
+    },
+    {
+     "kind": "not_contains",
+     "path": "",
+     "text": "prototype_name_ignored"
+    }
+   ]
+  },
+  {
+   "id": "annotate-probe-undo-name",
+   "guards": "Teardown: undo reverts the rename batch.",
+   "tool": "rex_undo",
+   "args": {},
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "undone",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": "annotate-probe-undo-prototype",
+   "guards": "Teardown: undo reverts the prototype-only batch.",
+   "tool": "rex_undo",
+   "args": {},
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "undone",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": "annotate-probe-restored",
+   "guards": "Teardown check: the fixture function has its original name back.",
+   "tool": "rex_disasm_at",
+   "args": {
+    "address": "0x400000",
+    "before": 0,
+    "after": 0
+   },
+   "expect": [
+    {
+     "kind": "subset",
+     "path": "function.name",
+     "value": "zero_xor_only"
+    }
+   ]
   }
  ]
 }

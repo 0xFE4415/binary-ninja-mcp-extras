@@ -138,10 +138,11 @@ address can lie in several functions, e.g. a cold or outlined block and its pare
 - Not covered: scalar address parameters, including `def_address` of `rex_uidf_set` (parsed first
   by the built-in server); patterns, regular expressions, variable names, eval code.
 - A `section` name with NUL returns `section_not_found`, like any unknown name.
-- The core cuts messages at the first NUL, so an echoed NUL shows as U+FFFD in:
-  `section_not_found`, `invalid_pattern`, `no_variable`, `unknown_tool`, `unknown_category`, eval
-  `not_found`, and the `invalid_params` messages for `kind`, `format`, `operators`. Other tools'
-  messages are not rewritten.
+- An echoed NUL shows as U+FFFD in: `section_not_found`, `invalid_pattern`, `no_variable`,
+  `unknown_tool`, `unknown_category`, eval `not_found`, and the `invalid_params` messages for
+  `kind`, `format`, `operators`. The plugin rewrites it before the message reaches the core, and
+  a NUL the core itself receives comes back rewritten the same way. Other tools' messages are not
+  rewritten.
 
 #### Input limits
 
