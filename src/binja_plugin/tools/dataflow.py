@@ -2,16 +2,17 @@
 
 Each tool answers a question the text renderings cannot: which input bytes a function
 compares against which constants, which IL statement lives at an address, and where a
-defined variable is read. Operations are matched by name, so a tool reports only what
-the IL states and never a rendering of it.
+defined variable is read. Operations and values come from the core, so a tool reports
+only what the IL states and never a rendering of it.
 """
 
 from __future__ import annotations
 
+import struct
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypedDict
 
 from binaryninja import mcp
-from binaryninja.enums import VariableSourceType
+from binaryninja.enums import MediumLevelILOperation, RegisterValueType, VariableSourceType
 
 from binja_plugin.tools import (
     _MAX_LIMIT,
@@ -25,28 +26,62 @@ from binja_plugin.tools import (
 
 if TYPE_CHECKING:
     from binaryninja.architecture import Architecture
-    from binaryninja.mediumlevelil import MediumLevelILFunction, MediumLevelILInstruction
+    from binaryninja.mediumlevelil import (
+        MediumLevelILFunction,
+        MediumLevelILInstruction,
+        SSAVariable,
+    )
     from binaryninja.variable import Variable
 
 _MAX_STATEMENT_LIMIT = 1000
 _MAX_DEFINITION_SITES = 10
-_COMPARISON_OPERATORS = {"MLIL_CMP_E": "==", "MLIL_CMP_NE": "!="}
+_EQUALITY_OPERATORS = {
+    MediumLevelILOperation.MLIL_CMP_E: "==",
+    MediumLevelILOperation.MLIL_CMP_NE: "!=",
+    MediumLevelILOperation.MLIL_FCMP_E: "f==",
+    MediumLevelILOperation.MLIL_FCMP_NE: "f!=",
+}
 # Each ordered comparison as (operator, operator with the operands swapped).
 _ORDERED_OPERATORS = {
-    "MLIL_CMP_SLT": ("s<", "s>"),
-    "MLIL_CMP_ULT": ("u<", "u>"),
-    "MLIL_CMP_SLE": ("s<=", "s>="),
-    "MLIL_CMP_ULE": ("u<=", "u>="),
-    "MLIL_CMP_SGE": ("s>=", "s<="),
-    "MLIL_CMP_UGE": ("u>=", "u<="),
-    "MLIL_CMP_SGT": ("s>", "s<"),
-    "MLIL_CMP_UGT": ("u>", "u<"),
+    MediumLevelILOperation.MLIL_CMP_SLT: ("s<", "s>"),
+    MediumLevelILOperation.MLIL_CMP_ULT: ("u<", "u>"),
+    MediumLevelILOperation.MLIL_CMP_SLE: ("s<=", "s>="),
+    MediumLevelILOperation.MLIL_CMP_ULE: ("u<=", "u>="),
+    MediumLevelILOperation.MLIL_CMP_SGE: ("s>=", "s<="),
+    MediumLevelILOperation.MLIL_CMP_UGE: ("u>=", "u<="),
+    MediumLevelILOperation.MLIL_CMP_SGT: ("s>", "s<"),
+    MediumLevelILOperation.MLIL_CMP_UGT: ("u>", "u<"),
+    MediumLevelILOperation.MLIL_FCMP_LT: ("f<", "f>"),
+    MediumLevelILOperation.MLIL_FCMP_LE: ("f<=", "f>="),
+    MediumLevelILOperation.MLIL_FCMP_GE: ("f>=", "f<="),
+    MediumLevelILOperation.MLIL_FCMP_GT: ("f>", "f<"),
 }
-_SIGNED_OPERATORS = ("MLIL_CMP_SLT", "MLIL_CMP_SLE", "MLIL_CMP_SGE", "MLIL_CMP_SGT")
+_SIGNED_OPERATORS = frozenset(
+    {
+        MediumLevelILOperation.MLIL_CMP_SLT,
+        MediumLevelILOperation.MLIL_CMP_SLE,
+        MediumLevelILOperation.MLIL_CMP_SGE,
+        MediumLevelILOperation.MLIL_CMP_SGT,
+    }
+)
+_FLOAT_OPERATORS = frozenset(
+    {
+        MediumLevelILOperation.MLIL_FCMP_E,
+        MediumLevelILOperation.MLIL_FCMP_NE,
+        MediumLevelILOperation.MLIL_FCMP_LT,
+        MediumLevelILOperation.MLIL_FCMP_LE,
+        MediumLevelILOperation.MLIL_FCMP_GE,
+        MediumLevelILOperation.MLIL_FCMP_GT,
+    }
+)
+_FLOAT_FORMATS = {4: "<f", 8: "<d"}
 _OPERATOR_SETS = ("equality", "all")
-_EXTENSIONS = ("MLIL_SX", "MLIL_ZX")
-_CONSTANTS = ("MLIL_CONST", "MLIL_CONST_PTR")
-_DEFINITIONS = ("MLIL_SET_VAR", "MLIL_SET_VAR_SSA")
+_EXTENSIONS = frozenset({MediumLevelILOperation.MLIL_SX, MediumLevelILOperation.MLIL_ZX})
+_NARROWINGS = _EXTENSIONS | {MediumLevelILOperation.MLIL_LOW_PART}
+_LOADS = frozenset({MediumLevelILOperation.MLIL_LOAD, MediumLevelILOperation.MLIL_LOAD_STRUCT})
+_CONSTANT_STATES = frozenset(
+    {RegisterValueType.ConstantValue, RegisterValueType.ConstantPointerValue}
+)
 _TEMP_FLAG_BIT = 0x80000000
 _TEMP_FLAG_INDEX_MASK = 0x7FFFFFFF
 
@@ -96,11 +131,6 @@ class _ParameterCarrier(TypedDict):
     text: str
 
 
-def _operation(instruction: Any) -> str:
-    name = getattr(instruction.operation, "name", None)
-    return name if isinstance(name, str) else str(instruction.operation)
-
-
 def _definitions_by_instruction(
     target_mlil: MediumLevelILFunction,
 ) -> dict[int, list[Variable]]:
@@ -123,61 +153,63 @@ def _defined_variables(
     ]
 
 
-def _strip_extension(expression: Any) -> Any:
-    while _operation(expression) in _EXTENSIONS:
+def _strip(expression: Any, operations: frozenset[MediumLevelILOperation]) -> Any:
+    while expression.operation in operations:
         expression = expression.src
     return expression
 
 
-def _constant_bits(expression: Any) -> tuple[int, int] | None:
-    """A constant as (value masked to its width, width in bits), or None."""
-    if _operation(expression) not in _CONSTANTS:
-        return None
-    value, width = int(expression.constant), 8 * int(expression.size)
-    if width == 0:
-        return value, 0
-    return value & ((1 << width) - 1), width
-
-
-def _as_signed(value: int, width: int) -> int:
-    if width == 0 or not value >> (width - 1):
+def _unsigned_at(value: int, size: int) -> int:
+    if size == 0:
         return value
-    return value - (1 << width)
+    return value & ((1 << (8 * size)) - 1)
 
 
-def _extended_constant(expression: Any) -> tuple[int, int] | None:
-    """The value an expression computes from a constant through zx/sx, as (value, width)."""
-    operation = _operation(expression)
-    if operation not in _EXTENSIONS:
-        return _constant_bits(expression)
-    inner = _extended_constant(expression.src)
-    if inner is None:
+def _constant(expression: Any) -> tuple[int, int] | None:
+    """The constant the core states for an expression as (value at its width, size), or None."""
+    value = expression.value
+    if value.type not in _CONSTANT_STATES:
         return None
-    value, inner_width = inner
-    if operation == "MLIL_SX":
-        value = _as_signed(value, inner_width)
-    width = 8 * int(expression.size)
-    if width == 0:
-        return value, 0
-    return value & ((1 << width) - 1), width
+    size = int(expression.size)
+    return _unsigned_at(int(value.value), size), size
+
+
+def _as_signed(value: int, size: int) -> int:
+    if size == 0:
+        return value
+    return int.from_bytes(value.to_bytes(size, "little"), "little", signed=True)
+
+
+def _float_text(value: int, size: int) -> str | None:
+    layout = _FLOAT_FORMATS.get(size)
+    if layout is None:
+        return None
+    return repr(struct.unpack(layout, value.to_bytes(size, "little"))[0])
 
 
 def _describe_load(expression: Any) -> dict[str, object] | None:
     """Describe a memory load as its base variable plus a constant offset, or None."""
-    expression = _strip_extension(expression)
-    if _operation(expression) != "MLIL_LOAD":
+    expression = _strip(expression, _NARROWINGS)
+    operation = expression.operation
+    if operation not in _LOADS:
         return None
-    absolute = _extended_constant(expression.src)
+    field = expression.offset if operation == MediumLevelILOperation.MLIL_LOAD_STRUCT else 0
+    absolute = _constant(expression.src)
     if absolute is not None:
-        return {"kind": "load", "base": None, "offset": hex(absolute[0])}
-    address = _strip_extension(expression.src)
-    base, offset = address, 0
-    if _operation(address) == "MLIL_ADD":
-        base = _strip_extension(address.left)
-        displacement = _extended_constant(address.right)
-        offset = None if displacement is None else _as_signed(*displacement)
-    if _operation(base) == "MLIL_VAR" and offset is not None:
-        return {"kind": "load", "base": _truncate(base.src.name), "offset": hex(offset)}
+        address, size = absolute
+        return {"kind": "load", "base": None, "offset": hex(_unsigned_at(address + field, size))}
+    address = _strip(expression.src, _EXTENSIONS)
+    base, displacement = address, 0
+    if address.operation == MediumLevelILOperation.MLIL_ADD:
+        base = _strip(address.left, _EXTENSIONS)
+        stated = _constant(address.right)
+        displacement = None if stated is None else _as_signed(*stated)
+    if base.operation == MediumLevelILOperation.MLIL_VAR and displacement is not None:
+        return {
+            "kind": "load",
+            "base": _truncate(base.src.name),
+            "offset": hex(displacement + field),
+        }
     return {"kind": "load", "base": None, "offset": None, "text": _truncate(str(address))}
 
 
@@ -186,7 +218,7 @@ def _definition_load(
 ) -> dict[str, object] | None:
     """The load behind a variable when its only definition is a memory load, else None."""
     definitions: list[Any] = target_mlil.get_var_definitions(variable)
-    if len(definitions) != 1 or _operation(definitions[0]) not in _DEFINITIONS:
+    if len(definitions) != 1 or definitions[0].operation != MediumLevelILOperation.MLIL_SET_VAR:
         return None
     load = _describe_load(definitions[0].src)
     if load is None:
@@ -196,11 +228,11 @@ def _definition_load(
 
 def _describe_subject(target_mlil: MediumLevelILFunction, expression: Any) -> dict[str, object]:
     """Describe the non-constant side of a comparison as structured data."""
-    expression = _strip_extension(expression)
+    expression = _strip(expression, _NARROWINGS)
     load = _describe_load(expression)
     if load is not None:
         return load
-    if _operation(expression) == "MLIL_VAR":
+    if expression.operation == MediumLevelILOperation.MLIL_VAR:
         described: dict[str, object] = {
             "kind": "variable",
             "variable": _truncate(expression.src.name),
@@ -209,12 +241,20 @@ def _describe_subject(target_mlil: MediumLevelILFunction, expression: Any) -> di
         if definition is not None:
             described["definition"] = definition
         return described
+    if expression.operation == MediumLevelILOperation.MLIL_IMPORT:
+        return {
+            "kind": "import",
+            "address": hex(expression.constant),
+            "text": _truncate(str(expression)),
+        }
     return {"kind": "expression", "text": _truncate(str(expression))}
 
 
-def _comparison_operators(operation: str, include_ordered: bool) -> tuple[str, str] | None:
+def _comparison_operators(
+    operation: MediumLevelILOperation, include_ordered: bool
+) -> tuple[str, str] | None:
     """The operator as (subject on the left, constant on the left), or None if not reported."""
-    equality = _COMPARISON_OPERATORS.get(operation)
+    equality = _EQUALITY_OPERATORS.get(operation)
     if equality is not None:
         return equality, equality
     if not include_ordered:
@@ -226,21 +266,21 @@ def _iter_branch_constraints(
     target_mlil: MediumLevelILFunction, include_ordered: bool
 ) -> list[dict[str, object]]:
     """Every conditional that compares an expression against a constant, in address order."""
-    rows: list[dict[str, object]] = []
+    located: list[tuple[int, dict[str, object]]] = []
     for instruction in target_mlil.instructions:
-        if _operation(instruction) != "MLIL_IF":
+        if instruction.operation != MediumLevelILOperation.MLIL_IF:
             continue
         condition = instruction.condition
-        operation = _operation(condition)
+        operation = condition.operation
         operators = _comparison_operators(operation, include_ordered)
         if operators is None:
             continue
-        left = _extended_constant(condition.left)
-        right = _extended_constant(condition.right)
+        left = _constant(condition.left)
+        right = _constant(condition.right)
         if left is not None and right is None:
-            (constant, width), subject, operator = left, condition.right, operators[1]
+            (constant, size), subject, operator = left, condition.right, operators[1]
         elif right is not None and left is None:
-            (constant, width), subject, operator = right, condition.left, operators[0]
+            (constant, size), subject, operator = right, condition.left, operators[0]
         else:
             # Both sides constant folds away, and neither constant is a comparison.
             continue
@@ -253,10 +293,12 @@ def _iter_branch_constraints(
             "subject_text": _truncate(str(subject)),
         }
         if operation in _SIGNED_OPERATORS:
-            row["signed_constant"] = hex(_as_signed(constant, width))
-        rows.append(row)
-    rows.sort(key=lambda row: int(str(row["address"]), 16))
-    return rows
+            row["signed_constant"] = hex(_as_signed(constant, size))
+        if operation in _FLOAT_OPERATORS:
+            row["float_constant"] = _float_text(constant, size)
+        located.append((instruction.address, row))
+    located.sort(key=lambda entry: entry[0])
+    return [row for _, row in located]
 
 
 @mcp.tool(read_only=True)
@@ -381,7 +423,9 @@ def _variable_report(
 ) -> _VariableReport:
     uses = sorted(target_mlil.get_var_uses(variable), key=lambda use: use.address)
     rows = [
-        _VariableUse(address=hex(use.address), operation=_operation(use), text=_truncate(str(use)))
+        _VariableUse(
+            address=hex(use.address), operation=use.operation.name, text=_truncate(str(use))
+        )
         for use in uses
     ]
     definition_addresses = sorted(
@@ -470,31 +514,45 @@ def rex_mlil_uses(
     }
 
 
-def _is_copy_of_parameter(instruction: Any, parameter: str) -> bool:
-    if _operation(instruction) not in _DEFINITIONS:
+def _copies_carried_value(use: Any, carried: set[SSAVariable]) -> bool:
+    """Whether a use of a carried variable copies its whole value into the use's dest."""
+    if use.operation == MediumLevelILOperation.MLIL_VAR_PHI:
+        return all(source in carried for source in use.src)
+    if use.operation != MediumLevelILOperation.MLIL_SET_VAR_SSA:
         return False
-    source = _strip_extension(instruction.src)
-    if _operation(source) != "MLIL_VAR":
-        return False
-    return bool(source.src.name == parameter)
+    source = _strip(use.src, _EXTENSIONS)
+    return bool(source.operation == MediumLevelILOperation.MLIL_VAR_SSA)
 
 
 def _parameter_carriers(
-    target_mlil: MediumLevelILFunction, parameter: str
+    ssa: MediumLevelILFunction, parameters: list[Variable]
 ) -> list[_ParameterCarrier]:
-    """Definitions whose value is a plain copy of a variable named ``parameter``."""
-    copies = [
-        instruction
-        for instruction in target_mlil.instructions
-        if _is_copy_of_parameter(instruction, parameter)
+    """Copies of a parameter's entry value, followed through SSA copies and agreeing phis."""
+    entries = [
+        version
+        for version in ssa.ssa_vars
+        if version.var in parameters and ssa.get_ssa_var_definition(version) is None
     ]
+    carried = set(entries)
+    worklist = list(entries)
+    copies: list[Any] = []
+    for current in worklist:
+        uses: list[Any] = ssa.get_ssa_var_uses(current)
+        for use in uses:
+            if not _copies_carried_value(use, carried) or use.dest in carried:
+                continue
+            carried.add(use.dest)
+            worklist.append(use.dest)
+            if use.operation == MediumLevelILOperation.MLIL_SET_VAR_SSA:
+                copies.append(use)
+    copies.sort(key=lambda copy: (copy.address, copy.instr_index))
     return [
         _ParameterCarrier(
-            variable=_truncate(instruction.dest.name),
-            address=hex(instruction.address),
-            text=_truncate(str(instruction)),
+            variable=_truncate(copy.dest.var.name),
+            address=hex(copy.address),
+            text=_truncate(str(copy.non_ssa_form)),
         )
-        for instruction in sorted(copies, key=lambda instruction: instruction.address)
+        for copy in copies
     ]
 
 
@@ -518,6 +576,9 @@ def rex_parameter_variables(
     matches = [variable for variable in target.vars if variable.name == parameter]
     if not matches:
         raise _unknown_variable_error(target, parameter)
+    ssa = target_mlil.ssa_form
+    if ssa is None:
+        raise _missing_il_error(target, "MediumLevelIL", "no_mlil")
     definition_addresses: list[int] = []
     for variable in matches:
         for definition in target_mlil.get_var_definitions(variable):
@@ -527,5 +588,5 @@ def rex_parameter_variables(
         "parameter": _truncate(parameter),
         "storage": [_variable_storage(target.arch, variable) for variable in matches],
         "definitions": [hex(address) for address in sorted(definition_addresses)],
-        "carriers": _parameter_carriers(target_mlil, parameter),
+        "carriers": _parameter_carriers(ssa, matches),
     }
