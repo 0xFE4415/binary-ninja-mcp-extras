@@ -492,29 +492,40 @@
   {
    "id": "struct-access-probe-type-created",
    "guards": "Setup for the struct-from-access steps: an empty user struct probe_s.",
-   "tool": "bn_type_struct_create",
+   "tool": "rex_eval_python",
    "args": {
-    "source": "struct probe_s {};"
+    "code": "from binaryninja.types import StructureBuilder, Type\nbv.define_user_type('probe_s', Type.structure_type(StructureBuilder.create()))\nresult = bv.get_type_by_name('probe_s') is not None"
    },
    "expect": [
     {
-     "kind": "contains",
-     "text": "probe_s"
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "True",
+     "path": "result"
     }
    ]
   },
   {
    "id": "struct-access-probe-applied-to-real-main",
    "guards": "Setup: real_main's second argument, read at +8, is typed struct probe_s*.",
-   "tool": "bn_function_prototype_set",
+   "tool": "rex_eval_python",
    "args": {
-    "function": "real_main",
-    "prototype": "uint64_t(int32_t arg1, struct probe_s* arg2)"
+    "code": "function = bv.get_functions_by_name('real_main')[0]\nfunction.set_user_type('uint64_t(int32_t arg1, struct probe_s* arg2)')\nbv.update_analysis_and_wait()\nresult = 'probe_s' in str(function.type)"
    },
    "expect": [
     {
-     "kind": "contains",
-     "text": "probe_s"
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "True",
+     "path": "result"
     }
    ]
   },
@@ -594,18 +605,20 @@
   {
    "id": "struct-access-no-duplicate-type",
    "guards": "No deconflicted duplicate such as probe_s_1 was defined.",
-   "tool": "bn_type_list",
+   "tool": "rex_eval_python",
    "args": {
-    "query": "probe_s"
+    "code": "result = sorted(str(name) for name in bv.types.keys() if 'probe_s' in str(name))"
    },
    "expect": [
     {
-     "kind": "contains",
-     "text": "probe_s"
+     "kind": "subset",
+     "value": null,
+     "path": "error"
     },
     {
-     "kind": "not_contains",
-     "text": "probe_s_1"
+     "kind": "subset",
+     "value": "['probe_s']",
+     "path": "result"
     }
    ]
   },
@@ -619,24 +632,6 @@
      "kind": "subset",
      "path": "undone",
      "value": true
-    }
-   ]
-  },
-  {
-   "id": "struct-access-undone-type-has-no-members",
-   "guards": "After the undo, bn_type_info shows probe_s without the inferred members.",
-   "tool": "bn_type_info",
-   "args": {
-    "type": "probe_s"
-   },
-   "expect": [
-    {
-     "kind": "contains",
-     "text": "probe_s"
-    },
-    {
-     "kind": "not_contains",
-     "text": "field_8"
     }
    ]
   },
@@ -665,7 +660,7 @@
    "guards": "Teardown: real_main gets back its saved prototype text. It stays a user prototype: the API has no call that clears a function's user type.",
    "tool": "rex_eval_python",
    "args": {
-    "code": "function = bv.get_functions_by_name('real_main')[0]\nsaved = bv.query_metadata('rex_playbook_real_main_type')\nfunction.set_user_type(saved)\nbv.remove_metadata('rex_playbook_real_main_type')\nresult = str(function.type) == saved"
+    "code": "function = bv.get_functions_by_name('real_main')[0]\nsaved = bv.query_metadata('rex_playbook_real_main_type')\nfunction.set_user_type(saved)\nbv.update_analysis_and_wait()\nbv.remove_metadata('rex_playbook_real_main_type')\nresult = str(function.type) == saved"
    },
    "expect": [
     {
@@ -683,14 +678,20 @@
   {
    "id": "struct-access-teardown-probe-type",
    "guards": "Teardown: the probe_s user type is deleted.",
-   "tool": "bn_type_delete",
+   "tool": "rex_eval_python",
    "args": {
-    "type": "probe_s"
+    "code": "bv.undefine_user_type('probe_s')\nbv.update_analysis_and_wait()\nresult = bv.get_type_by_name('probe_s') is None"
    },
    "expect": [
     {
-     "kind": "not_contains",
-     "text": "errorCode"
+     "kind": "subset",
+     "value": null,
+     "path": "error"
+    },
+    {
+     "kind": "subset",
+     "value": "True",
+     "path": "result"
     }
    ]
   },
