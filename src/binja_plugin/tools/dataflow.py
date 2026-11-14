@@ -534,16 +534,15 @@ def _parameter_carriers(
         if version.var in parameters and ssa.get_ssa_var_definition(version) is None
     ]
     carried = set(entries)
-    pending = list(entries)
+    worklist = list(entries)
     copies: list[Any] = []
-    while pending:
-        current = pending.pop()
+    for current in worklist:
         uses: list[Any] = ssa.get_ssa_var_uses(current)
         for use in uses:
             if not _copies_carried_value(use, carried) or use.dest in carried:
                 continue
             carried.add(use.dest)
-            pending.append(use.dest)
+            worklist.append(use.dest)
             if use.operation == MediumLevelILOperation.MLIL_SET_VAR_SSA:
                 copies.append(use)
     copies.sort(key=lambda copy: (copy.address, copy.instr_index))
