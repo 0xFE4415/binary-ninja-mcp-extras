@@ -11,6 +11,7 @@ from helpers import (
     get_tool,
     plain_gap_message,
 )
+from helpers_invoke import invoke_tool
 from helpers_view import (
     FakeBinaryView,
     FakeFunction,
@@ -436,7 +437,13 @@ def test_call_paths_reports_truncation_and_caps_depth() -> None:
     deep = paths(_call(chain_view), chain_start, chain_end, max_depth=tools._MAX_CALL_PATH_DEPTH)
     assert deep["reachable"] is False
     with pytest.raises(FakeToolError) as exc:
-        paths(_call(chain_view), chain_start, chain_end, max_depth=tools._MAX_CALL_PATH_DEPTH + 1)
+        invoke_tool(
+            paths,
+            _call(chain_view),
+            chain_start,
+            chain_end,
+            max_depth=tools._MAX_CALL_PATH_DEPTH + 1,
+        )
     assert exc.value.code == "invalid_params"
     assert exc.value.message == (
         f"Invalid integer parameter 'max_depth': Must be at most {tools._MAX_CALL_PATH_DEPTH}"
@@ -571,7 +578,7 @@ def test_call_paths_rejects_out_of_range_bounds() -> None:
         ),
     ):
         with pytest.raises(FakeToolError) as exc:
-            paths(_call(view), 0x1100, 0x1100, **kwargs)
+            invoke_tool(paths, _call(view), 0x1100, 0x1100, **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
     # Exactly at both caps (and at the minimum of 1) the search still runs.

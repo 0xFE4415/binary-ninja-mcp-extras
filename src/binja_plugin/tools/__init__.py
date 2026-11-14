@@ -392,6 +392,25 @@ def _resolve_address_batch(
     return [function for _, function in pairs]
 
 
+def _readable_ranges(bv: BinaryView) -> list[tuple[int, int]]:
+    """Ascending readable address ranges, touching or overlapping segments merged."""
+    segments = list(bv.segments)
+    if not segments:
+        return [(int(bv.start), int(bv.end))]
+    spans = sorted(
+        (int(segment.start), int(segment.start) + int(segment.length))
+        for segment in segments
+        if segment.readable
+    )
+    ranges: list[tuple[int, int]] = []
+    for start, end in spans:
+        if ranges and start <= ranges[-1][1]:
+            ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
+            continue
+        ranges.append((start, end))
+    return ranges
+
+
 def _iter_pattern_matches(
     bv: BinaryView,
     matcher: re.Pattern[bytes],
@@ -399,11 +418,7 @@ def _iter_pattern_matches(
     bounds: tuple[int, int] | None = None,
 ) -> Iterator[int]:
     """Yield absolute match addresses, optionally clipped to a section range."""
-    for segment in bv.segments:
-        # Skipping an unreadable segment saves the whole walk, not just the reads.
-        if not segment.readable:
-            continue
-        start, end = int(segment.start), segment.start + segment.length
+    for start, end in _readable_ranges(bv):
         if bounds is not None:
             start = max(start, bounds[0])
             end = min(end, bounds[1])
@@ -433,7 +448,7 @@ def _render_function_disassembly(function: Function) -> list[tuple[int, str]]:
     for block in function.basic_blocks:
         for line in block.get_disassembly_text():
             if line.address is not None:
-                lines.append((line.address, "".join(str(token) for token in line.tokens)))
+                lines.append((line.address, str(line)))
     return sorted(lines, key=lambda entry: entry[0])
 
 
@@ -446,13 +461,6 @@ def _disasm_window(
     start = max(0, anchor - before)
     end = min(len(lines), anchor + 1 + after)
     return start, end
-
-
-def _validate_disasm_window(before: int, after: int) -> tuple[int, int]:
-    """Range-check the shared before/after window parameters of the disasm tools."""
-    before = _validate_range("before", before, 0, _MAX_DISASM_CONTEXT)
-    after = _validate_range("after", after, 0, _MAX_DISASM_CONTEXT)
-    return before, after
 
 
 def _validate_export_path(filename: str) -> None:

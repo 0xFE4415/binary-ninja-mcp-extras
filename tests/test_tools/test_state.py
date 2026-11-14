@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from helpers import FakeToolError, _call, get_tool
+from helpers_invoke import invoke_tool
 from helpers_view import FakeBinaryView, FakeFileMetadata, undo_entry
 
 from binja_plugin import tools
@@ -190,11 +191,11 @@ def test_tag_list_rejects_out_of_range_limit() -> None:
     # A negative limit is invalid on its face: rejected, never normalized to 0.
     for limit in (-1, -100):
         with pytest.raises(FakeToolError) as exc:
-            tag_list(_call(view), limit=limit)
+            invoke_tool(tag_list, _call(view), limit=limit)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == "Invalid integer parameter 'limit': Must be at least 0"
     with pytest.raises(FakeToolError) as exc:
-        tag_list(_call(view), limit=tools._MAX_LIMIT + 1)
+        invoke_tool(tag_list, _call(view), limit=tools._MAX_LIMIT + 1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == (
         f"Invalid integer parameter 'limit': Must be at most {tools._MAX_LIMIT}"
@@ -237,7 +238,7 @@ def test_tag_list_paginates_with_offset() -> None:
     }
     # A negative offset is invalid on its face: rejected, never normalized to 0.
     with pytest.raises(FakeToolError) as exc:
-        tag_list(_call(view), limit=2, offset=-1)
+        invoke_tool(tag_list, _call(view), limit=2, offset=-1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "Invalid integer parameter 'offset': Must be at least 0"
 
@@ -532,7 +533,7 @@ def test_kv_list_truncates_long_keys_and_rejects_bad_input() -> None:
     assert kv_list(_call(view))["keys"][0]["key"].endswith("chars truncated]")
     for kwargs in ({"limit": -1}, {"limit": tools._MAX_LIMIT + 1}, {"offset": -1}):
         with pytest.raises(FakeToolError) as exc:
-            kv_list(_call(view), **kwargs)
+            invoke_tool(kv_list, _call(view), **kwargs)
         assert exc.value.code == "invalid_params"
     with pytest.raises(FakeToolError) as exc:
         kv_list(_call(view), prefix="a\x00b")

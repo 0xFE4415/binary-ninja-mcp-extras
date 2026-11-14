@@ -2,9 +2,37 @@ from enum import IntEnum
 
 
 class MediumLevelILOperation(IntEnum):
-    MLIL_SET_VAR = 0
-    MLIL_CONST = 15
-    MLIL_CONST_PTR = 16
+    MLIL_SET_VAR = 1
+    MLIL_LOAD = 6
+    MLIL_LOAD_STRUCT = 7
+    MLIL_VAR = 10
+    MLIL_CONST = 17
+    MLIL_CONST_PTR = 19
+    MLIL_IMPORT = 22
+    MLIL_ADD = 23
+    MLIL_SX = 50
+    MLIL_ZX = 51
+    MLIL_LOW_PART = 52
+    MLIL_IF = 66
+    MLIL_CMP_E = 68
+    MLIL_CMP_NE = 69
+    MLIL_CMP_SLT = 70
+    MLIL_CMP_ULT = 71
+    MLIL_CMP_SLE = 72
+    MLIL_CMP_ULE = 73
+    MLIL_CMP_SGE = 74
+    MLIL_CMP_UGE = 75
+    MLIL_CMP_SGT = 76
+    MLIL_CMP_UGT = 77
+    MLIL_FCMP_E = 106
+    MLIL_FCMP_NE = 107
+    MLIL_FCMP_LT = 108
+    MLIL_FCMP_LE = 109
+    MLIL_FCMP_GE = 110
+    MLIL_FCMP_GT = 111
+    MLIL_SET_VAR_SSA = 114
+    MLIL_VAR_SSA = 119
+    MLIL_VAR_PHI = 146
 
 
 class LowLevelILOperation(IntEnum):

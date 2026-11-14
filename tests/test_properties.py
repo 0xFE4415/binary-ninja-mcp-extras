@@ -16,6 +16,7 @@ from helpers import (
     FakeToolError,
     get_tool,
 )
+from helpers_invoke import invoke_tool
 from helpers_view import (
     FakeBinaryView,
     FakeDerivedString,
@@ -166,7 +167,7 @@ def test_string_search_rejects_out_of_range_pagination(
     assume(not (0 <= limit <= tools._MAX_LIMIT and offset >= 0))
     call, search = _string_view(strings)
     with pytest.raises(FakeToolError) as exc:
-        search(call, pattern="a", limit=limit, offset=offset)
+        invoke_tool(search, call, pattern="a", limit=limit, offset=offset)
     assert exc.value.code == "invalid_params"
     if limit < 0:
         assert exc.value.message == "Invalid integer parameter 'limit': Must be at least 0"
@@ -241,7 +242,7 @@ def test_data_find_rejects_out_of_range_pagination(blob: bytes, limit: int, offs
     )
     _, find = get_tool("rex_data_find")
     with pytest.raises(FakeToolError) as exc:
-        find(FakeToolCall(view), pattern="00", limit=limit, offset=offset)
+        invoke_tool(find, FakeToolCall(view), pattern="00", limit=limit, offset=offset)
     assert exc.value.code == "invalid_params"
     if limit < 0:
         assert exc.value.message == "Invalid integer parameter 'limit': Must be at least 0"
@@ -343,7 +344,7 @@ def test_tag_list_rejects_out_of_range_limits(tags: list[tuple[int, str]], limit
         view.add_tag(address, "Finding", data)
     _, tag_list = get_tool("rex_tag_list")
     with pytest.raises(FakeToolError) as exc:
-        tag_list(FakeToolCall(view), limit=limit)
+        invoke_tool(tag_list, FakeToolCall(view), limit=limit)
     assert exc.value.code == "invalid_params"
     if limit < 0:
         assert exc.value.message == "Invalid integer parameter 'limit': Must be at least 0"
@@ -485,7 +486,8 @@ def test_call_paths_rejects_out_of_range_bounds(max_depth: int, max_paths: int) 
     functions, _ = _graph([])
     _, paths_tool = get_tool("rex_call_paths")
     with pytest.raises(FakeToolError) as exc:
-        paths_tool(
+        invoke_tool(
+            paths_tool,
             FakeToolCall(FakeBinaryView(functions=functions)),
             _STARTS[0] + 4,
             _STARTS[0] + 4,

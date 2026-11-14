@@ -19,7 +19,6 @@ from binja_plugin.tools import (
     _resolve_export_path,
     _ResolvedFunction,
     _show_nul,
-    _validate_disasm_window,
     _validate_export_path,
     _validate_range,
     _write_export_file,
@@ -90,8 +89,6 @@ def rex_export_disasm(
     :param max_lines: Maximum lines to export.
     """
     bv = call.binary_view
-    before, after = _validate_disasm_window(before, after)
-    max_lines = _validate_range("max_lines", max_lines, 1, _MAX_EXPORT_DISASM_LINES)
     _validate_export_path(filename)
     _reject_unusable_export_target(filename)
     resolution = _require_analyzed_function(bv, address)
@@ -133,8 +130,6 @@ def rex_export_symbols(
     :param format: Output format, "csv" or "json".
     """
     bv = call.binary_view
-    limit = _validate_range("limit", limit, 0, _MAX_EXPORT_SYMBOLS)
-    offset = _validate_range("offset", offset, 0)
     # The core rejects negatives first; this guards direct handler calls.
     _validate_range("start", start, 0)
     if start >= end:

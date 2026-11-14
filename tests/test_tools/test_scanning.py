@@ -8,6 +8,7 @@ from helpers import (
     get_tool,
     plain_gap_message,
 )
+from helpers_invoke import invoke_tool
 from helpers_view import (
     FakeArchitecture,
     FakeBinaryView,
@@ -168,7 +169,7 @@ def test_data_find_caps_limit() -> None:
     assert result["truncated"] is True
     # Past the cap the request is rejected, not silently normalized.
     with pytest.raises(FakeToolError) as exc:
-        find(_call(view), pattern="90", limit=tools._MAX_LIMIT + 1)
+        invoke_tool(find, _call(view), pattern="90", limit=tools._MAX_LIMIT + 1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == (
         f"Invalid integer parameter 'limit': Must be at most {tools._MAX_LIMIT}"
@@ -622,11 +623,11 @@ def test_constant_find_rejects_out_of_range_limit() -> None:
     view = _view_with_functions()
     _, find = get_tool("rex_constant_find")
     with pytest.raises(FakeToolError) as exc:
-        find(_call(view), value=1, limit=-1)
+        invoke_tool(find, _call(view), value=1, limit=-1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "Invalid integer parameter 'limit': Must be at least 0"
     with pytest.raises(FakeToolError) as exc:
-        find(_call(view), value=1, limit=tools._MAX_LIMIT + 1)
+        invoke_tool(find, _call(view), value=1, limit=tools._MAX_LIMIT + 1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == (
         f"Invalid integer parameter 'limit': Must be at most {tools._MAX_LIMIT}"
@@ -658,7 +659,7 @@ def test_data_find_rejects_negative_offset() -> None:
     )
     _, find = get_tool("rex_data_find")
     with pytest.raises(FakeToolError) as exc:
-        find(_call(view), pattern="eb0e", limit=1, offset=-1)
+        invoke_tool(find, _call(view), pattern="eb0e", limit=1, offset=-1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "Invalid integer parameter 'offset': Must be at least 0"
     # Nothing ran: the rejection happens before any segment is read.
@@ -669,11 +670,11 @@ def test_data_find_rejects_out_of_range_limit() -> None:
     view = FakeBinaryView(segments=[FakeSegment(0x1000, 8)], memory={0x1000: b"\x90" * 8})
     _, find = get_tool("rex_data_find")
     with pytest.raises(FakeToolError) as exc:
-        find(_call(view), pattern="90", limit=-1)
+        invoke_tool(find, _call(view), pattern="90", limit=-1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "Invalid integer parameter 'limit': Must be at least 0"
     with pytest.raises(FakeToolError) as exc:
-        find(_call(view), pattern="90", limit=tools._MAX_LIMIT + 1)
+        invoke_tool(find, _call(view), pattern="90", limit=tools._MAX_LIMIT + 1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == (
         f"Invalid integer parameter 'limit': Must be at most {tools._MAX_LIMIT}"
@@ -825,7 +826,7 @@ def test_find_functions_by_pattern_limits_offsets_and_truncates() -> None:
         ({"offset": -1}, "Invalid integer parameter 'offset': Must be at least 0"),
     ):
         with pytest.raises(FakeToolError) as exc:
-            find(_call(view), "eb0e", **kwargs)
+            invoke_tool(find, _call(view), "eb0e", **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
 
@@ -1034,3 +1035,79 @@ def test_find_functions_by_pattern_stops_scanning_past_the_window(
     # The second function's match proves truncation; no later chunk is read or looked up.
     assert view.lookup_addresses == [0x1000, 0x1010]
     assert view.read_addresses == [0x1000, 0x1010]
+
+
+def test_data_find_matches_across_a_seam_between_adjacent_readable_segments() -> None:
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, 4), FakeSegment(0x1004, 4)],
+        memory={0x1000: b"\x00\x00\x00\x90\x91\x00\x00\x00"},
+    )
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="90 91")["matches"] == ["0x1003"]
+
+
+def test_data_find_matches_across_a_seam_that_is_also_a_chunk_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tools, "_READ_CHUNK", 4)
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, 6), FakeSegment(0x1006, 6)],
+        memory={0x1000: b"\x00" * 5 + b"\x90\x91\x92" + b"\x00" * 4},
+    )
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="90 91 92")["matches"] == ["0x1005"]
+
+
+def test_find_functions_by_pattern_sees_a_match_across_a_seam() -> None:
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, 4), FakeSegment(0x1004, 4)],
+        memory={0x1000: b"\x00\x00\x00\x90\x91\x00\x00\x00"},
+        functions=[FakeFunction("straddler", 0x1000, 0x1008)],
+    )
+    _, find = get_tool("rex_find_functions_by_pattern")
+    assert find(_call(view), pattern="90 91")["functions"][0]["addresses"] == ["0x1003"]
+
+
+def test_data_find_does_not_bridge_an_unreadable_neighbour() -> None:
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, 4), FakeSegment(0x1004, 4, readable=False)],
+        memory={0x1000: b"\x00\x00\x00\x90\x91\x00\x00\x00"},
+    )
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="90 91")["total"] == 0
+
+
+def test_data_find_does_not_bridge_a_gap_between_segments() -> None:
+    view = FakeBinaryView(
+        segments=[FakeSegment(0x1000, 4), FakeSegment(0x1005, 3)],
+        memory={0x1000: b"\x00\x00\x00\x90\x91\x00\x00\x00"},
+    )
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="90 91")["total"] == 0
+
+
+def test_data_find_scans_a_view_without_segments_across_its_whole_range() -> None:
+    view = FakeBinaryView(start=0, end=8, memory={0: b"\x7fELF\x00\x00\x00\x00"})
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="7f 45 4c 46")["matches"] == ["0x0"]
+    assert find(_call(view), pattern="00 00")["matches"] == ["0x4", "0x5", "0x6"]
+
+
+def test_data_find_finds_nothing_in_an_empty_view_without_segments() -> None:
+    view = FakeBinaryView(start=0, end=0)
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="00")["total"] == 0
+
+
+def test_data_find_keeps_scanning_after_a_merge_and_ignores_a_contained_segment() -> None:
+    view = FakeBinaryView(
+        segments=[
+            FakeSegment(0x1000, 8),
+            FakeSegment(0x1002, 2),
+            FakeSegment(0x1008, 4),
+            FakeSegment(0x3000, 4),
+        ],
+        memory={0x1000: b"\x00" * 7 + b"\x90\x91" + b"\x00" * 3, 0x3000: b"\x90\x91\x00\x00"},
+    )
+    _, find = get_tool("rex_data_find")
+    assert find(_call(view), pattern="90 91")["matches"] == ["0x1007", "0x3000"]

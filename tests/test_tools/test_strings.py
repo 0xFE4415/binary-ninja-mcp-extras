@@ -8,6 +8,7 @@ from helpers import (
     _call,
     get_tool,
 )
+from helpers_invoke import invoke_tool
 from helpers_view import (
     FakeBinaryView,
     FakeDerivedString,
@@ -65,7 +66,7 @@ def test_string_search_caps_limit() -> None:
     assert result["truncated"] is True
     # Past the cap the request is rejected, not silently normalized.
     with pytest.raises(FakeToolError) as exc:
-        search(_call(view), limit=tools._MAX_LIMIT + 1)
+        invoke_tool(search, _call(view), limit=tools._MAX_LIMIT + 1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == (
         f"Invalid integer parameter 'limit': Must be at most {tools._MAX_LIMIT}"
@@ -118,11 +119,11 @@ def test_string_search_errors() -> None:
     assert exc.value.code == "section_not_found"
     assert "chars truncated]" in exc.value.message
     with pytest.raises(FakeToolError) as exc:
-        search(_call(view), limit=-1)
+        invoke_tool(search, _call(view), limit=-1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "Invalid integer parameter 'limit': Must be at least 0"
     with pytest.raises(FakeToolError) as exc:
-        search(_call(view), limit=tools._MAX_LIMIT + 1)
+        invoke_tool(search, _call(view), limit=tools._MAX_LIMIT + 1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == (
         f"Invalid integer parameter 'limit': Must be at most {tools._MAX_LIMIT}"
@@ -198,7 +199,7 @@ def test_string_search_rejects_negative_offset() -> None:
     )
     _, search = get_tool("rex_string_search")
     with pytest.raises(FakeToolError) as exc:
-        search(_call(view), pattern="alpha", limit=1, offset=-1)
+        invoke_tool(search, _call(view), pattern="alpha", limit=1, offset=-1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "Invalid integer parameter 'offset': Must be at least 0"
     # Nothing ran: the rejection happens before the scan.
@@ -211,11 +212,11 @@ def test_string_read_at_rejects_out_of_range_max_chars() -> None:
     # max_chars below 1 is invalid on its face: rejected, never clamped to 1.
     for max_chars in (-5, 0):
         with pytest.raises(FakeToolError) as exc:
-            read(_call(view), 0x1100, max_chars=max_chars)
+            invoke_tool(read, _call(view), 0x1100, max_chars=max_chars)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == "Invalid integer parameter 'max_chars': Must be at least 1"
     with pytest.raises(FakeToolError) as exc:
-        read(_call(view), 0x1100, max_chars=strings._MAX_STRING_READ_CHARS + 1)
+        invoke_tool(read, _call(view), 0x1100, max_chars=strings._MAX_STRING_READ_CHARS + 1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == (
         f"Invalid integer parameter 'max_chars': Must be at most {strings._MAX_STRING_READ_CHARS}"
@@ -403,7 +404,7 @@ def test_string_refs_rejects_out_of_range_windows() -> None:
         ({"offset": -1}, "Invalid integer parameter 'offset': Must be at least 0"),
     ):
         with pytest.raises(FakeToolError) as exc:
-            refs(_call(view), **kwargs)
+            invoke_tool(refs, _call(view), **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
     assert refs(_call(view), limit=tools._MAX_LIMIT)["total"] == 1

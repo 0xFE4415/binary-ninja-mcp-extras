@@ -11,7 +11,7 @@ from binja_plugin.hexpattern import (
 
 # Must equal SEPARATOR_CODE_POINTS in native/src/hexpattern.rs and the set in CONTRACTS.md.
 PYTHON_SEPARATORS = [
-    *(0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x85, 0xA0, 0x1680),
+    *(0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20, 0x85, 0xA0, 0x1680),
     *range(0x2000, 0x200B),
     *(0x2028, 0x2029, 0x202F, 0x205F, 0x3000),
 ]
@@ -26,7 +26,7 @@ def test_separators_are_exactly_the_pinned_set() -> None:
             continue
         accepted.append(code_point)
     assert accepted == PYTHON_SEPARATORS
-    assert len(PYTHON_SEPARATORS) == 29
+    assert len(PYTHON_SEPARATORS) == 25
 
 
 @pytest.mark.parametrize(
@@ -38,7 +38,14 @@ def test_separators_are_exactly_the_pinned_set() -> None:
         ("48 8", "hex pattern must contain whole bytes"),
         ("zz", "invalid hex byte token 'zz'"),
         ("48 8z", "invalid hex byte token '8z'"),
-        ("48 8\nz", "invalid hex byte token '8z'"),
+        ("48 8\nz", "hex pattern must contain whole bytes"),
+        ("9 0", "hex pattern must contain whole bytes"),
+        ("48 9 0", "hex pattern must contain whole bytes"),
+        ("4 8 8b", "hex pattern must contain whole bytes"),
+        ("48\x1c8b", "invalid separator U+001C"),
+        ("48\x1d8b", "invalid separator U+001D"),
+        ("48\x1e8b", "invalid separator U+001E"),
+        ("\x1f", "invalid separator U+001F"),
     ],
 )
 def test_parse_rejects_invalid_patterns(pattern: str, expected_message: str) -> None:

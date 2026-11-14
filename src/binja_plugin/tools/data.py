@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypedDict
 from binaryninja import mcp
 from binaryninja.enums import LowLevelILOperation
 
-from binja_plugin.tools import _MAX_LIMIT, _paginate, _truncate, _validate_range
+from binja_plugin.tools import _MAX_LIMIT, _paginate, _truncate
 
 if TYPE_CHECKING:
     from binaryninja.binaryview import ReferenceSource, Relocation
@@ -113,8 +113,6 @@ def rex_xrefs_to(
     :param offset: References to skip before collecting results.
     """
     bv = call.binary_view
-    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     # The core's reference order is unsorted; sort before slicing so the window is address-ordered.
     code_refs = sorted(
         bv.get_code_refs(addr, max_items=_MAX_LIMIT + 1), key=lambda ref: ref.address
@@ -147,7 +145,6 @@ def rex_data_read(
     :param addr: Address to read from.
     :param length: Byte count to read, capped at 0x100000.
     """
-    length = _validate_range("length", length, 1, _MAX_DATA_READ_BYTES)
     data = call.binary_view.read(addr, length)
     return {
         "address": hex(addr),

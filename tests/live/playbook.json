@@ -1584,7 +1584,7 @@
    "guards": "rex_tag_list rows carry a scope; a tag added with rex_tag_set is scope data.",
    "tool": "rex_tag_list",
    "args": {
-    "limit": 1000
+    "limit": 500
    },
    "expect": [
     {
@@ -1816,5 +1816,7 @@
    ]
   }
  ],
- "include": ["playbook_more.json"]
+ "include": [
+  "playbook_more.json"
+ ]
 }

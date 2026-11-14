@@ -31,7 +31,6 @@ from binja_plugin.tools.help import (
     _UNCATEGORIZED,
     _UNCATEGORIZED_USE_WHEN,
 )
-from binja_plugin.tools.scanning import _MAX_PATTERN_CHARS
 
 
 def _help(tool_name: str = "", category: str = "") -> Any:
@@ -273,7 +272,7 @@ def test_help_call_paths_describes_depth_limited() -> None:
 def test_help_details_required_flags_and_bounds() -> None:
     by_name = {parameter["name"]: parameter for parameter in _help("rex_data_find")["parameters"]}
     assert by_name["pattern"]["required"] is True
-    assert by_name["pattern"]["maxLength"] == _MAX_PATTERN_CHARS
+    assert "maxLength" not in by_name["pattern"]
     assert by_name["limit"]["required"] is False
 
 

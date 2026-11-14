@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from helpers import FakeToolError, _call, _view_with_functions, get_tool
+from helpers_invoke import invoke_tool
 from helpers_relocation import FakeRelocation, FakeRelocationInfo
 from helpers_view import (
     FakeBinaryView,
@@ -1005,7 +1006,7 @@ def test_eval_result_validates_page_bounds() -> None:
         {"offset": -1},
     ):
         with pytest.raises(FakeToolError) as exc:
-            page(_call(view), key, **kwargs)
+            invoke_tool(page, _call(view), key, **kwargs)
         assert exc.value.code == "invalid_params"
 
     assert len(page(_call(view), key, limit=1)["value"]) == 1

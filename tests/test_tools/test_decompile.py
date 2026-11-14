@@ -14,6 +14,7 @@ from helpers import (
     get_tool,
     plain_gap_message,
 )
+from helpers_invoke import invoke_tool
 from helpers_view import (
     FakeAnalysisSkipReason,
     FakeBasicBlock,
@@ -187,13 +188,13 @@ def test_disasm_at_rejects_out_of_range_window() -> None:
         ),
     ):
         with pytest.raises(FakeToolError) as exc:
-            disasm(_call(view), 0x1104, **kwargs)
+            invoke_tool(disasm, _call(view), 0x1104, **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
     # Window sizes are validated before the address is even looked up: on a view with no
     # functions the range error wins over the no-function error.
     with pytest.raises(FakeToolError) as exc:
-        disasm(_call(FakeBinaryView()), 0x1104, before=-1)
+        invoke_tool(disasm, _call(FakeBinaryView()), 0x1104, before=-1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "Invalid integer parameter 'before': Must be at least 0"
 
@@ -212,7 +213,7 @@ def test_disasm_at_renders_a_full_cap_window_in_one_call() -> None:
     ]
     assert result["truncated"] is False
     with pytest.raises(FakeToolError) as exc:
-        disasm(_call(view), 0x1000, before=0, after=4097)
+        invoke_tool(disasm, _call(view), 0x1000, before=0, after=4097)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "Invalid integer parameter 'after': Must be at most 4096"
 
@@ -371,7 +372,7 @@ def test_hlil_grep_rejects_out_of_range_context() -> None:
         ),
     ):
         with pytest.raises(FakeToolError) as exc:
-            grep(_call(view), "recv", **kwargs)
+            invoke_tool(grep, _call(view), "recv", **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
 
@@ -423,7 +424,7 @@ def test_hlil_grep_limits_and_errors() -> None:
         ),
     ):
         with pytest.raises(FakeToolError) as exc:
-            grep(_call(view), ".", **kwargs)
+            invoke_tool(grep, _call(view), ".", **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
 
@@ -537,7 +538,7 @@ def test_hlil_grep_offset_and_next_offset() -> None:
         "next_offset": None,
     }
     with pytest.raises(FakeToolError) as exc:
-        grep(_call(view), "call", offset=-1)
+        invoke_tool(grep, _call(view), "call", offset=-1)
     assert exc.value.code == "invalid_params"
     assert exc.value.message == "Invalid integer parameter 'offset': Must be at least 0"
 
@@ -780,7 +781,7 @@ def test_decompile_many_rejects_bad_batch_and_max_lines() -> None:
         ),
     ):
         with pytest.raises(FakeToolError) as exc:
-            decompile(FakeParsingToolCall(view), ["garbage"], **kwargs)
+            invoke_tool(decompile, FakeParsingToolCall(view), ["garbage"], **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
 
@@ -906,7 +907,7 @@ def test_disasm_many_reports_errors_per_address() -> None:
         disasm(FakeParsingToolCall(view), [f"0x{address:x}" for address in range(65)])
     assert exc.value.message == "addresses must contain between 1 and 64 address expressions"
     with pytest.raises(FakeToolError) as exc:
-        disasm(FakeParsingToolCall(view), ["0x1100"], max_lines=513)
+        invoke_tool(disasm, FakeParsingToolCall(view), ["0x1100"], max_lines=513)
     assert exc.value.message == "Invalid integer parameter 'max_lines': Must be at most 512"
 
 

@@ -10,12 +10,12 @@ import sys
 import types
 import typing
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
 # These fake modules never import helpers, so importing them here cannot cycle.
-from helpers_dataflow import FakeInstruction, FakeMLILInstructions
+from helpers_dataflow import FakeInstruction, FakeMediumLevelILOperation, FakeMLILInstructions
 from helpers_relocation import RelocationWriteException
 from helpers_symbol import FakeSymbolBinding, FakeSymbolType, fake_symbol_constructor
 from helpers_types import FakeStructureVariant
@@ -277,6 +277,14 @@ class FakeMaximum:
         self.value = value
 
 
+class FakeClampTo:
+    """Mirrors binaryninja.mcp.ClampTo."""
+
+    def __init__(self, minimum: int, maximum: int) -> None:
+        self.minimum = minimum
+        self.maximum = maximum
+
+
 class FakeNonEmpty:
     """Mirrors binaryninja.mcp.NonEmpty; the fake decorator does not apply rejection."""
 
@@ -303,6 +311,29 @@ def _fake_types_module() -> types.ModuleType:
     return module
 
 
+def _fake_enums_module() -> types.ModuleType:
+    module = types.ModuleType("binaryninja.enums")
+    setattr(module, "AnalysisState", FakeAnalysisState)
+    setattr(module, "AnalysisSkipReason", FakeAnalysisSkipReason)
+    setattr(module, "StructureVariant", FakeStructureVariant)
+    setattr(module, "RegisterValueType", FakeRegisterValueType)
+    setattr(module, "TypeClass", FakeTypeClass)
+    setattr(module, "InstructionTextTokenType", FakeInstructionTextTokenType)
+    setattr(module, "SymbolType", FakeSymbolType)
+    setattr(module, "SymbolBinding", FakeSymbolBinding)
+    setattr(module, "VariableSourceType", FakeVariableSourceType)
+    setattr(module, "MediumLevelILOperation", FakeMediumLevelILOperation)
+    setattr(
+        module,
+        "LowLevelILOperation",
+        enum.IntEnum(
+            "LowLevelILOperation",
+            {"LLIL_CALL": 56, "LLIL_TAILCALL": 58, "LLIL_LOAD": 8},
+        ),
+    )
+    return module
+
+
 def install_fake_binaryninja() -> None:
     """Create the fake binaryninja package in sys.modules when it is absent."""
     if "binaryninja" in sys.modules:
@@ -313,9 +344,13 @@ def install_fake_binaryninja() -> None:
     setattr(mcp_module, "IntegerExpression", FakeIntegerExpression)
     setattr(mcp_module, "ToolCall", FakeToolCallBase)
     setattr(mcp_module, "ToolError", FakeToolError)
-    setattr(mcp_module, "Minimum", FakeMinimum)
-    setattr(mcp_module, "Maximum", FakeMaximum)
-    setattr(mcp_module, "NonEmpty", FakeNonEmpty)
+    for attribute, fake in (
+        ("Minimum", FakeMinimum),
+        ("Maximum", FakeMaximum),
+        ("ClampTo", FakeClampTo),
+        ("NonEmpty", FakeNonEmpty),
+    ):
+        setattr(mcp_module, attribute, fake)
     setattr(mcp_module, "Schema", FakeSchema)
     setattr(mcp_module, "Tool", FakeTool)
     setattr(
@@ -346,24 +381,7 @@ def install_fake_binaryninja() -> None:
 
     setattr(fn_module, "Function", FakeFunctionBase)
 
-    enums_module = types.ModuleType("binaryninja.enums")
-    setattr(enums_module, "AnalysisState", FakeAnalysisState)
-    setattr(enums_module, "AnalysisSkipReason", FakeAnalysisSkipReason)
-    setattr(enums_module, "StructureVariant", FakeStructureVariant)
-    setattr(enums_module, "RegisterValueType", FakeRegisterValueType)
-    setattr(enums_module, "TypeClass", FakeTypeClass)
-    setattr(enums_module, "InstructionTextTokenType", FakeInstructionTextTokenType)
-    setattr(enums_module, "SymbolType", FakeSymbolType)
-    setattr(enums_module, "SymbolBinding", FakeSymbolBinding)
-    setattr(enums_module, "VariableSourceType", FakeVariableSourceType)
-    setattr(
-        enums_module,
-        "LowLevelILOperation",
-        enum.IntEnum(
-            "LowLevelILOperation",
-            {"LLIL_CALL": 56, "LLIL_TAILCALL": 58, "LLIL_LOAD": 8},
-        ),
-    )
+    enums_module = _fake_enums_module()
 
     variable_module = types.ModuleType("binaryninja.variable")
 
@@ -423,6 +441,12 @@ def install_fake_binaryninja() -> None:
 class FakeToolCall:
     def __init__(self, binary_view: FakeBinaryView) -> None:
         self.binary_view = binary_view
+
+    def parse_address(self, value: object, here: int = 0) -> int:
+        return int(str(value), 0)
+
+    def parse_integer(self, value: object, here: int = 0) -> int:
+        return int(str(value), 0)
 
 
 def get_tool(name: str) -> tuple[dict[str, object], Any]:
@@ -503,6 +527,7 @@ class FakeParsingToolCall(FakeToolCall):
     way the core's address-expression parser was observed to resolve them live.
     """
 
+    @override
     def parse_address(self, value: object, here: int = 0) -> int:
         text = value if isinstance(value, str) else str(value)
         try:

@@ -6,6 +6,8 @@ import re
 import string
 from itertools import batched
 
+_REJECTED_SEPARATORS = "\x1c\x1d\x1e\x1f"
+
 
 class HexPatternError(ValueError):
     """Raised when a hex pattern cannot be parsed."""
@@ -14,18 +16,22 @@ class HexPatternError(ValueError):
 def parse_hex_pattern(pattern: str) -> list[int | None]:
     """Parse a hex byte pattern into byte values, using None for wildcards.
 
-    Accepts optional whitespace between byte tokens and "48 ?? 05" style wildcards;
-    each byte token is exactly two ASCII hex digits or "??".
+    Whitespace separates tokens; each token holds whole bytes, each exactly two ASCII hex
+    digits or "??". U+001C to U+001F are not separators.
 
     :param pattern: Hex pattern string, e.g. "48 8b ?? 05".
     :returns: One entry per byte; None marks a wildcard byte.
     :raises HexPatternError: The pattern is empty, truncated, or has non-hex tokens.
     """
-    cleaned = "".join(pattern.split())
-    if not cleaned:
+    for character in pattern:
+        if character in _REJECTED_SEPARATORS:
+            raise HexPatternError(f"invalid separator U+{ord(character):04X}")
+    tokens = pattern.split()
+    if not tokens:
         raise HexPatternError("empty hex pattern")
-    if len(cleaned) % 2 != 0:
+    if any(len(token) % 2 != 0 for token in tokens):
         raise HexPatternError("hex pattern must contain whole bytes")
+    cleaned = "".join(tokens)
     return [_parse_byte_token("".join(token)) for token in batched(cleaned, 2)]
 
 

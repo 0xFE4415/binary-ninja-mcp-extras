@@ -17,7 +17,6 @@ from binja_plugin.tools import (
     _resolve_section,
     _truncate,
     _truncate_with_flag,
-    _validate_range,
 )
 
 if TYPE_CHECKING:
@@ -153,8 +152,6 @@ def rex_string_refs(
     :param only_referenced: Skip strings without code refs (detected: to their start address).
     """
     bv = call.binary_view
-    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     matches_text = _text_matcher(pattern, regex, ignore_case)
 
     def keep(string: StringReference | DerivedString) -> bool:
@@ -181,7 +178,6 @@ def rex_string_read_at(
     :param addr: Address of the string.
     :param max_chars: Characters past this are truncated; undetected strings are read only this far.
     """
-    max_chars = _validate_range("max_chars", max_chars, 1, _MAX_STRING_READ_CHARS)
     bv = call.binary_view
     string = bv.get_string_at(addr)
     if string is not None:
@@ -240,8 +236,6 @@ def rex_string_search(
     :param offset: Matching strings to skip before collecting results.
     """
     bv = call.binary_view
-    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     matches_text = _text_matcher(pattern, regex, ignore_case)
     bounds = _resolve_section(bv, section) if section is not None else None
 
