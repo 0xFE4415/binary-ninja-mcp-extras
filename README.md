@@ -102,7 +102,7 @@ CONTRACTS.md holds the exact rules for every response field and limit.
 | `rex_uidf_set` | Set an MLIL variable's value at its definition; returns the new HLIL. |
 | `rex_uidf_set_many` | Set up to 128 values, then reanalyze and render once. |
 | `rex_uidf_clear` | Clear one variable's set values, or all values in a function. |
-| `rex_struct_from_access` | Fill an existing struct from offset accesses; it becomes a user type. |
+| `rex_struct_from_access` | Fill a struct from its offset accesses; it becomes a user type. |
 | `rex_type_library_import` | Attach a `.bntl` and import a list of its types or objects. |
 | `rex_type_library_export` | Write view types or objects to a new `.bntl` file. |
 | `rex_component_create` | Create a component, optionally under a parent path. |
