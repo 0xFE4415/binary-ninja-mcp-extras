@@ -14,7 +14,6 @@ from binja_plugin.tools import (
     _resolve_address_batch,
     _ResolvedFunction,
     _truncate,
-    _validate_range,
     _validate_text,
 )
 
@@ -176,8 +175,6 @@ def rex_component_get(
     :param offset: Member functions to skip before collecting results.
     """
     _validate_component_path("path", path)
-    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     component = _resolve_component(call.binary_view, path)
     functions = sorted(component.function_list, key=lambda function: function.start)
     total = len(functions)

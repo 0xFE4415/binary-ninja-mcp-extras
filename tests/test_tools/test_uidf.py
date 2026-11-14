@@ -11,6 +11,7 @@ from helpers import (
     get_tool,
     plain_gap_message,
 )
+from helpers_invoke import invoke_tool
 from helpers_uidf import (
     FakeMediumLevelIL,
     FakePossibleValueSet,
@@ -792,7 +793,7 @@ def test_uidf_set_rejects_bad_function_max_lines_and_state() -> None:
         ),
     ):
         with pytest.raises(FakeToolError) as exc:
-            uidf_set(_call(view), 0x1100, "rax_1", "1", **kwargs)
+            invoke_tool(uidf_set, _call(view), 0x1100, "rax_1", "1", **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
     # A state outside the schema's Literal can only arrive through a direct handler call.
@@ -1094,7 +1095,7 @@ def test_uidf_list_paginates_and_rejects_bad_arguments() -> None:
         ({"offset": -1}, "Invalid integer parameter 'offset': Must be at least 0"),
     ):
         with pytest.raises(FakeToolError) as exc:
-            uidf_list(_call(view), **kwargs)
+            invoke_tool(uidf_list, _call(view), **kwargs)
         assert exc.value.code == "invalid_params"
         assert exc.value.message == message
     with pytest.raises(FakeToolError) as exc:

@@ -24,7 +24,6 @@ from binja_plugin.tools import (
     _show_nul,
     _truncate,
     _truncate_with_flag,
-    _validate_range,
 )
 
 _MAX_EVAL_STDOUT_CHARS = 65536
@@ -260,8 +259,6 @@ def rex_eval_result(
     :param offset: Characters to skip before the page starts.
     :param limit: Characters returned per page.
     """
-    offset = _validate_range("offset", offset, 0)
-    limit = _validate_range("limit", limit, 1, _MAX_EVAL_RESULT_PAGE_CHARS)
     text = _EVAL_SPILLS.get(key)
     if text is None:
         raise mcp.ToolError(

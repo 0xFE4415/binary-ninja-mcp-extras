@@ -35,7 +35,6 @@ from binja_plugin.tools import (
     _ResolvedFunction,
     _truncate,
     _unknown_variable_error,
-    _validate_range,
 )
 
 if TYPE_CHECKING:
@@ -409,7 +408,6 @@ def rex_uidf_set(
     :param max_lines: HLIL lines rendered after the reanalysis settles.
     """
     bv = call.binary_view
-    max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
     _reject_nul("value", value)
     resolution = _require_analyzed_function(bv, function)
     target = resolution.function
@@ -449,7 +447,6 @@ def rex_uidf_set_many(
     :param max_lines: HLIL lines rendered after the batch settles.
     """
     bv = call.binary_view
-    max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
     resolution = _require_analyzed_function(bv, function)
     target = resolution.function
     if not isinstance(items, list):
@@ -548,8 +545,6 @@ def rex_uidf_list(
     :param offset: Informed values to skip before collecting results.
     """
     bv = call.binary_view
-    limit = _validate_range("limit", limit, 0, _MAX_LIMIT)
-    offset = _validate_range("offset", offset, 0)
     resolution = _require_analyzed_function(bv, function) if function is not None else None
     targets = (
         [resolution.function]

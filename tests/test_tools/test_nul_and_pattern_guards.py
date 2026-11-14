@@ -4,9 +4,8 @@ from typing import override
 
 import pytest
 from helpers import FakeTool, FakeToolError, _call, get_tool
+from helpers_invoke import invoke_tool
 from helpers_view import FakeBinaryView, FakeSegment, FakeStringReference
-
-from binja_plugin.tools import scanning
 
 REPLACEMENT = "�"
 
@@ -31,7 +30,7 @@ def _view() -> CoreTruncatingView:
 def _error(tool_name: str, **arguments: object) -> FakeToolError:
     _, tool = get_tool(tool_name)
     with pytest.raises(FakeToolError) as caught:
-        tool(_call(_view()), **arguments)
+        invoke_tool(tool, _call(_view()), **arguments)
     return caught.value
 
 
@@ -83,10 +82,10 @@ def test_a_non_string_pattern_is_rejected_before_the_section_lookup() -> None:
 
 
 @pytest.mark.parametrize("tool_name", ["rex_data_find", "rex_find_functions_by_pattern"])
-def test_the_pattern_schema_publishes_the_enforced_length_cap(tool_name: str) -> None:
+def test_the_pattern_schema_is_a_required_plain_string(tool_name: str) -> None:
     options, function = get_tool(tool_name)
     schema = FakeTool(tool_name, options, function).input_schema
     assert schema["properties"]["pattern"]["type"] == "string"
-    assert schema["properties"]["pattern"]["maxLength"] == scanning._MAX_PATTERN_CHARS
+    assert "maxLength" not in schema["properties"]["pattern"]
     assert schema["properties"]["pattern"]["description"]
     assert "pattern" in schema["required"]

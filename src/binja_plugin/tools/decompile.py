@@ -20,8 +20,6 @@ from binja_plugin.tools import (
     _require_analyzed_function,
     _ResolvedFunction,
     _truncate,
-    _validate_disasm_window,
-    _validate_range,
 )
 
 if TYPE_CHECKING:
@@ -141,7 +139,6 @@ def rex_decompile_many(
     :param max_lines: Lines per function, counting the signature line.
     """
     bv = call.binary_view
-    max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DECOMPILE_LINES)
     expressions = _require_address_list(functions, _MAX_DECOMPILE_BATCH, "functions")
     rendered: list[_DecompiledFunction] = []
     errors: list[_DecompileError] = []
@@ -192,7 +189,6 @@ def rex_disasm_at(
     :param after: Instructions to include after the anchor.
     """
     bv = call.binary_view
-    before, after = _validate_disasm_window(before, after)
     resolution = _require_analyzed_function(bv, address)
     lines = _render_function_disassembly(resolution.function)
     start, end = _disasm_window(lines, address, before, after)
@@ -218,7 +214,6 @@ def rex_disasm_many(
     :param max_lines: Instructions per address, anchored at the last line at or before it.
     """
     bv = call.binary_view
-    max_lines = _validate_range("max_lines", max_lines, 1, _MAX_DISASM_MANY_LINES)
     if not isinstance(addresses, list):
         raise mcp.ToolError("invalid_params", "addresses must be a list of address expressions")
     if not 1 <= len(addresses) <= _MAX_DISASM_BATCH:
@@ -294,11 +289,6 @@ def rex_hlil_grep(
     :param context_after: HLIL lines included after each match.
     """
     bv = call.binary_view
-    limit = _validate_range("limit", limit, 0, _MAX_HLIL_GREP_LIMIT)
-    max_functions = _validate_range("max_functions", max_functions, 0, _MAX_HLIL_GREP_FUNCTIONS)
-    offset = _validate_range("offset", offset, 0)
-    context_before = _validate_range("context_before", context_before, 0, _MAX_HLIL_GREP_CONTEXT)
-    context_after = _validate_range("context_after", context_after, 0, _MAX_HLIL_GREP_CONTEXT)
     matcher = _compile_user_regex("regex", regex)
     name_matcher = _name_filter(function_filter)
     search = matcher.search
