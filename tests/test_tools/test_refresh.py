@@ -20,6 +20,8 @@ class SteppingClock:
     def sleep(self, seconds: float) -> None:
         self.sleeps.append(seconds * 1000)
         self.now += seconds
+        waited_ms = self.now * 1000
+        assert waited_ms <= tools._MAX_ANALYSIS_WAIT_MS + tools._ANALYSIS_SLICE_MS
 
 
 @pytest.fixture

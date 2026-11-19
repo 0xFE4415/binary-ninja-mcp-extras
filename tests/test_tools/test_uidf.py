@@ -90,6 +90,7 @@ class FakeClock:
     def sleep(self, seconds: float) -> None:
         self.sleeps.append(seconds * 1000)
         self.now += seconds
+        assert self.now * 1000 <= tools._MAX_ANALYSIS_WAIT_MS + tools._ANALYSIS_SLICE_MS
 
 
 def _patch_time(monkeypatch: pytest.MonkeyPatch, clock: FakeClock) -> None:
